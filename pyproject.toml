@@ -1,0 +1,41 @@
+[project]
+name = "myclaw"
+version = "0.1.0"
+description = "LangGraph-based AI assistant with Feishu channel"
+requires-python = ">=3.11"
+dependencies = [
+    "langgraph>=0.4",
+    "langchain-core>=0.3",
+    "langchain-anthropic>=0.3",
+    "langchain-openai>=0.3",
+    "lark-oapi>=1.4",
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "pyyaml>=6.0",
+    "aiosqlite>=0.20",
+    "httpx>=0.28",
+    "apscheduler>=3.11",
+    "watchfiles>=1.0",
+    "python-frontmatter>=1.0",
+    "tavily-python>=0.5",
+    "langgraph-checkpoint-sqlite>=3.0.3",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true
+
+[project.scripts]
+myclaw = "src.main:main"
+myclaw-setup = "src.setup:main"
+myclaw-daemon = "src.daemon:main_daemon"
