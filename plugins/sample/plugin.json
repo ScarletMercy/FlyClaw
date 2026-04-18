@@ -1,0 +1,8 @@
+{
+    "id": "sample",
+    "name": "Sample Plugin",
+    "version": "0.1.0",
+    "description": "A sample plugin demonstrating the plugin system",
+    "tools": ["tools.py"],
+    "hooks": {}
+}
