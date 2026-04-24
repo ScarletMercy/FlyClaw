@@ -20,8 +20,12 @@ dependencies = [
     "watchfiles>=1.0",
     "python-frontmatter>=1.0",
     "tavily-python>=0.5",
+    "Pillow>=10.0",
     "langgraph-checkpoint-sqlite>=3.0.3",
 ]
+
+[project.optional-dependencies]
+memory = ["sqlite-vec>=0.1.6"]
 
 [build-system]
 requires = ["setuptools>=68.0"]
@@ -36,6 +40,6 @@ url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 default = true
 
 [project.scripts]
-myclaw = "src.main:main"
+myclaw = "src.cli:cli_main"
 myclaw-setup = "src.setup:main"
 myclaw-daemon = "src.daemon:main_daemon"

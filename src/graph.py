@@ -144,10 +144,21 @@ def _compact_messages(
 
     summaries = []
     for m in pruned:
-        if isinstance(m, HumanMessage):
+        if isinstance(m, ToolMessage):
+            tool_name = getattr(m, "name", "unknown")
+            content = m.content if isinstance(m.content, str) else str(m.content)
+            summaries.append(f"[Tool({tool_name})]: {content[:150]}")
+        elif isinstance(m, AIMessage) and m.tool_calls:
+            calls = ", ".join(tc.get("name", "?") for tc in m.tool_calls)
+            text = m.content if isinstance(m.content, str) else ""
+            entry = f"Assistant: called [{calls}]"
+            if text:
+                entry += f" {text[:100]}"
+            summaries.append(entry)
+        elif isinstance(m, HumanMessage):
             text = m.content if isinstance(m.content, str) else str(m.content)[:200]
             summaries.append(f"User: {text[:200]}")
-        elif isinstance(m, AIMessage) and m.content and not m.tool_calls:
+        elif isinstance(m, AIMessage) and m.content:
             text = m.content if isinstance(m.content, str) else str(m.content)[:200]
             summaries.append(f"Assistant: {text[:200]}")
 
@@ -273,7 +284,7 @@ def create_agent_graph(
         else:
             filtered = tools
 
-        local_tool_node = ToolNode(filtered)
+        local_tool_node = ToolNode(filtered, handle_tool_errors=False)
 
         try:
             start_time = time.monotonic()
@@ -517,16 +528,52 @@ def _register_builtin_tools(config) -> None:
 
     @registry.register
     def _collect_feishu_tools() -> list[BaseTool]:
-        from src.tools.feishu_tools import feishu_get_doc_content, feishu_get_chat_info
+        from src.tools.feishu_tools import (
+            feishu_send_message,
+            feishu_send_card,
+            feishu_create_document,
+            feishu_write_document,
+            feishu_get_doc_content,
+            feishu_get_chat_info,
+            feishu_get_user_info,
+            feishu_get_chat_member_list,
+            feishu_get_message_list,
+            feishu_recall_message,
+            feishu_create_chat,
+            feishu_create_folder,
+            feishu_drive_list,
+            feishu_drive_upload,
+            feishu_create_calendar_event,
+            feishu_list_calendar_events,
+            feishu_create_bitable,
+            feishu_bitable_list_records,
+            feishu_bitable_add_record,
+        )
 
         tools_list: list[BaseTool] = []
         if config.channels.feishu.enabled:
-            if config.tools.feishu.doc:
-                tools_list.append(feishu_get_doc_content)
-                logger.info("Tool registered: feishu_get_doc_content")
-            if config.tools.feishu.chat:
-                tools_list.append(feishu_get_chat_info)
-                logger.info("Tool registered: feishu_get_chat_info")
+            tools_list.extend([
+                feishu_send_message,
+                feishu_send_card,
+                feishu_create_document,
+                feishu_write_document,
+                feishu_get_doc_content,
+                feishu_get_chat_info,
+                feishu_get_user_info,
+                feishu_get_chat_member_list,
+                feishu_get_message_list,
+                feishu_recall_message,
+                feishu_create_chat,
+                feishu_create_folder,
+                feishu_drive_list,
+                feishu_drive_upload,
+                feishu_create_calendar_event,
+                feishu_list_calendar_events,
+                feishu_create_bitable,
+                feishu_bitable_list_records,
+                feishu_bitable_add_record,
+            ])
+            logger.info("Tool registered: feishu tools (18)")
 
             from src.tools.media_tools import send_image_to_chat, send_file_to_chat
 
@@ -534,6 +581,13 @@ def _register_builtin_tools(config) -> None:
             tools_list.append(send_file_to_chat)
             logger.info("Tool registered: send_image_to_chat, send_file_to_chat")
         return tools_list
+
+    @registry.register
+    def _collect_file_tools() -> list[BaseTool]:
+        from src.tools.file_tools import read_file, write_file, edit_file, list_dir, grep_files, glob_files
+
+        logger.info("Tool registered: read_file, write_file, edit_file, list_dir, grep_files, glob_files")
+        return [read_file, write_file, edit_file, list_dir, grep_files, glob_files]
 
     @registry.register
     def _collect_cron_tools() -> list[BaseTool]:
@@ -545,12 +599,31 @@ def _register_builtin_tools(config) -> None:
         return []
 
     @registry.register
+    def _collect_media_understanding_tools() -> list[BaseTool]:
+        if config.tools.media_understanding.enabled:
+            from src.tools.media_understanding_tools import describe_image, transcribe_audio, describe_video
+
+            logger.info("Tool registered: describe_image, transcribe_audio, describe_video")
+            return [describe_image, transcribe_audio, describe_video]
+        return []
+
+    @registry.register
     def _collect_subagent_tools() -> list[BaseTool]:
         if getattr(config.agents, "subagents", None) and config.agents.subagents:
             from src.agents.delegate import delegate_task
+            from src.tools.subagent_tools import subagent_status
 
-            logger.info("Tool registered: delegate_task")
-            return [delegate_task]
+            logger.info("Tool registered: delegate_task, subagent_status")
+            return [delegate_task, subagent_status]
+        return []
+
+    @registry.register
+    def _collect_memory_tools() -> list[BaseTool]:
+        if getattr(config, "memory", None) and config.memory.enabled:
+            from src.tools.memory_tools import memory_search
+
+            logger.info("Tool registered: memory_search")
+            return [memory_search]
         return []
 
     @registry.register

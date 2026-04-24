@@ -36,7 +36,7 @@ def run_security_audit(config) -> dict[str, Any]:
     # Check 1: Gateway auth
     host = config.gateway.host
     token = config.gateway.auth_token
-    if host in ("0.0.0.0", "") and not token:
+    if host in ("0.0.0.0", "", "::", "[::]", "0:0:0:0:0:0:0:0") and not token:
         _check("gateway-auth", "WARN", f"gateway exposed on {host} without auth_token")
     elif token:
         _check("gateway-auth", "PASS", "")

@@ -1,0 +1,232 @@
+from __future__ import annotations
+
+import fnmatch
+import logging
+import os
+from pathlib import Path
+from typing import Optional
+
+from langchain_core.tools import tool
+
+logger = logging.getLogger("myclaw.file_tools")
+
+_BASE_DIR = os.path.abspath(os.environ.get("MYCLAW_WORKSPACE", "."))
+
+
+def _resolve_path(path: str) -> str:
+    """Resolve path relative to workspace and prevent escape."""
+    p = Path(path)
+    if not p.is_absolute():
+        p = Path(_BASE_DIR) / p
+    try:
+        p = p.resolve()
+    except Exception:
+        raise ValueError(f"Path '{path}' could not be resolved")
+    base = Path(_BASE_DIR)
+    try:
+        p.relative_to(base)
+    except ValueError:
+        raise ValueError(f"Path '{path}' is outside the workspace")
+    return str(p)
+
+
+@tool
+def read_file(path: str, offset: int = 0, limit: int = 500) -> str:
+    """Read file contents. Returns specified line range.
+
+    Args:
+        path: File path (relative to workspace)
+        offset: Starting line number (0-based)
+        limit: Max number of lines to read
+    """
+    resolved = _resolve_path(path)
+    try:
+        with open(resolved, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        total = len(lines)
+        end = offset + limit
+        selected = lines[offset:end]
+        result = []
+        for i, line in enumerate(selected):
+            result.append(f"{offset + i + 1}\t{line.rstrip()}")
+        header = f"File: {path} (lines {offset + 1}-{min(end, total)} of {total})\n"
+        if end < total:
+            header += f"(showing {limit} of {total - offset} remaining lines)\n"
+        return header + "\n".join(result)
+    except FileNotFoundError:
+        return f"Error: file not found: {path}"
+    except PermissionError:
+        return f"Error: permission denied: {path}"
+    except Exception as e:
+        return f"Error reading {path}: {e}"
+
+
+@tool
+def write_file(path: str, content: str) -> str:
+    """Write content to a file. Creates parent directories if needed.
+
+    Args:
+        path: File path (relative to workspace)
+        content: Full file content to write
+    """
+    resolved = _resolve_path(path)
+    try:
+        parent = os.path.dirname(resolved)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(resolved, "w", encoding="utf-8") as f:
+            f.write(content)
+        lines = content.count("\n") + (0 if content.endswith("\n") else 1)
+        return f"Written {lines} lines to {path}"
+    except PermissionError:
+        return f"Error: permission denied: {path}"
+    except Exception as e:
+        return f"Error writing {path}: {e}"
+
+
+@tool
+def edit_file(path: str, old_text: str, new_text: str) -> str:
+    """Replace a specific text segment in a file with new text.
+
+    Args:
+        path: File path (relative to workspace)
+        old_text: Exact text to find and replace
+        new_text: Text to replace it with
+    """
+    resolved = _resolve_path(path)
+    try:
+        with open(resolved, "r", encoding="utf-8") as f:
+            content = f.read()
+    except FileNotFoundError:
+        return f"Error: file not found: {path}"
+    except Exception as e:
+        return f"Error reading {path}: {e}"
+
+    count = content.count(old_text)
+    if count == 0:
+        return f"Error: text not found in {path}. Make sure old_text matches exactly (including whitespace)."
+    if count > 1:
+        return f"Error: found {count} matches in {path}. Please provide more context to make old_text unique."
+
+    new_content = content.replace(old_text, new_text, 1)
+    try:
+        with open(resolved, "w", encoding="utf-8") as f:
+            f.write(new_content)
+        old_lines = old_text.count("\n") + 1
+        new_lines = new_text.count("\n") + 1
+        return f"Replaced {old_lines} lines with {new_lines} lines in {path}"
+    except Exception as e:
+        return f"Error writing {path}: {e}"
+
+
+@tool
+def list_dir(path: str = ".") -> str:
+    """List directory contents.
+
+    Args:
+        path: Directory path (relative to workspace), defaults to workspace root
+    """
+    resolved = _resolve_path(path)
+    try:
+        entries = sorted(os.listdir(resolved))
+        if not entries:
+            return f"Directory {path} is empty"
+        lines = []
+        for name in entries:
+            full = os.path.join(resolved, name)
+            if os.path.isdir(full):
+                lines.append(f"  {name}/")
+            elif os.path.isfile(full):
+                size = os.path.getsize(full)
+                if size > 1024 * 1024:
+                    lines.append(f"  {name}  ({size / 1024 / 1024:.1f}MB)")
+                elif size > 1024:
+                    lines.append(f"  {name}  ({size / 1024:.1f}KB)")
+                else:
+                    lines.append(f"  {name}  ({size}B)")
+            else:
+                lines.append(f"  {name}")
+        return f"Directory: {path}\n" + "\n".join(lines)
+    except FileNotFoundError:
+        return f"Error: directory not found: {path}"
+    except PermissionError:
+        return f"Error: permission denied: {path}"
+    except Exception as e:
+        return f"Error listing {path}: {e}"
+
+
+@tool
+def grep_files(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
+    """Search for a text pattern in files.
+
+    Args:
+        pattern: Text or regex pattern to search for
+        path: Directory to search in (relative to workspace)
+        file_pattern: Glob pattern to filter files (e.g. "*.py", "*.md")
+    """
+    resolved = _resolve_path(path)
+    if not os.path.isdir(resolved):
+        return f"Error: not a directory: {path}"
+
+    import re
+
+    try:
+        regex = re.compile(pattern)
+    except re.error as e:
+        return f"Error: invalid regex pattern: {e}"
+
+    results = []
+    try:
+        for root, dirs, files in os.walk(resolved):
+            # Skip hidden dirs and common ignored dirs
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("__pycache__", "node_modules", ".git")]
+            for fname in files:
+                if not fnmatch.fnmatch(fname, file_pattern):
+                    continue
+                filepath = os.path.join(root, fname)
+                rel = os.path.relpath(filepath, resolved)
+                try:
+                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                        for i, line in enumerate(f, 1):
+                            if regex.search(line):
+                                results.append(f"{rel}:{i}: {line.rstrip()[:200]}")
+                                if len(results) >= 50:
+                                    results.append("... (truncated, max 50 matches)")
+                                    return "\n".join(results)
+                except (PermissionError, OSError):
+                    continue
+    except Exception as e:
+        return f"Error searching: {e}"
+
+    if not results:
+        return f"No matches found for '{pattern}' in {path}"
+    return f"Found {len(results)} match(es) for '{pattern}':\n" + "\n".join(results)
+
+
+@tool
+def glob_files(pattern: str, path: str = ".") -> str:
+    """Find files matching a glob pattern.
+
+    Args:
+        pattern: Glob pattern (e.g. "**/*.py", "src/**/*.yaml")
+        path: Base directory (relative to workspace)
+    """
+    resolved = _resolve_path(path)
+    try:
+        matches = sorted(Path(resolved).glob(pattern))
+        if not matches:
+            return f"No files matched '{pattern}' in {path}"
+        lines = []
+        for m in matches:
+            rel = str(m.relative_to(resolved))
+            if m.is_dir():
+                lines.append(f"  {rel}/")
+            else:
+                size = m.stat().st_size
+                lines.append(f"  {rel}  ({size}B)")
+            if len(lines) >= 100:
+                lines.append("... (truncated, max 100 matches)")
+                break
+        return f"Found {len(matches)} match(es) for '{pattern}':\n" + "\n".join(lines)
+    except Exception as e:
+        return f"Error: {e}"

@@ -8,11 +8,16 @@ from typing import Any, Literal, Optional
 import yaml
 from pydantic import BaseModel, Field
 
+_log = logging.getLogger("myclaw.config")
+
 
 def _env_substitute(value: str) -> str:
     if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
         env_key = value[2:-1]
-        return os.environ.get(env_key, "")
+        result = os.environ.get(env_key, "")
+        if env_key not in os.environ:
+            _log.warning("Environment variable '%s' is not set, using empty string", env_key)
+        return result
     return value
 
 
@@ -60,6 +65,7 @@ class AgentConfig(BaseModel):
     workspace: str = "."
     max_tool_rounds: int = 15
     subagents: dict[str, AgentSubconfig] = Field(default_factory=dict)
+    subagent_max_depth: int = 2  # Max nesting depth for sub-agent calls
 
 
 class FeishuConfig(BaseModel):
@@ -88,12 +94,16 @@ class SessionConfig(BaseModel):
 class ExecToolConfig(BaseModel):
     enabled: bool = True
     timeout_seconds: int = 30
+    no_output_timeout_seconds: int = 60  # Kill process if no output for N seconds, 0=disabled
     require_approval: bool = False
     approval_mode: Literal["off", "ask", "on_denylist_miss", "always"] = "off"
     deny_patterns: list[str] = []
     max_output_bytes: int = 102400
     max_concurrent: int = 3
     audit_log: bool = True
+    sandbox_enabled: bool = True
+    sandbox_allowed_dirs: list[str] = Field(default_factory=lambda: ["."])  # Working dirs allowed (relative to workspace)
+    sandbox_env_whitelist: list[str] = Field(default_factory=lambda: ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "LANG", "PYTHONPATH"])  # Env vars allowed to pass through
 
 
 class WebSearchToolConfig(BaseModel):
@@ -108,6 +118,31 @@ class WebFetchToolConfig(BaseModel):
 class FeishuToolConfig(BaseModel):
     doc: bool = True
     chat: bool = True
+
+
+class MediaUnderstandingCapabilityConfig(BaseModel):
+    """Config for a single media capability (image/audio/video)."""
+    enabled: bool = True
+    provider: str = ""       # Empty = inherit from parent
+    name: str = ""           # Empty = inherit from parent
+    base_url: str = ""       # Empty = inherit from parent
+    api_key: str = ""        # Empty = inherit from parent
+
+
+class MediaUnderstandingConfig(BaseModel):
+    """Media understanding (image description, audio transcription, video description)."""
+    enabled: bool = False
+    provider: str = "openai"
+    name: str = ""                    # Empty = auto-detect (gpt-4o-mini for openai)
+    base_url: str = ""                # Empty = use provider default
+    api_key: str = ""                 # Empty = use main model api_key
+    max_image_size: int = 20 * 1024 * 1024   # 20MB
+    max_audio_size: int = 25 * 1024 * 1024   # 25MB
+    max_video_size: int = 50 * 1024 * 1024   # 50MB
+    timeout_seconds: int = 60
+    image: MediaUnderstandingCapabilityConfig = Field(default_factory=MediaUnderstandingCapabilityConfig)
+    audio: MediaUnderstandingCapabilityConfig = Field(default_factory=MediaUnderstandingCapabilityConfig)
+    video: MediaUnderstandingCapabilityConfig = Field(default_factory=MediaUnderstandingCapabilityConfig)
 
 
 class ToolsPolicyConfig(BaseModel):
@@ -132,6 +167,7 @@ class ToolsConfig(BaseModel):
     web_fetch: WebFetchToolConfig = Field(default_factory=WebFetchToolConfig)
     feishu: FeishuToolConfig = Field(default_factory=FeishuToolConfig)
     policy: ToolsPolicyConfig = Field(default_factory=ToolsPolicyConfig)
+    media_understanding: MediaUnderstandingConfig = Field(default_factory=MediaUnderstandingConfig)
 
 
 class CheckpointerConfig(BaseModel):
@@ -159,6 +195,36 @@ class PluginsConfig(BaseModel):
     extra_dirs: list[str] = Field(default_factory=list)
 
 
+class TtsConfig(BaseModel):
+    enabled: bool = False
+    provider: str = "openai"  # "openai" | "elevenlabs" | "azure"
+    model: str = "tts-1"
+    voice: str = "alloy"
+    auto_mode: Literal["off", "always", "tagged"] = "tagged"
+    max_chars: int = 2000
+    api_key: str = ""      # Empty = use main model api_key
+    base_url: str = ""     # Empty = use provider default; for Azure, set to region (e.g. "eastus")
+
+
+class MemoryConfig(BaseModel):
+    enabled: bool = False
+    db_path: str = "data/memory.db"
+    embedding_provider: str = "openai"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536
+    chunk_tokens: int = 400
+    chunk_overlap: int = 80
+    vector_weight: float = 0.7  # 70% vector, 30% BM25
+    min_score: float = 0.35
+    max_results: int = 6
+    fts_tokenizer: str = "unicode61"
+    api_key: str = ""
+    base_url: str = ""
+    extra_paths: list[str] = Field(default_factory=list)
+    watch: bool = True  # Auto-watch extra_paths for changes
+    auto_session_memory: bool = False  # Auto-write Q&A pairs to memory
+
+
 class TimeoutsConfig(BaseModel):
     """Global timeout settings for various operations."""
     tool_short: int = 30  # Short-lived tool operations (e.g., simple commands)
@@ -179,6 +245,8 @@ class AppConfig(BaseModel):
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     link_understanding: LinkUnderstandingConfig = Field(default_factory=LinkUnderstandingConfig)
+    tts: TtsConfig = Field(default_factory=TtsConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     timeouts: TimeoutsConfig = Field(default_factory=TimeoutsConfig)
     owner_id: str = ""
 

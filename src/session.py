@@ -39,6 +39,9 @@ class SessionTracker:
         compiled_graph,
         interval_seconds: int = 60,
     ) -> None:
+        if self._task is not None and not self._task.done():
+            logger.warning("Periodic cleanup already running")
+            return
         async def _loop():
             while True:
                 await asyncio.sleep(interval_seconds)

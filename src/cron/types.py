@@ -112,6 +112,7 @@ class CronJob(BaseModel):
     payload: CronPayload
     delivery: CronDelivery = CronDelivery()
     session_target: Literal["main", "isolated"] = "isolated"
+    depends_on: list[str] = Field(default_factory=list)
     consecutive_errors: int = 0
     last_run_at: Optional[float] = None
     last_run_status: Optional[str] = None
@@ -131,6 +132,7 @@ class CronJobCreate(BaseModel):
     payload: CronPayload
     delivery: CronDelivery = CronDelivery()
     session_target: Literal["main", "isolated"] = "isolated"
+    depends_on: list[str] = Field(default_factory=list)
 
 
 class CronJobPatch(BaseModel):
@@ -141,6 +143,7 @@ class CronJobPatch(BaseModel):
     payload: Optional[CronPayload] = None
     delivery: Optional[CronDelivery] = None
     session_target: Optional[Literal["main", "isolated"]] = None
+    depends_on: Optional[list[str]] = None
 
 
 class CronRunResult(BaseModel):

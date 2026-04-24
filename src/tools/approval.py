@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import time
 import uuid
 from pathlib import Path
@@ -61,10 +62,18 @@ class ApprovalManager:
     def _save_durable(self):
         try:
             self._data_dir.mkdir(parents=True, exist_ok=True)
-            self._durable_path.write_text(
-                json.dumps(self._durable, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            import tempfile
+            fd, tmp_path = tempfile.mkstemp(dir=str(self._data_dir), suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(self._durable, f, indent=2, ensure_ascii=False)
+                os.replace(tmp_path, str(self._durable_path))
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
         except OSError as e:
             logger.error("Failed to save durable approvals: %s", e)
 
@@ -118,9 +127,12 @@ class ApprovalManager:
         try:
             await asyncio.wait_for(pending.event.wait(), timeout=effective_timeout)
         except asyncio.TimeoutError:
-            logger.warning("Approval timed out: %s", request_id)
-            self._pending.pop(request_id, None)
-            return "timeout"
+            if pending.event.is_set():
+                decision = pending.decision
+            else:
+                logger.warning("Approval timed out: %s", request_id)
+                self._pending.pop(request_id, None)
+                return "timeout"
         decision = pending.decision
         self._pending.pop(request_id, None)
 

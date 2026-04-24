@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import ipaddress
+import json
 import logging
 import random
 import re
+import socket
 import time
 from typing import Any, Optional
 from urllib.parse import urlparse
@@ -38,7 +42,7 @@ def _is_transient_error(error_str: str) -> bool:
     return any(re.search(p, lower) for p in _TRANSIENT_PATTERNS)
 
 
-def _is_safe_webhook_url(url: str) -> tuple[bool, str]:
+async def _is_safe_webhook_url(url: str) -> tuple[bool, str]:
     try:
         parsed = urlparse(url)
     except Exception:
@@ -62,7 +66,18 @@ def _is_safe_webhook_url(url: str) -> tuple[bool, str]:
         if addr.is_reserved:
             return False, f"reserved: {hostname}"
     except ValueError:
-        pass
+        # hostname is a domain — resolve DNS to check for private IPs (prevent DNS rebinding)
+        try:
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+            addrs = await asyncio.get_event_loop().run_in_executor(
+                None, socket.getaddrinfo, hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM
+            )
+            for _family, _type, _proto, _canonname, sockaddr in addrs:
+                addr = ipaddress.ip_address(sockaddr[0])
+                if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+                    return False, f"resolved to private/reserved IP: {addr}"
+        except (socket.gaierror, OSError):
+            return False, f"cannot resolve hostname: {hostname}"
 
     return True, ""
 
@@ -222,17 +237,26 @@ async def _deliver_result(job: CronJob, output: str, feishu_channel: Any = None)
                 logger.warning("No delivery target for cron job '%s'", job.name)
 
         elif delivery.mode == "webhook" and delivery.webhook_url:
-            safe, reason = _is_safe_webhook_url(delivery.webhook_url)
+            safe, reason = await _is_safe_webhook_url(delivery.webhook_url)
             if not safe:
                 logger.error("Webhook URL blocked (SSRF): %s — %s", delivery.webhook_url, reason)
                 if not delivery.best_effort:
                     raise ValueError(f"Unsafe webhook URL: {reason}")
                 return
 
+            payload = json.dumps({"job_id": job.id, "job_name": job.name, "output": output})
+            headers = {"Content-Type": "application/json"}
+            webhook_secret = getattr(delivery, "webhook_secret", "") or ""
+            if webhook_secret:
+                signature = hmac.new(
+                    webhook_secret.encode(), payload.encode(), hashlib.sha256
+                ).hexdigest()
+                headers["X-MyClaw-Signature"] = f"sha256={signature}"
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
                     delivery.webhook_url,
-                    json={"job_id": job.id, "job_name": job.name, "output": output},
+                    content=payload,
+                    headers=headers,
                 )
                 logger.info(
                     "Delivered cron output to webhook: %s (status=%d)",

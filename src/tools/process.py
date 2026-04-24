@@ -58,14 +58,14 @@ class ProcessSupervisor:
 
         try:
             # Create process with process group for tree kill
-            proc = await asyncio.create_subprocess_shell(
-                command,
+            proc_kwargs = dict(
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=workdir,
-                # Start new process group on Unix for tree killing
-                start_new_session=True,
             )
+            if os.name != "nt":
+                proc_kwargs["start_new_session"] = True
+            proc = await asyncio.create_subprocess_shell(command, **proc_kwargs)
             pid = proc.pid
             logger.debug("[process] started pid=%d cmd=%.200s", pid, command)
 
@@ -78,7 +78,7 @@ class ProcessSupervisor:
                 logger.warning("[process] TIMEOUT pid=%d dur=%.1fs cmd=%.200s", pid, time.monotonic() - start, command)
 
             duration = time.monotonic() - start
-            exit_code = proc.returncode or 0
+            exit_code = proc.returncode if proc.returncode is not None else -1
 
             # Decode output
             stdout_text = stdout.decode("utf-8", errors="replace") if stdout else ""
