@@ -41,8 +41,12 @@ async def start_skills_watcher(
     logger.info("Skill watcher started for %d directories", len(dirs))
 
 
-def stop_skills_watcher():
+async def stop_skills_watcher():
     global _watch_task
     if _watch_task:
         _watch_task.cancel()
+        try:
+            await _watch_task
+        except asyncio.CancelledError:
+            pass
         _watch_task = None

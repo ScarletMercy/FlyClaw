@@ -37,6 +37,7 @@ class CronService:
         self._jobs: dict[str, CronJob] = {}
         self._failure_alert_after = 2
         self._last_failure_alert: dict[str, float] = {}
+        self._running_jobs: set[str] = set()
         if config:
             self._max_transient_retries = config.cron.max_transient_retries
             self._failure_alert_after = config.cron.failure_alert_after
@@ -139,59 +140,90 @@ class CronService:
             return
         if not job.enabled:
             return
+        if job_id in self._running_jobs:
+            logger.warning("Job '%s' is already running, skipping", job.id)
+            return
 
-        logger.info("Executing cron job '%s' (id=%s)", job.name, job.id)
-        started_at = time.time()
+        # Check dependencies — all depends_on jobs must have completed successfully
+        if job.depends_on:
+            unmet = []
+            for dep_id in job.depends_on:
+                dep = self._jobs.get(dep_id)
+                if dep is None:
+                    logger.warning(
+                        "Job '%s' depends on '%s' which does not exist, skipping execution",
+                        job.name, dep_id,
+                    )
+                    return
+                if dep.last_run_status != "success":
+                    unmet.append(dep_id)
+            if unmet:
+                logger.info(
+                    "Job '%s' skipped — dependencies not satisfied: %s",
+                    job.name, ", ".join(unmet),
+                )
+                return
+
+        self._running_jobs.add(job_id)
         try:
-            from .executor import execute_with_retry
+            logger.info("Executing cron job '%s' (id=%s)", job.name, job.id)
+            started_at = time.time()
+            try:
+                from .executor import execute_with_retry
 
-            max_retries = getattr(self, "_max_transient_retries", 3)
-            result = await execute_with_retry(job, self.execute_fn, max_retries=max_retries)
-            if result.status == "success":
-                job.consecutive_errors = 0
-                job.last_run_status = "success"
-                job.last_error = None
-            else:
+                max_retries = getattr(self, "_max_transient_retries", 3)
+                result = await execute_with_retry(job, self.execute_fn, max_retries=max_retries)
+                if result.status == "success":
+                    job.consecutive_errors = 0
+                    job.last_run_status = "success"
+                    job.last_error = None
+                else:
+                    job.consecutive_errors += 1
+                    job.last_run_status = result.status
+                    job.last_error = result.error or result.status
+                    logger.error(
+                        "Job '%s' failed (consecutive=%d): %s",
+                        job.name,
+                        job.consecutive_errors,
+                        job.last_error,
+                    )
+
+                    if job.consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
+                        logger.warning(
+                            "Job '%s' auto-disabled after %d consecutive errors",
+                            job.name,
+                            job.consecutive_errors,
+                        )
+                        job.enabled = False
+                        self._unschedule_job(job.id)
+
+                    if job.consecutive_errors >= self._failure_alert_after:
+                        await self._send_failure_alert(job)
+
+                logger.info("Job '%s' completed: %s", job.name, result.status)
+            except Exception as e:
                 job.consecutive_errors += 1
-                job.last_run_status = result.status
-                job.last_error = result.error or result.status
+                job.last_run_status = "error"
+                job.last_error = f"{type(e).__name__}: {e}"
                 logger.error(
-                    "Job '%s' failed (consecutive=%d): %s",
-                    job.name,
-                    job.consecutive_errors,
-                    job.last_error,
+                    "Job '%s' failed (consecutive=%d): %s", job.name, job.consecutive_errors, e
                 )
 
                 if job.consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
-                    logger.warning(
-                        "Job '%s' auto-disabled after %d consecutive errors",
-                        job.name,
-                        job.consecutive_errors,
-                    )
                     job.enabled = False
                     self._unschedule_job(job.id)
 
-                if job.consecutive_errors >= self._failure_alert_after:
-                    await self._send_failure_alert(job)
+            job.last_run_at = started_at
+            await self.store.save_job(job)
 
-            logger.info("Job '%s' completed: %s", job.name, result.status)
-        except Exception as e:
-            job.consecutive_errors += 1
-            job.last_run_status = "error"
-            job.last_error = f"{type(e).__name__}: {e}"
-            logger.error(
-                "Job '%s' failed (consecutive=%d): %s", job.name, job.consecutive_errors, e
-            )
+            # Trigger downstream jobs that depend on this one
+            if job.last_run_status == "success":
+                await self._trigger_dependents(job_id)
 
-            if job.consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
-                job.enabled = False
-                self._unschedule_job(job.id)
-
-        job.last_run_at = started_at
-        await self.store.save_job(job)
-
-        if job.schedule.kind == "at" and job.delete_after_run:
-            await self.remove_job(job.id)
+            if job.schedule.kind == "at" and job.delete_after_run:
+                await self.remove_job(job.id)
+        finally:
+            self._running_jobs.discard(job_id)
 
     def list_jobs(self) -> list[CronJob]:
         return list(self._jobs.values())
@@ -209,6 +241,7 @@ class CronService:
             payload=create.payload,
             delivery=create.delivery,
             session_target=create.session_target,
+            depends_on=create.depends_on,
         )
         if job.schedule.kind == "at":
             job.delete_after_run = True
@@ -237,6 +270,8 @@ class CronService:
             job.delivery = patch.delivery
         if patch.session_target is not None:
             job.session_target = patch.session_target
+        if patch.depends_on is not None:
+            job.depends_on = patch.depends_on
 
         await self.store.save_job(job)
         self._unschedule_job(job.id)
@@ -258,7 +293,39 @@ class CronService:
         job = self._jobs.get(job_id)
         if job is None:
             return None
-        return await self.execute_fn(job)
+        if job_id in self._running_jobs:
+            from .types import CronRunResult
+            return CronRunResult(
+                job_id=job_id,
+                status="error",
+                error="job is already running",
+                started_at=time.time(),
+                finished_at=time.time(),
+            )
+        self._running_jobs.add(job_id)
+        try:
+            return await self.execute_fn(job)
+        finally:
+            self._running_jobs.discard(job_id)
+
+    async def _trigger_dependents(self, completed_job_id: str):
+        """Trigger jobs that depend on the completed job, if all their dependencies are satisfied."""
+        for other_id, other_job in self._jobs.items():
+            if completed_job_id not in other_job.depends_on:
+                continue
+            if not other_job.enabled or other_id in self._running_jobs:
+                continue
+            # Check all dependencies for this job
+            all_met = all(
+                (dep := self._jobs.get(d)) is not None and dep.last_run_status == "success"
+                for d in other_job.depends_on
+            )
+            if all_met:
+                logger.info(
+                    "Triggering dependent job '%s' (id=%s) after '%s' completed",
+                    other_job.name, other_id, completed_job_id,
+                )
+                asyncio.create_task(self._run_job(other_id))
 
     def status(self) -> dict:
         enabled = sum(1 for j in self._jobs.values() if j.enabled)

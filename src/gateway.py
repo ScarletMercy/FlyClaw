@@ -108,16 +108,6 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
                 status_code=415,
             )
 
-        # Apply rate limiting
-        client_ip = request.client.host if request.client else "unknown"
-        if not await _rate_limiter.acquire(client_ip):
-            wait = await _rate_limiter.wait_time(client_ip)
-            return JSONResponse(
-                {"error": "rate_limit_exceeded", "retry_after": wait},
-                status_code=429,
-                headers={"Retry-After": str(int(wait))},
-            )
-
         try:
             body = await request.json()
         except json.JSONDecodeError:
@@ -126,10 +116,21 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
                 status_code=400,
             )
 
+        # Auth check before rate limiting
         auth_header = request.headers.get("Authorization", "")
         token = auth_header.removeprefix("Bearer ").strip()
-        if app_config.gateway.auth_token and token != app_config.gateway.auth_token:
+        if app_config.gateway.auth_token and not hmac.compare_digest(token, app_config.gateway.auth_token):
             return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+        # Apply rate limiting only after auth
+        client_ip = request.client.host if request.client else "unknown"
+        if not await _rate_limiter.acquire(client_ip):
+            wait = await _rate_limiter.wait_time(client_ip)
+            return JSONResponse(
+                {"error": "rate_limit_exceeded", "retry_after": wait},
+                status_code=429,
+                headers={"Retry-After": str(int(wait))},
+            )
 
         messages = body.get("messages", [])
         model_name = body.get("model", "myclaw")
@@ -177,7 +178,13 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
                 },
             )
 
-        result = await compiled_graph.ainvoke(input_state, config)
+        try:
+            result = await compiled_graph.ainvoke(input_state, config)
+        except Exception as e:
+            return JSONResponse(
+                {"error": {"message": str(e), "type": "server_error"}},
+                status_code=500,
+            )
         assistant_text = ""
         for msg in reversed(result.get("messages", [])):
             if isinstance(msg, AIMessage) and msg.content:
@@ -205,20 +212,25 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
         yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'myclaw', 'choices': [{'index': 0, 'delta': {'role': 'assistant'}, 'finish_reason': None}]})}\n\n"
 
         collected_text = []
-        async for event in graph.astream_events(input_state, config, version="v2"):
-            kind = event.get("event", "")
-            if kind == "on_chat_model_stream":
-                chunk = event.get("data", {}).get("chunk")
-                if chunk and hasattr(chunk, "text") and chunk.text:
-                    collected_text.append(chunk.text)
-                    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'myclaw', 'choices': [{'index': 0, 'delta': {'content': chunk.text}, 'finish_reason': None}]})}\n\n"
+        try:
+            async for event in graph.astream_events(input_state, config, version="v2"):
+                kind = event.get("event", "")
+                if kind == "on_chat_model_stream":
+                    chunk = event.get("data", {}).get("chunk")
+                    if chunk and hasattr(chunk, "text") and chunk.text:
+                        collected_text.append(chunk.text)
+                        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'myclaw', 'choices': [{'index': 0, 'delta': {'content': chunk.text}, 'finish_reason': None}]})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'myclaw', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop', 'error': str(e)}]})}\n\n"
+            yield "data: [DONE]\n\n"
+            return
 
         yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'myclaw', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
         yield "data: [DONE]\n\n"
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):
-        await ws.accept()
+        await ws.accept(max_size=1024 * 1024)
 
         auth_token = app_config.gateway.auth_token
 
@@ -244,6 +256,7 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
                 await ws.close(code=4002, reason="auth timeout")
                 return
             except (json.JSONDecodeError, Exception) as e:
+                logger.warning("WS auth error: %s", e)
                 await ws.close(code=4001, reason="auth error")
                 return
 
@@ -332,12 +345,17 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
                 }
             )
         elif method == "cron.add" and cron_service:
-            from src.cron.types import CronJobCreate
+            try:
+                from src.cron.types import CronJobCreate
 
-            job = await cron_service.add_job(CronJobCreate(**params))
-            await ws.send_json(
-                {"type": "res", "id": frame_id, "ok": True, "payload": job.model_dump()}
-            )
+                job = await cron_service.add_job(CronJobCreate(**params))
+                await ws.send_json(
+                    {"type": "res", "id": frame_id, "ok": True, "payload": job.model_dump()}
+                )
+            except Exception as e:
+                await ws.send_json(
+                    {"type": "res", "id": frame_id, "ok": False, "error": {"code": "INVALID_PARAMS", "message": str(e)}}
+                )
         elif method == "cron.run" and cron_service:
             result = await cron_service.run_job_now(params.get("job_id", ""))
             await ws.send_json(
@@ -363,7 +381,7 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
             return
         auth = request.headers.get("Authorization", "")
         token = auth.removeprefix("Bearer ").strip()
-        if token != app_config.gateway.auth_token:
+        if not hmac.compare_digest(token, app_config.gateway.auth_token):
             raise HTTPException(status_code=401, detail="unauthorized")
 
     if cron_service:
@@ -383,9 +401,12 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
         @app.post("/api/cron/jobs")
         async def cron_add_job(request: Request):
             await _verify_api_auth(request)
-            body = await request.json()
-            job = await cron_service.add_job(CronJobCreate(**body))
-            return job.model_dump()
+            try:
+                body = await request.json()
+                job = await cron_service.add_job(CronJobCreate(**body))
+                return job.model_dump()
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=422)
 
         @app.get("/api/cron/jobs/{job_id}")
         async def cron_get_job(job_id: str, request: Request):
@@ -398,8 +419,11 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
         @app.patch("/api/cron/jobs/{job_id}")
         async def cron_update_job(job_id: str, request: Request):
             await _verify_api_auth(request)
-            body = await request.json()
-            job = await cron_service.update_job(job_id, CronJobPatch(**body))
+            try:
+                body = await request.json()
+                job = await cron_service.update_job(job_id, CronJobPatch(**body))
+            except Exception as e:
+                return JSONResponse({"error": str(e)}, status_code=422)
             if not job:
                 return JSONResponse({"error": "not found"}, status_code=404)
             return job.model_dump()
@@ -440,7 +464,8 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
         return [r.model_dump() for r in mgr.list_pending()]
 
     @app.get("/api/plugins")
-    async def list_plugins():
+    async def list_plugins(request: Request):
+        await _verify_api_auth(request)
         try:
             from src.plugins.registry import get_plugin_registry
 
@@ -449,7 +474,8 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
             return []
 
     @app.get("/api/commands")
-    async def list_commands():
+    async def list_commands(request: Request):
+        await _verify_api_auth(request)
         try:
             from src.commands.dispatcher import get_dispatcher
 
@@ -462,10 +488,27 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
 
     @app.post("/api/feishu/card-action")
     async def feishu_card_action(req: Request):
+        await _verify_api_auth(req)
         body = await req.json()
         action = body.get("action", {})
         action_value = action.get("value", "")
-        request_id = action_value
+
+        # Parse value: may be JSON {"request_id": ..., "decision": ...} or plain string
+        request_id = ""
+        decision = "deny"
+        if isinstance(action_value, dict):
+            request_id = action_value.get("request_id", "")
+            decision = action_value.get("decision", "deny")
+        elif isinstance(action_value, str):
+            try:
+                value_data = json.loads(action_value)
+                if isinstance(value_data, dict):
+                    request_id = value_data.get("request_id", "")
+                    decision = value_data.get("decision", "deny")
+                else:
+                    request_id = action_value
+            except (json.JSONDecodeError, TypeError):
+                request_id = action_value
 
         from src.channels.cards import get_card_callback_registry
 
@@ -478,7 +521,7 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
                 return {"success": True}
             except Exception as e:
                 logger.error("Card callback error: %s", e)
-                return {"success": False, "error": str(e)}
+                return {"success": False, "error": "internal error"}
 
         if request_id:
             from src.tools.approval import get_approval_manager
@@ -486,7 +529,6 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
             mgr = get_approval_manager()
             pending = mgr.get_pending(request_id)
             if pending:
-                decision = action.get("tag", "deny")
                 if decision not in ("allow_once", "allow_always", "deny"):
                     decision = "deny"
                 mgr.resolve(request_id, decision)

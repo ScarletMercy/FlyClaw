@@ -39,14 +39,25 @@ class PluginRecord(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
-def _load_module(module_path: Path, module_name: str):
+def _load_module(module_path: Path, module_name: str, allowed_dir: Optional[Path] = None):
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     if spec is None or spec.loader is None:
         logger.error("Cannot load module: %s", module_path)
         return None
+    if allowed_dir is not None:
+        resolved = module_path.resolve()
+        try:
+            resolved.relative_to(allowed_dir.resolve())
+        except ValueError:
+            logger.error("Path traversal attempt: %s outside %s", module_path, allowed_dir)
+            return None
     module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception:
+        logger.error("Failed to execute module: %s", module_path, exc_info=True)
+        return None
     sys.modules[module_name] = module
-    spec.loader.exec_module(module)
     return module
 
 
@@ -92,7 +103,7 @@ def load_plugin(plugin_dir: Path) -> Optional[PluginRecord]:
                 tools_path,
             )
             continue
-        module = _load_module(tools_path, f"plugin_{manifest.id}_{tools_path.stem}")
+        module = _load_module(tools_path, f"plugin_{manifest.id}_{tools_path.stem}", allowed_dir=plugin_dir)
         if module:
             extracted = _extract_tools(module)
             tools.extend(extracted)
@@ -113,7 +124,7 @@ def load_plugin(plugin_dir: Path) -> Optional[PluginRecord]:
         if not hook_path.exists():
             logger.warning("Plugin %s: hook file not found: %s", manifest.id, file_name)
             continue
-        module = _load_module(hook_path, f"plugin_{manifest.id}_{hook_path.stem}")
+        module = _load_module(hook_path, f"plugin_{manifest.id}_{hook_path.stem}", allowed_dir=plugin_dir)
         if module:
             func = getattr(module, func_name, None)
             if func and callable(func):

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 
 import uvicorn
@@ -54,6 +55,8 @@ class Application:
         self.cron_service = None
         self.api = None
         self._checkpointer_ctx = None
+        self._memory_store = None
+        self._memory_searcher = None
 
     def _resolve_session_key(self, sender_id: str, chat_type: str, chat_id: str, scope: str) -> str:
         if scope == "global":
@@ -126,13 +129,18 @@ class Application:
 
         await self.compiled_graph.aupdate_state(run_config, Command(resume=decision))
 
-        async for _ in self.compiled_graph.astream_events(None, run_config, version="v2"):
-            pass
+        async for event in self.compiled_graph.astream_events(None, run_config, version="v2"):
+            kind = event.get("event", "")
+            if kind == "on_chain_error":
+                err = event.get("data", {}).get("error")
+                logger.error("Post-approval graph error: %s", err)
 
-    def setup(self):
+    async def setup(self):
         """Initialize all application components."""
         logger.info("MyClaw 0.1.0 starting...")
         logger.info("Model: %s/%s", self.config.model.provider, self.config.model.name)
+        if not self.config.gateway.auth_token:
+            logger.warning("Gateway auth_token is empty — all authentication is DISABLED")
 
         # Initialize plugins
         if self.config.plugins.enabled:
@@ -144,9 +152,45 @@ class Application:
         # Initialize sub-agents
         if self.config.agents.subagents:
             from src.agents.registry import init_agent_registry
+            from src.agents.run_registry import init_run_registry
 
             agent_reg = init_agent_registry(self.config)
+            init_run_registry()
             logger.info("Sub-agents: %d registered", agent_reg.count)
+
+        # Initialize memory/RAG system
+        if getattr(self.config, "memory", None) and self.config.memory.enabled:
+            try:
+                from src.memory.store import MemoryStore
+                from src.memory.embeddings import EmbeddingProvider
+                from src.memory.search import MemorySearcher
+                from src.tools.memory_tools import set_memory_searcher
+
+                store = MemoryStore(
+                    self.config.memory.db_path,
+                    dimensions=self.config.memory.embedding_dimensions,
+                    fts_tokenizer=self.config.memory.fts_tokenizer,
+                )
+                await store.initialize()
+                self._memory_store = store
+
+                embeddings = EmbeddingProvider(self.config.memory, self.config.model)
+                searcher = MemorySearcher(store, embeddings, self.config.memory)
+                set_memory_searcher(searcher)
+                self._memory_searcher = searcher
+
+                # Index extra paths
+                indexed = 0
+                for path_str in self.config.memory.extra_paths:
+                    p = Path(path_str).expanduser()
+                    if p.exists() and p.is_file():
+                        content = p.read_text(encoding="utf-8")
+                        n = await searcher.index_document(str(p), content)
+                        indexed += n
+                        logger.info("Memory indexed: %s (%d chunks)", p, n)
+                logger.info("Memory system initialized (extra paths: %d chunks)", indexed)
+            except Exception as e:
+                logger.warning("Failed to initialize memory system: %s", e)
 
         # Create model and collect tools
         model = create_model(self.config)
@@ -168,7 +212,15 @@ class Application:
         )
 
         # Compile graph with checkpointer
-        if self.config.checkpointer.type == "memory":
+        if self.config.checkpointer.type == "sqlite":
+            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+            db_path = Path(self.config.checkpointer.path)
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._checkpointer_ctx = AsyncSqliteSaver.from_conn_string(str(db_path))
+            self.checkpointer = await self._checkpointer_ctx.__aenter__()
+            self.compiled_graph = self.graph.compile(checkpointer=self.checkpointer)
+        elif self.config.checkpointer.type == "memory":
             from langgraph.checkpoint.memory import InMemorySaver
 
             self.compiled_graph = self.graph.compile(checkpointer=InMemorySaver())
@@ -195,6 +247,21 @@ class Application:
 
         # Register built-in commands
         self._register_builtin_commands(tools, skills)
+
+        # Initialize media understanding runner for Feishu auto-processing
+        if self.config.tools.media_understanding.enabled:
+            try:
+                from src.media_understanding.runner import MediaUnderstandingRunner
+                from src.channels.feishu import set_media_understanding_runner
+
+                mu_runner = MediaUnderstandingRunner(
+                    self.config.tools.media_understanding,
+                    fallback_api_key=self.config.model.api_key or "",
+                )
+                set_media_understanding_runner(mu_runner)
+                logger.info("Media understanding runner initialized for Feishu channel")
+            except Exception as e:
+                logger.warning("Failed to init media understanding: %s", e)
 
         # Initialize cron service
         if self.config.cron.enabled:
@@ -319,7 +386,6 @@ class Application:
             )
 
             assistant_text = None
-            stream_started = False
             try:
                 async for event in self.compiled_graph.astream_events(input_state, run_config, version="v2"):
                     kind = event.get("event", "")
@@ -346,13 +412,6 @@ class Application:
                                     )
                         continue
 
-                    if kind == "on_chat_model_stream":
-                        chunk = event.get("data", {}).get("chunk")
-                        if chunk and hasattr(chunk, "text") and chunk.text:
-                            if not stream_started:
-                                stream_started = True
-                            await stream_fn(chunk.text, done=False)
-
                 state = await self.compiled_graph.aget_state(run_config)
                 tasks = state.tasks
                 for task in tasks:
@@ -377,7 +436,7 @@ class Application:
 
             if assistant_text:
                 # Append link previews if configured
-                if not stream_started and getattr(self.config, "link_understanding", None) and self.config.link_understanding.enabled:
+                if getattr(self.config, "link_understanding", None) and self.config.link_understanding.enabled:
                     try:
                         from src.link_understanding import detect_and_preview_links
 
@@ -387,14 +446,55 @@ class Application:
                     except Exception:
                         pass
 
-                if stream_started:
-                    await stream_fn("", done=True)
-                else:
-                    await reply_fn(assistant_text)
+                # TTS processing
+                tts_text = ""
+                if getattr(self.config, "tts", None) and self.config.tts.enabled and self.config.tts.auto_mode != "off":
+                    try:
+                        await self._handle_tts(assistant_text, chat_id)
+                        if self.config.tts.auto_mode == "tagged":
+                            from src.tts.directives import strip_tts_directives
+                            tts_text = strip_tts_directives(assistant_text)
+                    except Exception as e:
+                        logger.warning("TTS processing failed: %s", e)
+
+                display_text = tts_text if tts_text else assistant_text
+                await reply_fn(display_text)
                 await self.typing.stop(message_id)
-                logger.info("Reply to %s: %.100s", session_key, assistant_text)
+                logger.info("Reply to %s: %.100s", session_key, display_text)
+
+                # Session memory: auto-write Q&A to memory
+                if getattr(self, '_memory_searcher', None) and self.config.memory.enabled and getattr(self.config.memory, 'auto_session_memory', False):
+                    try:
+                        await self._memory_searcher.store.add_document(
+                            f"session:{session_key}",
+                            f"Q: {text}\nA: {display_text}",
+                        )
+                    except Exception:
+                        pass
 
         return on_feishu_message
+
+    async def _handle_tts(self, assistant_text: str, chat_id: str):
+        """Process TTS for assistant text based on auto_mode."""
+        if not self.config.tts.enabled:
+            return
+
+        tts_config = self.config.tts
+        from src.tts.provider import TtsProvider
+        from src.tts.directives import parse_tts_directives
+
+        provider = TtsProvider(tts_config, self.config.model)
+
+        if tts_config.auto_mode == "always":
+            audio = await provider.synthesize(assistant_text)
+            if audio:
+                await self.feishu.send_audio(chat_id, audio)
+        elif tts_config.auto_mode == "tagged":
+            directives = parse_tts_directives(assistant_text)
+            for directive in directives:
+                audio = await provider.synthesize(directive.text)
+                if audio:
+                    await self.feishu.send_audio(chat_id, audio)
 
     async def _on_startup(self):
         # Run security audit on startup
@@ -405,16 +505,6 @@ class Application:
                 run_security_audit(self.config)
             except Exception as e:
                 logger.warning("Security audit failed: %s", e)
-
-        if self.compiled_graph is None and self.config.checkpointer.type == "sqlite":
-            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-
-            db_path = Path(self.config.checkpointer.path)
-            db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._checkpointer_ctx = AsyncSqliteSaver.from_conn_string(str(db_path))
-            self.checkpointer = await self._checkpointer_ctx.__aenter__()
-            self.compiled_graph = self.graph.compile(checkpointer=self.checkpointer)
-            logger.info("SQLite checkpointer initialized")
 
         if self.config.skills.enabled and self.config.skills.watch:
             from src.skills.watcher import start_skills_watcher
@@ -428,6 +518,20 @@ class Application:
             await self.cron_service.start()
 
         await self.session_tracker.start_periodic_cleanup(self.compiled_graph)
+
+        # Start memory watcher for auto-reindexing
+        if self._memory_searcher and getattr(self.config.memory, 'watch', False):
+            try:
+                from src.memory.watcher import start_memory_watcher
+
+                await start_memory_watcher(
+                    self.config.memory.extra_paths,
+                    lambda path, content: asyncio.ensure_future(
+                        self._memory_searcher.index_document(path, content)
+                    ),
+                )
+            except Exception as e:
+                logger.warning("Failed to start memory watcher: %s", e)
 
         await self.feishu.start()
         logger.info(
@@ -443,10 +547,14 @@ class Application:
 
     async def _on_shutdown(self):
         try:
+            if hasattr(self, '_memory_store') and self._memory_store:
+                await self._memory_store.close()
             if self.config.skills.enabled and self.config.skills.watch:
                 from src.skills.watcher import stop_skills_watcher
 
-                stop_skills_watcher()
+                await stop_skills_watcher()
+            from src.memory.watcher import stop_memory_watcher
+            await stop_memory_watcher()
             if self.cron_service:
                 await self.cron_service.stop()
             await self.session_tracker.stop()
@@ -463,20 +571,27 @@ class Application:
                 except Exception:
                     pass
 
-    def run(self):
-        """Run the application (blocking)."""
-        uvicorn.run(
+    async def run_async(self):
+        """Run the application using the current event loop (non-blocking setup)."""
+        config = uvicorn.Config(
             self.api,
             host=self.config.gateway.host,
             port=self.config.gateway.port,
             log_level="warning",
         )
+        server = uvicorn.Server(config)
+        await server.serve()
 
 
 def main():
+    """Sync entry point for console script (myclaw)."""
     app = Application()
-    app.setup()
-    app.run()
+
+    async def _run():
+        await app.setup()
+        await app.run_async()
+
+    asyncio.run(_run())
 
 
 if __name__ == "__main__":

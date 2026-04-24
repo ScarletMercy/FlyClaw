@@ -26,19 +26,62 @@ from .base import Channel
 logger = logging.getLogger("myclaw.feishu")
 
 _feishu_client: Optional[lark.Client] = None
-_ws_client: Optional[WsClient] = None
+_feishu_channel: Optional["FeishuChannel"] = None
 _bot_info: Optional[dict] = None
-_on_message_callback: Optional[Callable] = None
-_processed_messages: deque = deque(maxlen=10000)
-_processed_messages_lock = asyncio.Lock()
-_reply_dispatchers: dict[str, Any] = {}
 _token_cache: dict[str, dict] = {}
+_mu_runner = None  # Fallback only; prefer _feishu_channel._mu_runner
+
+
+def set_media_understanding_runner(runner):
+    """Set the media understanding runner for auto-processing media attachments."""
+    if _feishu_channel:
+        _feishu_channel._mu_runner = runner
+    else:
+        global _mu_runner
+        _mu_runner = runner
 
 
 def _resolve_api_base(domain: str) -> str:
     if domain == "lark":
         return "https://open.larksuite.com/open-apis"
     return "https://open.feishu.cn/open-apis"
+
+
+_MAX_API_RETRIES = 3
+
+
+async def _feishu_api_request(
+    request_fn,
+    *,
+    description: str = "Feishu API",
+) -> httpx.Response:
+    """Execute an httpx request to the Feishu API with 429 retry logic."""
+    import random as _random
+
+    for attempt in range(_MAX_API_RETRIES + 1):
+        resp = await request_fn()
+        if resp.status_code != 429:
+            return resp
+        if attempt >= _MAX_API_RETRIES:
+            logger.warning("%s: 429 rate limit persisted after %d retries", description, _MAX_API_RETRIES)
+            return resp
+        retry_after = resp.headers.get("Retry-After")
+        if retry_after:
+            try:
+                wait = float(retry_after)
+            except ValueError:
+                wait = 1.0
+        else:
+            wait = min(1.0 * (2 ** attempt), 8.0)
+            wait += _random.uniform(0, wait * 0.1)
+        logger.warning("%s: 429 rate limited, retry %d/%d in %.1fs", description, attempt + 1, _MAX_API_RETRIES, wait)
+        await asyncio.sleep(wait)
+    return resp
+
+
+async def feishu_api_request(request_fn, *, description: str = "Feishu API") -> httpx.Response:
+    """Public wrapper for Feishu API requests with 429 retry logic."""
+    return await _feishu_api_request(request_fn, description=description)
 
 
 async def _get_tenant_token(app_id: str, app_secret: str, domain: str) -> str:
@@ -49,10 +92,13 @@ async def _get_tenant_token(app_id: str, app_secret: str, domain: str) -> str:
 
     api_base = _resolve_api_base(domain)
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-        resp = await client.post(
-            f"{api_base}/auth/v3/tenant_access_token/internal",
-            json={"app_id": app_id, "app_secret": app_secret},
-            timeout=10,
+        resp = await _feishu_api_request(
+            lambda: client.post(
+                f"{api_base}/auth/v3/tenant_access_token/internal",
+                json={"app_id": app_id, "app_secret": app_secret},
+                timeout=10,
+            ),
+            description="Tenant token refresh",
         )
     data = resp.json()
     if data.get("code") != 0 or not data.get("tenant_access_token"):
@@ -109,9 +155,7 @@ class StreamingCardSession:
         self._pending_text: Optional[str] = None
         self._closed: bool = False
         self._last_update: float = 0
-        self._throttle_ms: int = 800
-        self._queue: asyncio.Task | None = None
-        self._lock = asyncio.Lock()
+        self._throttle_ms: int = 100
         self._token: Optional[str] = None
         self._token_expires: float = 0
         self._http_client: Optional[httpx.AsyncClient] = None
@@ -146,7 +190,8 @@ class StreamingCardSession:
             },
         }
 
-        resp = await self._http_client.post(
+        resp = await _feishu_api_request(
+            lambda: self._http_client.post(
                 f"{api_base}/cardkit/v1/cards",
                 headers={
                     "Authorization": f"Bearer {token}",
@@ -154,10 +199,15 @@ class StreamingCardSession:
                 },
                 json={"type": "card_json", "data": json.dumps(card_json)},
                 timeout=10,
-            )
+            ),
+            description="Create streaming card",
+        )
         data = resp.json()
         if data.get("code") != 0 or not data.get("data", {}).get("card_id"):
             logger.error("Create streaming card failed: %s", data.get("msg"))
+            if self._http_client:
+                await self._http_client.aclose()
+                self._http_client = None
             return None
         self._card_id = data["data"]["card_id"]
         self._sequence = 1
@@ -193,12 +243,15 @@ class StreamingCardSession:
                 self._message_id = resp_data.data.message_id
         except Exception as e:
             logger.error("Send streaming card failed: %s", e)
+            if self._http_client:
+                await self._http_client.aclose()
+                self._http_client = None
             return None
 
         logger.debug("Streaming card started: %s", self._card_id)
         return self._card_id
 
-    async def update(self, text: str) -> None:
+    async def update(self, text: str, flush: bool = False) -> None:
         if not self._card_id or self._closed:
             return
 
@@ -207,7 +260,7 @@ class StreamingCardSession:
             return
 
         now = _time.monotonic() * 1000
-        if now - self._last_update < self._throttle_ms:
+        if not flush and now - self._last_update < self._throttle_ms:
             self._pending_text = merged_input
             return
 
@@ -239,18 +292,21 @@ class StreamingCardSession:
             token = await self._ensure_token()
             if not token:
                 return
-            await self._http_client.put(
-                f"{api_base}/cardkit/v1/cards/{self._card_id}/elements/content/content",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "content": _format_for_card_md(merged_text),
-                    "sequence": self._sequence,
-                    "uuid": f"s_{self._card_id}_{self._sequence}",
-                },
-                timeout=10,
+            await _feishu_api_request(
+                lambda: self._http_client.put(
+                    f"{api_base}/cardkit/v1/cards/{self._card_id}/elements/content/content",
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "content": _format_for_card_md(merged_text),
+                        "sequence": self._sequence,
+                        "uuid": f"s_{self._card_id}_{self._sequence}",
+                    },
+                    timeout=10,
+                ),
+                description="Streaming card update",
             )
         except Exception as e:
             logger.debug("Streaming card update failed: %s", e)
@@ -269,18 +325,21 @@ class StreamingCardSession:
             if text and text != self._current_text:
                 self._sequence += 1
                 try:
-                    await self._http_client.put(
-                        f"{api_base}/cardkit/v1/cards/{self._card_id}/elements/content/content",
-                        headers={
-                            "Authorization": f"Bearer {token}",
-                            "Content-Type": "application/json",
-                        },
-                        json={
-                            "content": _format_for_card_md(text),
-                            "sequence": self._sequence,
-                            "uuid": f"s_{self._card_id}_{self._sequence}",
-                        },
-                        timeout=10,
+                    await _feishu_api_request(
+                        lambda: self._http_client.put(
+                            f"{api_base}/cardkit/v1/cards/{self._card_id}/elements/content/content",
+                            headers={
+                                "Authorization": f"Bearer {token}",
+                                "Content-Type": "application/json",
+                            },
+                            json={
+                                "content": _format_for_card_md(text),
+                                "sequence": self._sequence,
+                                "uuid": f"s_{self._card_id}_{self._sequence}",
+                            },
+                            timeout=10,
+                        ),
+                        description="Streaming card final update",
                     )
                 except Exception as e:
                     logger.debug("Streaming card final update failed: %s", e)
@@ -289,25 +348,28 @@ class StreamingCardSession:
             self._sequence += 1
             summary = text.replace("\n", " ").strip()[:50]
             try:
-                await self._http_client.patch(
-                    f"{api_base}/cardkit/v1/cards/{self._card_id}/settings",
-                    headers={
-                        "Authorization": f"Bearer {token}",
-                        "Content-Type": "application/json; charset=utf-8",
-                    },
-                    json={
-                        "settings": json.dumps(
-                            {
-                                "config": {
-                                    "streaming_mode": False,
-                                    "summary": {"content": summary},
+                await _feishu_api_request(
+                    lambda: self._http_client.patch(
+                        f"{api_base}/cardkit/v1/cards/{self._card_id}/settings",
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Content-Type": "application/json; charset=utf-8",
+                        },
+                        json={
+                            "settings": json.dumps(
+                                {
+                                    "config": {
+                                        "streaming_mode": False,
+                                        "summary": {"content": summary},
+                                    }
                                 }
-                            }
-                        ),
-                        "sequence": self._sequence,
-                        "uuid": f"c_{self._card_id}_{self._sequence}",
-                    },
-                    timeout=10,
+                            ),
+                            "sequence": self._sequence,
+                            "uuid": f"c_{self._card_id}_{self._sequence}",
+                        },
+                        timeout=10,
+                    ),
+                    description="Streaming card close",
                 )
             except Exception as e:
                 logger.debug("Streaming card close failed: %s", e)
@@ -332,23 +394,32 @@ def _build_lark_client(app_id: str, app_secret: str, domain: str) -> lark.Client
 
 async def get_bot_info(app_id: str, app_secret: str, domain: str) -> Optional[dict]:
     global _bot_info
+    if _feishu_channel and _feishu_channel._bot_info:
+        return _feishu_channel._bot_info
     if _bot_info:
         return _bot_info
     try:
         api_base = _resolve_api_base(domain)
         token = await _get_tenant_token(app_id, app_secret, domain)
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            resp = await client.get(
-                f"{api_base}/bot/v3/info/",
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=10,
+            resp = await _feishu_api_request(
+                lambda: client.get(
+                    f"{api_base}/bot/v3/info/",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10,
+                ),
+                description="Get bot info",
             )
         data = resp.json()
         if data.get("code") == 0 and data.get("bot"):
             bot = data["bot"]
-            _bot_info = {"open_id": bot.get("open_id", ""), "name": bot.get("app_name", "")}
-            logger.info("Bot identity: %s (%s)", _bot_info["name"], _bot_info["open_id"])
-            return _bot_info
+            info = {"open_id": bot.get("open_id", ""), "name": bot.get("app_name", "")}
+            if _feishu_channel:
+                _feishu_channel._bot_info = info
+            else:
+                _bot_info = info
+            logger.info("Bot identity: %s (%s)", info["name"], info["open_id"])
+            return info
     except Exception as e:
         logger.error("Failed to get bot info: %s", e)
     return None
@@ -434,6 +505,92 @@ def _parse_media_content(msg_type: str, content: str) -> str:
     return f"[{msg_type}] {content[:200]}"
 
 
+async def _process_media_message(
+    msg_type: str,
+    content: str,
+    message_id: str,
+    feishu_client,
+    mu_runner,
+) -> str:
+    """Download and understand a media message. Returns description text or empty string.
+
+    Feishu message types:
+      image  -> content has {"image_key": "img_v3_xxx"}
+      audio  -> content has {"file_key": "file_v3_xxx"}
+      video  -> content has {"file_key": "file_v3_xxx"}
+      file   -> content has {"file_key": "file_v3_xxx", "file_name": "doc.pdf"}
+    """
+    try:
+        data = json.loads(content)
+    except (json.JSONDecodeError, TypeError):
+        return ""
+
+    try:
+        if msg_type == "image":
+            image_key = data.get("image_key", "")
+            if not image_key or not mu_runner:
+                return ""
+            from src.channels.media import download_image
+            from src.media_understanding.types import MediaCapability
+
+            image_bytes = await download_image(feishu_client, image_key)
+            if not image_bytes:
+                return ""
+            result = await mu_runner.understand(image_bytes, MediaCapability.IMAGE, mime_type="image/png")
+            if result.text:
+                return f"\n[📎 图片理解]\n{result.text}"
+            if result.error:
+                return f"\n[⚠️ 图片理解失败: {result.error}]"
+            return ""
+
+        elif msg_type in ("audio", "video", "file"):
+            file_key = data.get("file_key", "")
+            if not file_key or not mu_runner:
+                return ""
+            from src.channels.media import download_message_resource
+            from src.media_understanding.types import MediaCapability
+            from src.media_understanding.runner import MediaUnderstandingRunner
+
+            media_bytes = await download_message_resource(feishu_client, message_id, file_key)
+            if not media_bytes:
+                return ""
+
+            cap = None
+            mime = ""
+            if msg_type == "audio":
+                cap = MediaCapability.AUDIO
+                mime = "audio/mp3"
+            elif msg_type == "video":
+                cap = MediaCapability.VIDEO
+                mime = "video/mp4"
+            elif msg_type == "file":
+                filename = data.get("file_name", "")
+                if filename:
+                    cap = MediaUnderstandingRunner.guess_capability_from_ext(filename)
+                if cap is None:
+                    return ""
+
+            if cap is None:
+                return ""
+
+            result = await mu_runner.understand(media_bytes, cap, mime_type=mime)
+            label = {
+                MediaCapability.IMAGE: "图片理解",
+                MediaCapability.AUDIO: "语音转录",
+                MediaCapability.VIDEO: "视频理解",
+            }.get(cap, "媒体理解")
+            if result.text:
+                return f"\n[📎 {label}]\n{result.text}"
+            if result.error:
+                return f"\n[⚠️ {label}失败: {result.error}]"
+            return ""
+
+    except Exception as e:
+        logger.warning("Media processing failed (type=%s): %s", msg_type, e)
+
+    return ""
+
+
 def _extract_mentions(event_data: dict, bot_open_id: str) -> tuple[str, list[dict]]:
     sender = event_data.get("sender", {})
     sender_id = sender.get("sender_id", {}).get("open_id", "unknown")
@@ -478,17 +635,23 @@ def _extract_mentions(event_data: dict, bot_open_id: str) -> tuple[str, list[dic
 
 class FeishuChannel(Channel):
     def __init__(self, config):
-        global _feishu_client, _on_message_callback
+        global _feishu_client, _feishu_channel
         self.config = config
         _feishu_client = _build_lark_client(config.app_id, config.app_secret, config.domain)
         self.client = _feishu_client
+        _feishu_channel = self
         self._running = False
         self._chat_queues: dict[str, asyncio.Queue] = {}
         self._streaming_sessions: dict[str, StreamingCardSession] = {}
+        self._on_message_callback: Optional[Callable] = None
+        self._processed_messages: deque = deque(maxlen=10000)
+        self._processed_messages_lock = asyncio.Lock()
+        self._bot_info: Optional[dict] = None
+        self._mu_runner = None
+        self._ws_client: Optional[WsClient] = None
 
     def set_message_callback(self, callback: Callable):
-        global _on_message_callback
-        _on_message_callback = callback
+        self._on_message_callback = callback
 
     async def start(self):
         if not self.config.enabled:
@@ -529,10 +692,26 @@ class FeishuChannel(Channel):
             domain=domain_url,
             log_level=lark.LogLevel.WARNING,
         )
-        # Suppress SDK "processor not found" errors for unhandled event types
+        # Log unhandled event types, suppress noise
         _lark_logger = logging.getLogger("Lark")
-        _lark_logger.setLevel(logging.CRITICAL)
         _lark_logger.handlers.clear()
+        _lark_logger.propagate = False
+
+
+        class _EventFilter(logging.Filter):
+            def filter(self, record):
+                msg = record.getMessage()
+                if "processor not found" in msg:
+                    return False
+                return True
+
+
+        _fh = logging.StreamHandler()
+        _fh.setFormatter(logging.Formatter("[lark] %(message)s"))
+        _fh.setLevel(logging.ERROR)
+        _fh.addFilter(_EventFilter())
+        _lark_logger.addHandler(_fh)
+        _lark_logger.setLevel(logging.WARNING)
         self._running = True
 
         def _start_ws():
@@ -540,7 +719,7 @@ class FeishuChannel(Channel):
                 self._ws_client.start()
             except Exception as e:
                 if self._running:
-                    logger.error("WebSocket client startup failed: %s", e)
+                    logger.error("WebSocket client failed: %s", e, exc_info=True)
                 self._running = False
 
         import threading
@@ -551,7 +730,7 @@ class FeishuChannel(Channel):
 
     async def _on_message(self, event: Any):
         try:
-            if not _on_message_callback:
+            if not self._on_message_callback:
                 return
             if not event.event or not event.event.message:
                 return
@@ -565,10 +744,10 @@ class FeishuChannel(Channel):
         if not message_id:
             return
 
-        async with _processed_messages_lock:
-            if message_id in _processed_messages:
+        async with self._processed_messages_lock:
+            if message_id in self._processed_messages:
                 return
-            _processed_messages.append(message_id)
+            self._processed_messages.append(message_id)
 
         bot = await get_bot_info(self.config.app_id, self.config.app_secret, self.config.domain)
         bot_open_id = bot["open_id"] if bot else ""
@@ -589,6 +768,17 @@ class FeishuChannel(Channel):
                 bot_mentioned = True
 
         text = _parse_message_content(msg_type, content)
+
+        # Auto-process media attachments (image/audio/video/file)
+        if self._mu_runner and msg_type in ("image", "audio", "video", "file"):
+            media_desc = await _process_media_message(
+                msg_type, content, message_id, self.client, self._mu_runner
+            )
+            if media_desc:
+                text = media_desc
+            if not text.strip():
+                text = f"[{msg_type} message received, understanding returned empty]"
+
         if chat_type == "group" and bot_mentioned:
             text = re.sub(r"@_user_\d+\s*", "", text).strip()
         if not text.strip():
@@ -617,14 +807,15 @@ class FeishuChannel(Channel):
                     return
 
         logger.info(
-            "Feishu message: chat=%s sender=%s type=%s text=%.100s",
+            "Feishu message: chat=%s sender=%s type=%s text=%.100s (len=%d)",
             chat_id,
             sender_id,
             chat_type,
             text,
+            len(text),
         )
 
-        await _on_message_callback(
+        await self._on_message_callback(
             text=text,
             sender_id=sender_id,
             chat_id=chat_id,
@@ -724,7 +915,7 @@ class FeishuChannel(Channel):
         fallback_accumulated: list[str] = []
         lock = asyncio.Lock()
 
-        async def stream_fn(delta: str, done: bool = False):
+        async def stream_fn(delta: str, done: bool = False, flush: bool = False):
             nonlocal session_started
 
             if not self.config.streaming:
@@ -753,7 +944,7 @@ class FeishuChannel(Channel):
                         self._streaming_sessions[session_key] = session
 
                 if session and delta:
-                    await session.update(delta)
+                    await session.update(delta, flush=flush)
 
                 if done:
                     if session:
@@ -792,6 +983,60 @@ class FeishuChannel(Channel):
     async def send_file(self, chat_id: str, file_key: str) -> bool:
         content = json.dumps({"file_key": file_key})
         result = await self._do_send(chat_id, content, msg_type="file")
+        return result is not None
+
+    async def send_audio(self, chat_id: str, audio_bytes: bytes, file_name: str = "speech.mp3") -> bool:
+        """Upload audio bytes and send as audio message to chat.
+
+        Uploads via Feishu API, then sends the file_key as an 'audio' message type.
+        """
+        api_base = _resolve_api_base(self.config.domain)
+        token = await _get_tenant_token(self.config.app_id, self.config.app_secret, self.config.domain)
+        if not token:
+            logger.error("send_audio: failed to get tenant token")
+            return False
+
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # Step 1: Create upload request
+        import io
+        from lark_oapi.api.drive.v1 import UploadFileRequest
+
+        upload_req = (
+            UploadFileRequest.builder()
+            .file_name(file_name)
+            .file_size(str(len(audio_bytes)))
+            .file_type("stream")
+            .build()
+        )
+        resp = await asyncio.to_thread(self.client.drive.v1.file.create, upload_req)
+        if not resp.success():
+            logger.error("send_audio: create upload failed: %s %s", resp.code, resp.msg)
+            return False
+
+        upload_data = resp.data
+        if not upload_data or not upload_data.upload_url:
+            logger.error("send_audio: no upload URL in response")
+            return False
+
+        # Step 2: Upload file bytes
+        async with httpx.AsyncClient(timeout=60) as hc:
+            upload_resp = await feishu_api_request(
+                lambda: hc.put(upload_data.upload_url, headers=headers, content=audio_bytes),
+                description="TTS audio upload",
+            )
+        if upload_resp is None or upload_resp.status_code >= 400:
+            logger.error("send_audio: upload failed: %s", upload_resp.status_code if upload_resp else "no response")
+            return False
+
+        file_token = upload_data.file_token
+        if not file_token:
+            logger.error("send_audio: no file_token in upload response")
+            return False
+
+        # Step 3: Send audio message using file_key
+        content = json.dumps({"file_key": file_token})
+        result = await self._do_send(chat_id, content, msg_type="audio")
         return result is not None
 
     async def send_card(
@@ -833,21 +1078,21 @@ class FeishuChannel(Channel):
                                 "tag": "button",
                                 "text": {"tag": "plain_text", "content": "✅ Allow Once"},
                                 "type": "primary",
-                                "value": request_id,
+                                "value": json.dumps({"request_id": request_id, "decision": "allow_once"}),
                                 "url": "",
                             },
                             {
                                 "tag": "button",
                                 "text": {"tag": "plain_text", "content": "✅ Allow Always"},
                                 "type": "primary",
-                                "value": request_id,
+                                "value": json.dumps({"request_id": request_id, "decision": "allow_always"}),
                                 "url": "",
                             },
                             {
                                 "tag": "button",
                                 "text": {"tag": "plain_text", "content": "❌ Deny"},
                                 "type": "danger",
-                                "value": request_id,
+                                "value": json.dumps({"request_id": request_id, "decision": "deny"}),
                                 "url": "",
                             },
                         ],
@@ -858,14 +1103,17 @@ class FeishuChannel(Channel):
 
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-                resp = await client.post(
-                    f"{api_base}/cardkit/v1/cards",
-                    headers={
-                        "Authorization": f"Bearer {token}",
-                        "Content-Type": "application/json",
-                    },
-                    json={"type": "card_json", "data": json.dumps(card_json)},
-                    timeout=10,
+                resp = await _feishu_api_request(
+                    lambda: client.post(
+                        f"{api_base}/cardkit/v1/cards",
+                        headers={
+                            "Authorization": f"Bearer {token}",
+                            "Content-Type": "application/json",
+                        },
+                        json={"type": "card_json", "data": json.dumps(card_json)},
+                        timeout=10,
+                    ),
+                    description="Create approval card",
                 )
             data = resp.json()
             if data.get("code") != 0 or not data.get("data", {}).get("card_id"):

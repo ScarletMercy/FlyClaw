@@ -25,13 +25,6 @@ def set_cron_service(svc):
 
 
 def _get_service():
-    if _cron_service is None:
-        try:
-            from src.main import _app_instance
-            if _app_instance and _app_instance.cron_service:
-                set_cron_service(_app_instance.cron_service)
-        except Exception:
-            pass
     return _cron_service
 
 
@@ -55,7 +48,8 @@ async def cron_list() -> str:
             sched_str = f"at {sched.at}"
         status = "enabled" if j.enabled else "disabled"
         last = f", last: {j.last_run_status}" if j.last_run_status else ""
-        lines.append(f"- [{j.id}] {j.name} ({status}, {sched_str}{last})")
+        dep_str = f", depends_on: {','.join(j.depends_on)}" if j.depends_on else ""
+        lines.append(f"- [{j.id}] {j.name} ({status}, {sched_str}{last}{dep_str})")
     return "\n".join(lines)
 
 
@@ -69,6 +63,7 @@ async def cron_add(
     run_at: Optional[str] = None,
     enabled: bool = True,
     description: str = "",
+    depends_on: str = "",
 ) -> str:
     """Create a new cron job. Execution results will be automatically sent to the current chat.
 
@@ -81,6 +76,7 @@ async def cron_add(
         run_at: ISO datetime string like "2026-04-18 11:12:00" (required if schedule_kind="at")
         enabled: Whether the job is active
         description: Optional description
+        depends_on: Comma-separated job IDs this job depends on (must all succeed before this job runs)
     """
     svc = _get_service()
     if not svc:
@@ -106,6 +102,7 @@ async def cron_add(
     delivery = CronDelivery(mode="announce", to=chat_id) if chat_id else CronDelivery()
     if not chat_id:
         logger.warning("cron_add: no current chat_id, delivery will be disabled")
+    deps = [d.strip() for d in depends_on.split(",") if d.strip()] if depends_on else []
     create = CronJobCreate(
         name=name,
         description=description,
@@ -113,6 +110,7 @@ async def cron_add(
         schedule=schedule,
         payload=payload,
         delivery=delivery,
+        depends_on=deps,
     )
     try:
         job = await svc.add_job(create)
@@ -132,9 +130,9 @@ async def cron_delete(job_id: str) -> str:
     if not svc:
         return "Cron service is not available."
     try:
-        job = await svc.remove_job(job_id)
-        if job:
-            return f"Job deleted: [{job_id}] {job.name}"
+        removed = await svc.remove_job(job_id)
+        if removed:
+            return f"Job deleted: {job_id}"
         return f"Job not found: {job_id}"
     except Exception as e:
         return f"Failed to delete job: {e}"

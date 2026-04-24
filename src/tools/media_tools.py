@@ -77,7 +77,6 @@ async def _send_image_message(client, chat_id: str, image_key: str) -> bool:
 
     try:
         content = json.dumps({"image_key": image_key})
-        req = CreateMessageRequest.builder().receive_id_type("chat_id").build()
         body = (
             CreateMessageRequestBody.builder()
             .receive_id(chat_id)
@@ -85,7 +84,8 @@ async def _send_image_message(client, chat_id: str, image_key: str) -> bool:
             .content(content)
             .build()
         )
-        resp = await asyncio.to_thread(client.im.v1.message.create, req, request_body=body)
+        req = CreateMessageRequest.builder().receive_id_type("chat_id").request_body(body).build()
+        resp = await asyncio.to_thread(client.im.v1.message.create, req)
         return resp.success()
     except Exception as e:
         logger.error("Send image message error: %s", e)
@@ -100,7 +100,6 @@ async def _send_file_message(client, chat_id: str, file_key: str) -> bool:
 
     try:
         content = json.dumps({"file_key": file_key})
-        req = CreateMessageRequest.builder().receive_id_type("chat_id").build()
         body = (
             CreateMessageRequestBody.builder()
             .receive_id(chat_id)
@@ -108,7 +107,8 @@ async def _send_file_message(client, chat_id: str, file_key: str) -> bool:
             .content(content)
             .build()
         )
-        resp = await asyncio.to_thread(client.im.v1.message.create, req, request_body=body)
+        req = CreateMessageRequest.builder().receive_id_type("chat_id").request_body(body).build()
+        resp = await asyncio.to_thread(client.im.v1.message.create, req)
         return resp.success()
     except Exception as e:
         logger.error("Send file message error: %s", e)
