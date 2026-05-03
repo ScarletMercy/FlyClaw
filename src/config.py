@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 import yaml
+
+from src.mcp.config_models import MCPConfig
 from pydantic import BaseModel, ValidationError, Field
 
 _log = logging.getLogger("myclaw.config")
@@ -269,6 +271,7 @@ class AppConfig(BaseModel):
     tts: TtsConfig = Field(default_factory=TtsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     timeouts: TimeoutsConfig = Field(default_factory=TimeoutsConfig)
+    mcp: MCPConfig = Field(default_factory=MCPConfig)
     owner_id: str = ""
 
 
