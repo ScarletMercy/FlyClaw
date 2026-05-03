@@ -165,6 +165,14 @@ class Application:
             registry = init_plugin_registry(self.config.plugins.extra_dirs)
             logger.info("Plugins: %d loaded, %d tools", registry.plugin_count, registry.tool_count)
 
+        # Initialize MCP subsystem
+        if getattr(self.config, "mcp", None) and self.config.mcp.enabled and self.config.mcp.servers:
+            from src.mcp.manager import get_mcp_manager
+
+            mcp_manager = get_mcp_manager()
+            mcp_manager.load_config(self.config.mcp.servers)
+            logger.info("MCP: %d servers configured", len(self.config.mcp.servers))
+
         # Initialize sub-agents
         if self.config.agents.subagents:
             from src.agents.registry import init_agent_registry
@@ -586,6 +594,13 @@ class Application:
             await self.typing.stop_all()
             await self.feishu.stop()
             await self.qq.stop()
+            # Shutdown MCP connections
+            try:
+                from src.mcp.manager import get_mcp_manager
+                mcp_mgr = get_mcp_manager()
+                await mcp_mgr.disconnect_all()
+            except Exception:
+                pass
             if self._checkpointer_ctx:
                 await self._checkpointer_ctx.__aexit__(None, None, None)
             logger.info("MyClaw stopped")
