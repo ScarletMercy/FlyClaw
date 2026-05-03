@@ -758,3 +758,17 @@ def _register_builtin_tools(config) -> None:
             except Exception as e:
                 logger.warning("Failed to load plugin tools: %s", e)
         return []
+
+    @registry.register
+    def _collect_mcp_tools() -> list[BaseTool]:
+        if getattr(config, "mcp", None) and config.mcp.enabled:
+            from src.mcp.manager import get_mcp_manager
+
+            manager = get_mcp_manager()
+            if config.mcp.servers:
+                manager.load_config(config.mcp.servers)
+                tools_list = manager.get_all_tools()
+                if tools_list:
+                    logger.info("MCP tools registered: %d", len(tools_list))
+                return tools_list
+        return []
