@@ -176,6 +176,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("doctor", help="Run system diagnostics")
     sub.add_parser("status", help="Show system status")
     sub.add_parser("sessions", help="List active sessions")
+    sub.add_parser("setup", help="Interactive configuration wizard")
 
     return parser
 
@@ -191,6 +192,9 @@ def cli_main():
         cmd_status(args)
     elif args.command == "sessions":
         sys.exit(cmd_sessions(args))
+    elif args.command == "setup":
+        from src.setup import run_wizard
+        run_wizard()
     else:
         # Default: start the server
         from src.main import main

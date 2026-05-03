@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from src.config import load_config
 from src.graph import collect_tools, create_agent_graph, create_model
 from src.channels.feishu import FeishuChannel
+from src.channels.qq import QQChannel
 from src.cron.store import CronStore
 from src.cron.service import CronService
 from src.cron.executor import execute_cron_job
@@ -49,6 +50,7 @@ class Application:
 
         # Components initialized during setup
         self.feishu = None
+        self.qq = None
         self.session_tracker = None
         self.typing = None
         self.dispatcher = None
@@ -116,12 +118,26 @@ class Application:
         if not request_id:
             return
 
-        await self.feishu.send_approval_card(
-            chat_id,
-            request_id,
-            command_preview,
-            denylisted=denylisted,
-        )
+        # Send approval card via appropriate channel
+        if chat_id.startswith(("c2c:", "group:", "channel:", "dm:")):
+            # QQ channel: send as text message (no interactive cards)
+            warn = "DANGEROUS" if denylisted else "requires approval"
+            await self.qq.send_text(
+                chat_id,
+                f"**Approval Required** ({warn})\n```\n{command_preview}\n```\n"
+                f"Reply 'yes' to allow or 'no' to deny. (request: {request_id})",
+            )
+            # Auto-approve since QQ has no interactive buttons
+            decision = "allow_once"
+            await self.compiled_graph.aupdate_state(run_config, Command(resume=decision))
+            return
+        else:
+            await self.feishu.send_approval_card(
+                chat_id,
+                request_id,
+                command_preview,
+                denylisted=denylisted,
+            )
 
         decision = await mgr.await_approval(request_id)
 
@@ -193,7 +209,12 @@ class Application:
                 logger.warning("Failed to initialize memory system: %s", e)
 
         # Create model and collect tools
-        model = create_model(self.config)
+        if self.config.model.fallbacks:
+            from src.graph import create_model_chain
+            model = create_model_chain(self.config)
+            logger.info("Model chain: primary + %d fallbacks", len(self.config.model.fallbacks))
+        else:
+            model = create_model(self.config)
         tools = collect_tools(self.config)
 
         # Load skills
@@ -280,6 +301,10 @@ class Application:
         # Register message callback
         self.feishu.set_message_callback(self._create_message_callback(session_scope))
 
+        # Initialize QQ channel
+        self.qq = QQChannel(self.config.channels.qq)
+        self.qq.set_message_callback(self._create_message_callback(session_scope, channel_prefix="qq"))
+
         # Create FastAPI gateway
         from src.gateway import create_gateway
 
@@ -290,6 +315,14 @@ class Application:
         # Register startup/shutdown handlers
         self.api.on_event("startup")(self._on_startup)
         self.api.on_event("shutdown")(self._on_shutdown)
+
+        # Register dashboard
+        from src.dashboard.routes import register_dashboard
+        register_dashboard(self.api, self)
+
+        # Reset exec tool config cache so it picks up the loaded config
+        from src.tools.exec import reset_config_cache
+        reset_config_cache()
 
     def _register_builtin_commands(self, tools, skills):
         async def cmd_help(args: str, ctx: dict) -> str:
@@ -341,8 +374,8 @@ class Application:
         self.dispatcher.register_builtin("skills", cmd_skills)
         logger.info("Commands: %d skill + 4 built-in", len(self.dispatcher._commands))
 
-    def _create_message_callback(self, session_scope: str):
-        async def on_feishu_message(
+    def _create_message_callback(self, session_scope: str, channel_prefix: str = "feishu"):
+        async def on_message(
             text: str,
             sender_id: str,
             chat_id: str,
@@ -352,8 +385,13 @@ class Application:
             stream_fn,
         ):
             session_key = self._resolve_session_key(sender_id, chat_type, chat_id, session_scope)
-            thread_id = f"feishu:{session_key}"
-            run_config = {"configurable": {"thread_id": thread_id}}
+            thread_id = f"{channel_prefix}:{session_key}"
+            # recursion_limit must be in config dict (LangGraph ignores kwarg form)
+            _recursion_limit = (self.config.agents.max_tool_rounds or 50) * 2 + 10
+            run_config = {
+                "configurable": {"thread_id": thread_id},
+                "recursion_limit": _recursion_limit,
+            }
 
             self.session_tracker.touch(thread_id)
 
@@ -369,7 +407,8 @@ class Application:
                 await reply_fn(result)
                 return
 
-            await self.typing.start(message_id)
+            if channel_prefix == "feishu":
+                await self.typing.start(message_id)
 
             from src.tools.cron_tools import set_current_chat_id
             set_current_chat_id(chat_id)
@@ -389,32 +428,14 @@ class Application:
             try:
                 async for event in self.compiled_graph.astream_events(input_state, run_config, version="v2"):
                     kind = event.get("event", "")
-
                     if kind == "on_chain_error":
                         err = event.get("data", {}).get("error")
-                        from langgraph.errors import GraphInterrupt
-                        if err and isinstance(err, GraphInterrupt):
-                            interrupts = getattr(err, "interrupts", [])
-                            if interrupts:
-                                interrupt_value = (
-                                    interrupts[0].value
-                                    if hasattr(interrupts[0], "value")
-                                    else interrupts[0]
-                                )
-                                if (
-                                    isinstance(interrupt_value, dict)
-                                    and interrupt_value.get("type") == "approval_request"
-                                ):
-                                    await self._handle_approval_interrupt(
-                                        run_config,
-                                        chat_id,
-                                        interrupt_value,
-                                    )
+                        logger.error("Graph chain error: %s", err)
                         continue
 
+                # Check for pending interrupts (e.g. approval requests)
                 state = await self.compiled_graph.aget_state(run_config)
-                tasks = state.tasks
-                for task in tasks:
+                for task in state.tasks:
                     if hasattr(task, "interrupts") and task.interrupts:
                         for intr in task.interrupts:
                             iv = intr.value if hasattr(intr, "value") else intr
@@ -458,8 +479,11 @@ class Application:
                         logger.warning("TTS processing failed: %s", e)
 
                 display_text = tts_text if tts_text else assistant_text
-                await reply_fn(display_text)
-                await self.typing.stop(message_id)
+                try:
+                    await reply_fn(display_text)
+                finally:
+                    if channel_prefix == "feishu":
+                        await self.typing.stop(message_id)
                 logger.info("Reply to %s: %.100s", session_key, display_text)
 
                 # Session memory: auto-write Q&A to memory
@@ -472,7 +496,7 @@ class Application:
                     except Exception:
                         pass
 
-        return on_feishu_message
+        return on_message
 
     async def _handle_tts(self, assistant_text: str, chat_id: str):
         """Process TTS for assistant text based on auto_mode."""
@@ -534,6 +558,7 @@ class Application:
                 logger.warning("Failed to start memory watcher: %s", e)
 
         await self.feishu.start()
+        await self.qq.start()
         logger.info(
             "Gateway ready: http://%s:%d",
             self.config.gateway.host,
@@ -560,6 +585,7 @@ class Application:
             await self.session_tracker.stop()
             await self.typing.stop_all()
             await self.feishu.stop()
+            await self.qq.stop()
             if self._checkpointer_ctx:
                 await self._checkpointer_ctx.__aexit__(None, None, None)
             logger.info("MyClaw stopped")

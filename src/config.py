@@ -2,23 +2,31 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import sys
 from pathlib import Path
 from typing import Any, Literal, Optional
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ValidationError, Field
 
 _log = logging.getLogger("myclaw.config")
 
+_ENV_VAR_RE = re.compile(r"\$\{([^}]+)\}")
+
 
 def _env_substitute(value: str) -> str:
-    if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
-        env_key = value[2:-1]
+    if not isinstance(value, str):
+        return value
+
+    def _replace(m):
+        env_key = m.group(1)
         result = os.environ.get(env_key, "")
         if env_key not in os.environ:
             _log.warning("Environment variable '%s' is not set, using empty string", env_key)
         return result
-    return value
+
+    return _ENV_VAR_RE.sub(_replace, value)
 
 
 def _substitute_recursive(obj):
@@ -82,8 +90,21 @@ class FeishuConfig(BaseModel):
     typing_indicator: bool = True
 
 
+class QQConfig(BaseModel):
+    enabled: bool = False
+    app_id: str = ""
+    client_secret: str = ""
+    dm_policy: Literal["open", "allowlist"] = "open"
+    group_policy: Literal["open", "allowlist", "disabled"] = "allowlist"
+    allow_from: list[str] = Field(default_factory=list)
+    group_allow_from: list[str] = Field(default_factory=list)
+    require_mention: bool = True
+    markdown_support: bool = False
+
+
 class ChannelsConfig(BaseModel):
     feishu: FeishuConfig = Field(default_factory=FeishuConfig)
+    qq: QQConfig = Field(default_factory=QQConfig)
 
 
 class SessionConfig(BaseModel):
@@ -262,7 +283,10 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
             return AppConfig()
         substituted = _substitute_recursive(raw)
         return AppConfig(**substituted)
+    except ValidationError as e:
+        _log.error("Config validation failed for %s: %s", path, e)
+        print(f"[config] Validation error in {path}: {e}", file=sys.stderr)
+        return AppConfig()
     except Exception as e:
-        logger = logging.getLogger("myclaw.config")
-        logger.error("Failed to load config from %s: %s", path, e)
+        _log.error("Failed to load config from %s: %s", path, e)
         return AppConfig()

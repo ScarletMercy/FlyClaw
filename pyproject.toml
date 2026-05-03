@@ -22,6 +22,7 @@ dependencies = [
     "tavily-python>=0.5",
     "Pillow>=10.0",
     "langgraph-checkpoint-sqlite>=3.0.3",
+    "websockets>=13.0",
 ]
 
 [project.optional-dependencies]

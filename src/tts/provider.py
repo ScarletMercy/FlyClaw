@@ -1,6 +1,7 @@
 """TTS providers: OpenAI, ElevenLabs, Azure."""
 from __future__ import annotations
 
+import html as _html
 import logging
 from typing import Optional
 
@@ -65,7 +66,7 @@ class AzureTtsProvider:
             raise ValueError("Azure TTS provider requires tts.api_key to be set")
         voice = config.voice or "en-US-JennyNeural"
         headers = {"Ocp-Apim-Subscription-Key": api_key, "Content-Type": "application/ssml+xml"}
-        ssml = f"<speak version='1.0' xml:lang='en-US'><voice name='{voice}'>{text}</voice></speak>"
+        ssml = f"<speak version='1.0' xml:lang='en-US'><voice name='{_html.escape(voice)}'>{text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')}</voice></speak>"
         url = f"https://{region}.tts.speech.microsoft.com/cognitiveservices/v1"
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(url, content=ssml.encode("utf-8"), headers=headers)

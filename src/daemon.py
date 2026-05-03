@@ -193,8 +193,7 @@ WantedBy=multi-user.target
 
         print("Installing MyClaw scheduled task...")
         result = subprocess.run(
-            " ".join(cmd),
-            shell=True,
+            cmd,
             capture_output=True,
             text=True,
         )
@@ -209,8 +208,7 @@ WantedBy=multi-user.target
 
         print("Uninstalling MyClaw scheduled task...")
         result = subprocess.run(
-            " ".join(cmd),
-            shell=True,
+            cmd,
             capture_output=True,
             text=True,
         )
@@ -223,7 +221,6 @@ WantedBy=multi-user.target
     def _status_schtasks(self) -> None:
         result = subprocess.run(
             ["schtasks", "/query", "/tn", "MyClaw"],
-            shell=True,
             capture_output=True,
             text=True,
         )

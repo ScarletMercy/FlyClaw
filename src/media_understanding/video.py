@@ -41,35 +41,39 @@ async def understand_video(
                 error="Failed to extract video frame. Is ffmpeg installed?",
             )
 
-        result = await client.describe_video(frame_data, "image/jpeg", prompt, max_tokens)
+        # Extract multiple frames for better understanding
+        frames = [frame_data]
+        for ts in [2.0, 5.0]:
+            extra = await _extract_frame(video_data, timestamp=ts)
+            if extra:
+                frames.append(extra)
 
-        if "error" in result:
+        descriptions = []
+        for i, frame in enumerate(frames):
+            label = f"Frame at {['1s', '2s', '5s'][i]}" if i < 3 else f"Frame {i+1}"
+            result = await client.describe_video(frame, "image/jpeg", f"{prompt} ({label})", max_tokens)
+            if "error" not in result:
+                desc = result.get("text", "").strip()
+                if desc:
+                    descriptions.append(f"[{label}] {desc}")
+
+        if not descriptions:
             return MediaResult(
                 capability=MediaCapability.VIDEO,
                 text="",
                 provider=client.provider,
                 model=client.model,
                 mime_type=mime_type,
-                error=result["error"],
+                error="Empty response from vision model for all frames",
             )
 
-        text = result.get("text", "").strip()
-        if not text:
-            return MediaResult(
-                capability=MediaCapability.VIDEO,
-                text="",
-                provider=client.provider,
-                model=client.model,
-                mime_type=mime_type,
-                error="Empty response from vision model",
-            )
-
-        logger.info("Video described (%d bytes, %s) -> %d chars", len(video_data), client.model, len(text))
+        text = "\n".join(descriptions)
+        logger.info("Video described (%d bytes, %d frames, %s) -> %d chars", len(video_data), len(frames), client.model, len(text))
         return MediaResult(
             capability=MediaCapability.VIDEO,
             text=text,
             provider=client.provider,
-            model=result.get("model", client.model),
+            model=client.model,
             mime_type=mime_type,
         )
     except Exception as e:

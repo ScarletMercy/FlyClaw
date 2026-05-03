@@ -126,46 +126,70 @@ async def _exec_streaming(
         readers_remaining += 1
         tasks.append(asyncio.create_task(_read_stream(proc.stderr, err_buf)))
 
+    def _safe_kill():
+        """Kill process, ignoring ProcessLookupError if already exited."""
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+
     try:
         deadline = start + timeout
         while True:
+            # Check if process already exited
+            if proc.returncode is not None:
+                await asyncio.gather(*tasks, return_exceptions=True)
+                break
+
             # Check overall timeout
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                proc.kill()
+                _safe_kill()
                 await proc.wait()
                 duration = time.monotonic() - start
                 logger.warning("[exec-audit] TIMEOUT dur=%.1fs cmd=%.200s", duration, command)
                 raise ToolExecutionError(f"Command timed out after {timeout}s")
 
-            # Wait for output (bounded by both timeouts)
-            output_event.clear()
+            # Wait for output or process exit (bounded by both timeouts)
             wait_timeout = min(remaining, no_output_timeout)
-            try:
-                await asyncio.wait_for(output_event.wait(), timeout=wait_timeout)
-            except asyncio.TimeoutError:
+
+            async def _wait_for_output_or_exit():
+                """Wait until we get output OR the process exits."""
+                while proc.returncode is None:
+                    try:
+                        await asyncio.wait_for(output_event.wait(), timeout=0.5)
+                        return True  # Got output
+                    except asyncio.TimeoutError:
+                        continue
+                return False  # Process exited
+
+            got_output = await asyncio.wait_for(_wait_for_output_or_exit(), timeout=wait_timeout)
+
+            # Re-check process exit after waiting
+            if proc.returncode is not None:
+                await asyncio.gather(*tasks, return_exceptions=True)
+                break
+
+            if not got_output:
+                # No-output timeout
                 if time.monotonic() >= deadline:
-                    proc.kill()
+                    _safe_kill()
                     await proc.wait()
                     duration = time.monotonic() - start
                     logger.warning("[exec-audit] TIMEOUT dur=%.1fs cmd=%.200s", duration, command)
                     raise ToolExecutionError(f"Command timed out after {timeout}s")
 
-                # No-output timeout: kill the process
                 killed = True
-                proc.kill()
+                _safe_kill()
                 await proc.wait()
                 break
 
-            # Check if process exited
-            if proc.returncode is not None:
-                # Drain remaining readers briefly
-                await asyncio.gather(*tasks, return_exceptions=True)
-                break
+            # Got output, clear event and loop back
+            output_event.clear()
     except ToolExecutionError:
         raise
     except Exception as e:
-        proc.kill()
+        _safe_kill()
         await proc.wait()
         duration = time.monotonic() - start
         logger.error("[exec-audit] ERROR dur=%.1fs cmd=%.200s: %s", duration, command, e)
@@ -261,7 +285,7 @@ async def exec_command(
     no_output_timeout_val = (cfg.tools.exec.no_output_timeout_seconds if cfg else None) or 0
     sandbox_enabled = cfg.tools.exec.sandbox_enabled if cfg else True
     sandbox_allowed_dirs = cfg.tools.exec.sandbox_allowed_dirs if cfg else ["."]
-    sandbox_env_whitelist = cfg.tools.exec.sandbox_env_whitelist if cfg else ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "LANG", "PYTHONPATH"]
+    sandbox_env_whitelist = cfg.tools.exec.sandbox_env_whitelist if cfg else ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "SystemRoot", "COMSPEC", "LANG", "PYTHONPATH"]
 
     # Sandbox: working directory restriction
     if sandbox_enabled:
@@ -366,7 +390,10 @@ async def exec_command(
                 return output
 
         except asyncio.TimeoutError:
-            proc.kill()
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
             await proc.wait()
             duration = time.monotonic() - start
             logger.warning("[exec-audit] TIMEOUT dur=%.1fs cmd=%.200s", duration, command)
