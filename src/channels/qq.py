@@ -401,6 +401,7 @@ class QQChannel(Channel):
         self._ws_client: Optional[_QQWebSocketClient] = None
         self._http_client: Optional[httpx.AsyncClient] = None
         self._seq_counter = 0
+        self._typing_unsupported = False
         # Typing indicator state: {chat_id -> Task}
         self._typing_tasks: dict[str, asyncio.Task] = {}
         _qq_channel = self
@@ -568,14 +569,32 @@ class QQChannel(Channel):
 
     async def _send_typing(self, chat_id: str) -> bool:
         """Send typing indicator for C2C chat. msg_type=6."""
+        if self._typing_unsupported:
+            return False
         kind, target = _parse_chat_id(chat_id)
         if kind != "c2c":
             return False
-        return await self._api_post(
-            f"/v2/users/{target}/typing",
-            body={"msg_type": 6},
-            description="QQ typing",
-        ) is not None
+        if not self._http_client or not self._token_manager:
+            return False
+        try:
+            token = await self._token_manager.get_token()
+            headers = {"Authorization": f"QQBot {token}", "Content-Type": "application/json"}
+            resp = await self._http_client.post(
+                f"{API_BASE}/v2/users/{target}/typing",
+                headers=headers,
+                json={"msg_type": 6},
+            )
+            if resp.status_code == 404:
+                self._typing_unsupported = True
+                logger.debug("QQ typing not supported by API, disabled for this session")
+                return False
+            if resp.status_code >= 400:
+                logger.warning("QQ typing failed: status=%d", resp.status_code)
+                return False
+            return True
+        except Exception as e:
+            logger.debug("QQ typing error: %s", e)
+            return False
 
     async def _typing_loop(self, chat_id: str):
         """Send typing indicator every 50 seconds (QQ timeout is 60s)."""
