@@ -765,10 +765,8 @@ def _register_builtin_tools(config) -> None:
             from src.mcp.manager import get_mcp_manager
 
             manager = get_mcp_manager()
-            if config.mcp.servers:
-                manager.load_config(config.mcp.servers)
-                tools_list = manager.get_all_tools()
-                if tools_list:
-                    logger.info("MCP tools registered: %d", len(tools_list))
-                return tools_list
+            tools_list = manager.get_all_tools()
+            if tools_list:
+                logger.info("MCP tools registered: %d", len(tools_list))
+            return tools_list
         return []
