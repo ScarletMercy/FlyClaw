@@ -486,6 +486,77 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
             pass
         return {"commands": []}
 
+    # MCP management API
+    @app.get("/api/mcp/servers")
+    async def mcp_list_servers(request: Request):
+        await _verify_api_auth(request)
+        try:
+            from src.mcp.manager import get_mcp_manager
+            manager = get_mcp_manager()
+            return [s.model_dump() for s in await manager.list_servers()]
+        except Exception:
+            return []
+
+    @app.get("/api/mcp/servers/{server_name}")
+    async def mcp_get_server(server_name: str, request: Request):
+        await _verify_api_auth(request)
+        try:
+            from src.mcp.manager import get_mcp_manager
+            manager = get_mcp_manager()
+            client = manager._clients.get(server_name)
+            if client is None:
+                return JSONResponse({"error": "not found"}, status_code=404)
+            tools = await client.list_tools()
+            return {
+                "name": server_name,
+                "connected": client.is_connected,
+                "tools": tools,
+            }
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/mcp/servers")
+    async def mcp_add_server(request: Request):
+        await _verify_api_auth(request)
+        try:
+            from src.mcp.manager import get_mcp_manager
+            from src.mcp.config_models import MCPServerConfig
+
+            body = await request.json()
+            name = body.get("name", "")
+            if not name:
+                return JSONResponse({"error": "name is required"}, status_code=400)
+            config = MCPServerConfig(**body.get("config", {}))
+            manager = get_mcp_manager()
+            await manager.add_server(name, config)
+            return {"added": name}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=422)
+
+    @app.delete("/api/mcp/servers/{server_name}")
+    async def mcp_remove_server(server_name: str, request: Request):
+        await _verify_api_auth(request)
+        try:
+            from src.mcp.manager import get_mcp_manager
+            manager = get_mcp_manager()
+            await manager.remove_server(server_name)
+            return {"removed": server_name}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/mcp/servers/{server_name}/tools/{tool_name}/call")
+    async def mcp_call_tool(server_name: str, tool_name: str, request: Request):
+        await _verify_api_auth(request)
+        try:
+            from src.mcp.manager import get_mcp_manager
+            manager = get_mcp_manager()
+            client = await manager.ensure_connected(server_name)
+            body = await request.json()
+            result = await client.call_tool(tool_name, body.get("arguments", {}))
+            return {"result": result}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     @app.post("/api/feishu/card-action")
     async def feishu_card_action(req: Request):
         await _verify_api_auth(req)
