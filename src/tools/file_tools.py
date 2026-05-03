@@ -39,7 +39,10 @@ def read_file(path: str, offset: int = 0, limit: int = 500) -> str:
         offset: Starting line number (0-based)
         limit: Max number of lines to read
     """
-    resolved = _resolve_path(path)
+    try:
+        resolved = _resolve_path(path)
+    except ValueError as e:
+        return f"Error: {e}"
     try:
         with open(resolved, "r", encoding="utf-8") as f:
             lines = f.readlines()
@@ -69,7 +72,10 @@ def write_file(path: str, content: str) -> str:
         path: File path (relative to workspace)
         content: Full file content to write
     """
-    resolved = _resolve_path(path)
+    try:
+        resolved = _resolve_path(path)
+    except ValueError as e:
+        return f"Error: {e}"
     try:
         parent = os.path.dirname(resolved)
         if parent:
@@ -93,7 +99,10 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
         old_text: Exact text to find and replace
         new_text: Text to replace it with
     """
-    resolved = _resolve_path(path)
+    try:
+        resolved = _resolve_path(path)
+    except ValueError as e:
+        return f"Error: {e}"
     try:
         with open(resolved, "r", encoding="utf-8") as f:
             content = f.read()
@@ -126,7 +135,10 @@ def list_dir(path: str = ".") -> str:
     Args:
         path: Directory path (relative to workspace), defaults to workspace root
     """
-    resolved = _resolve_path(path)
+    try:
+        resolved = _resolve_path(path)
+    except ValueError as e:
+        return f"Error: {e}"
     try:
         entries = sorted(os.listdir(resolved))
         if not entries:
@@ -164,7 +176,10 @@ def grep_files(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
         path: Directory to search in (relative to workspace)
         file_pattern: Glob pattern to filter files (e.g. "*.py", "*.md")
     """
-    resolved = _resolve_path(path)
+    try:
+        resolved = _resolve_path(path)
+    except ValueError as e:
+        return f"Error: {e}"
     if not os.path.isdir(resolved):
         return f"Error: not a directory: {path}"
 
@@ -211,7 +226,10 @@ def glob_files(pattern: str, path: str = ".") -> str:
         pattern: Glob pattern (e.g. "**/*.py", "src/**/*.yaml")
         path: Base directory (relative to workspace)
     """
-    resolved = _resolve_path(path)
+    try:
+        resolved = _resolve_path(path)
+    except ValueError as e:
+        return f"Error: {e}"
     try:
         matches = sorted(Path(resolved).glob(pattern))
         if not matches:

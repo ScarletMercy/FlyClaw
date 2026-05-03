@@ -18,6 +18,10 @@ class PluginRegistry:
         self._hooks: dict[str, list[Callable]] = {}
 
     def register_plugin(self, record: PluginRecord) -> None:
+        existing = next((r for r in self._records if r.manifest.id == record.manifest.id), None)
+        if existing:
+            logger.warning("Plugin '%s' already registered, skipping duplicate", record.manifest.id)
+            return
         self._records.append(record)
         self._tools.extend(record.tools)
         for hook_name, funcs in record.hooks.items():

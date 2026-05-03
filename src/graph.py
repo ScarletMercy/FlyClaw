@@ -7,7 +7,6 @@ import time
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Optional
-from weakref import WeakKeyDictionary
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
@@ -181,13 +180,13 @@ class FallbackModelChain:
         self.primary = primary
         self.fallbacks = fallbacks or []
         self._all = [primary] + self.fallbacks
-        self._cooldowns: WeakKeyDictionary[BaseChatModel, float] = WeakKeyDictionary()
+        self._cooldowns: dict[int, float] = {}  # keyed by id(model)
 
     async def ainvoke(self, messages, tools=None, **kwargs):
         now = time.time()
         errors = []
         for i, model in enumerate(self._all):
-            cooldown_until = self._cooldowns.get(model, 0)
+            cooldown_until = self._cooldowns.get(id(model), 0)
             if now < cooldown_until:
                 continue
             try:
@@ -207,7 +206,7 @@ class FallbackModelChain:
                 elif "billing" in error_str or "quota" in error_str:
                     cooldown = 3600
                 if cooldown > 0:
-                    self._cooldowns[model] = now + cooldown
+                    self._cooldowns[id(model)] = now + cooldown
                     logger.warning(
                         "Model %d (%s) failed, cooldown %ds: %s",
                         i,
@@ -241,6 +240,13 @@ def create_agent_graph(
     # If policy is enabled, we'll filter per-request based on sender_id
     _use_tool_policy = config is not None
 
+    # Enforce max_tool_rounds: when reached, agent gets no tools so it must respond with text
+    _max_tool_rounds = getattr(config, "agents", None)
+    if _max_tool_rounds is None:
+        _max_tool_rounds = 0
+    else:
+        _max_tool_rounds = getattr(_max_tool_rounds, "max_tool_rounds", 0) or 0
+
     all_tools = tools
 
     async def agent_node(state: AgentState) -> dict:
@@ -265,6 +271,19 @@ def create_agent_graph(
             from src.tools.policy import apply_tool_policy
 
             active_tools = apply_tool_policy(tools, state.get("sender_id", ""), config)
+
+        # Enforce max_tool_rounds: count ToolMessages only in current turn
+        # (since the last HumanMessage), not across entire session history
+        if _max_tool_rounds > 0:
+            turn_messages = messages
+            for i in range(len(messages) - 1, -1, -1):
+                if isinstance(messages[i], HumanMessage):
+                    turn_messages = messages[i:]
+                    break
+            tool_call_count = sum(1 for m in turn_messages if isinstance(m, ToolMessage))
+            if tool_call_count >= _max_tool_rounds:
+                logger.info("Max tool rounds (%d) reached in current turn, not binding tools", _max_tool_rounds)
+                active_tools = []
 
         if active_tools:
             if isinstance(model_or_chain, BaseChatModel):
@@ -548,6 +567,46 @@ def _register_builtin_tools(config) -> None:
             feishu_create_bitable,
             feishu_bitable_list_records,
             feishu_bitable_add_record,
+            # Doc advanced ops
+            feishu_doc_append,
+            feishu_doc_insert,
+            feishu_doc_list_blocks,
+            feishu_doc_get_block,
+            feishu_doc_update_block,
+            feishu_doc_delete_block,
+            feishu_doc_create_table,
+            feishu_doc_insert_table_row,
+            feishu_doc_insert_table_col,
+            feishu_doc_delete_table_rows,
+            feishu_doc_delete_table_cols,
+            # Drive supplement
+            feishu_drive_info,
+            feishu_drive_move,
+            feishu_drive_delete,
+            feishu_drive_list_comments,
+            feishu_drive_add_comment,
+            feishu_drive_reply_comment,
+            # Bitable supplement
+            feishu_bitable_get_meta,
+            feishu_bitable_list_fields,
+            feishu_bitable_get_record,
+            feishu_bitable_update_record,
+            feishu_bitable_create_field,
+            # Wiki
+            feishu_wiki_list_spaces,
+            feishu_wiki_list_nodes,
+            feishu_wiki_get_node,
+            feishu_wiki_create_node,
+            feishu_wiki_move_node,
+            feishu_wiki_rename_node,
+            # Permissions
+            feishu_perm_list_members,
+            feishu_perm_add_member,
+            feishu_perm_remove_member,
+            # Chat supplement
+            feishu_get_member_info,
+            # Doc image upload
+            feishu_doc_upload_image,
         )
 
         tools_list: list[BaseTool] = []
@@ -572,14 +631,73 @@ def _register_builtin_tools(config) -> None:
                 feishu_create_bitable,
                 feishu_bitable_list_records,
                 feishu_bitable_add_record,
+                feishu_doc_append,
+                feishu_doc_insert,
+                feishu_doc_list_blocks,
+                feishu_doc_get_block,
+                feishu_doc_update_block,
+                feishu_doc_delete_block,
+                feishu_doc_create_table,
+                feishu_doc_insert_table_row,
+                feishu_doc_insert_table_col,
+                feishu_doc_delete_table_rows,
+                feishu_doc_delete_table_cols,
+                feishu_drive_info,
+                feishu_drive_move,
+                feishu_drive_delete,
+                feishu_drive_list_comments,
+                feishu_drive_add_comment,
+                feishu_drive_reply_comment,
+                feishu_bitable_get_meta,
+                feishu_bitable_list_fields,
+                feishu_bitable_get_record,
+                feishu_bitable_update_record,
+                feishu_bitable_create_field,
+                feishu_wiki_list_spaces,
+                feishu_wiki_list_nodes,
+                feishu_wiki_get_node,
+                feishu_wiki_create_node,
+                feishu_wiki_move_node,
+                feishu_wiki_rename_node,
+                feishu_perm_list_members,
+                feishu_perm_add_member,
+                feishu_perm_remove_member,
+                feishu_get_member_info,
+                feishu_doc_upload_image,
             ])
-            logger.info("Tool registered: feishu tools (18)")
+            logger.info("Tool registered: feishu tools (%d)", len(tools_list))
 
             from src.tools.media_tools import send_image_to_chat, send_file_to_chat
 
             tools_list.append(send_image_to_chat)
             tools_list.append(send_file_to_chat)
             logger.info("Tool registered: send_image_to_chat, send_file_to_chat")
+        return tools_list
+
+    @registry.register
+    def _collect_qq_tools() -> list[BaseTool]:
+        from src.tools.qq_tools import (
+            qq_list_guilds,
+            qq_list_channels,
+            qq_list_members,
+            qq_get_member,
+            qq_send_text,
+            qq_send_image,
+            qq_send_file,
+        )
+
+        tools_list: list[BaseTool] = []
+        if config.channels.qq.enabled:
+            tools_list.extend([
+                qq_list_guilds,
+                qq_list_channels,
+                qq_list_members,
+                qq_get_member,
+                qq_send_text,
+                qq_send_image,
+                qq_send_file,
+            ])
+            logger.info("Tool registered: QQ tools (%d)", len(tools_list))
         return tools_list
 
     @registry.register

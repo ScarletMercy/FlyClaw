@@ -34,6 +34,13 @@ class SessionTracker:
     def active_count(self) -> int:
         return len(self._last_activity)
 
+    def get_sessions(self) -> list[dict]:
+        now = time.monotonic()
+        return [
+            {"thread_id": tid, "last_active": now - last}
+            for tid, last in self._last_activity.items()
+        ]
+
     async def start_periodic_cleanup(
         self,
         compiled_graph,

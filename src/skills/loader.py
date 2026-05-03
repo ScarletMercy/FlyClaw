@@ -41,6 +41,7 @@ def load_skill(skill_dir: Path, source: str) -> Optional[Skill]:
             logger.warning("Skill file too large, skipping: %s", md_path)
             return None
         content = resolved.read_text(encoding="utf-8")
+        content = content.replace("\r\n", "\n")
     except FileNotFoundError:
         logger.debug("Skill file not found: %s", md_path)
         return None

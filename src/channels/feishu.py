@@ -697,11 +697,26 @@ class FeishuChannel(Channel):
         _lark_logger.handlers.clear()
         _lark_logger.propagate = False
 
+        # Rate-limit connection error logs to prevent log spam during network outages
+        _conn_error_state = {"count": 0, "last_log": 0.0}
 
         class _EventFilter(logging.Filter):
+            _SUPPRESSED = ("connect failed", "receive message loop exit", "processor not found")
+
             def filter(self, record):
                 msg = record.getMessage()
-                if "processor not found" in msg:
+                if any(s in msg for s in self._SUPPRESSED):
+                    now = _time.monotonic()
+                    _conn_error_state["count"] += 1
+                    # Log first occurrence, then at most once per 60 seconds
+                    if now - _conn_error_state["last_log"] >= 60:
+                        _conn_error_state["last_log"] = now
+                        suppressed = _conn_error_state["count"] - 1
+                        if suppressed > 0:
+                            record.msg = f"{msg} ({suppressed} similar errors suppressed)"
+                            record.args = ()
+                        _conn_error_state["count"] = 0
+                        return True
                     return False
                 return True
 
@@ -928,6 +943,17 @@ class FeishuChannel(Channel):
                 return
 
             async with lock:
+                # Clean up stale streaming sessions (TTL: 10 minutes)
+                now = _time.monotonic()
+                stale_keys = [k for k, v in self._streaming_sessions.items()
+                              if now - v._last_update > 600]
+                for k in stale_keys:
+                    try:
+                        await self._streaming_sessions[k].close()
+                    except Exception:
+                        pass
+                    del self._streaming_sessions[k]
+
                 session = self._streaming_sessions.get(session_key)
 
                 if not session and not session_started and not done:

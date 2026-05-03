@@ -1,5 +1,6 @@
 from .base import Channel
 from .feishu import FeishuChannel
+from .qq import QQChannel
 from .media import (
     download_from_url,
     download_image,
@@ -13,6 +14,7 @@ from .typing import TypingIndicator
 __all__ = [
     "Channel",
     "FeishuChannel",
+    "QQChannel",
     "TypingIndicator",
     "download_from_url",
     "download_image",

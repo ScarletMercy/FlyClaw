@@ -10,3 +10,4 @@ venv/
 .env
 data/
 .claude/
+config.yaml
