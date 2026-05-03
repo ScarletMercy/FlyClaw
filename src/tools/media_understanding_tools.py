@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import ipaddress
 import logging
+import mimetypes
+from pathlib import Path
 from urllib.parse import urlparse
 
 from langchain_core.tools import tool
@@ -63,30 +65,48 @@ def _strip_mime_params(content_type: str) -> str:
     return content_type.split(";")[0].strip() if content_type else ""
 
 
+async def _resolve_media_input(source: str, default_mime: str) -> tuple[bytes, str]:
+    """Resolve a media source (data URL, local file path, or HTTP URL) to (bytes, mime_type)."""
+    if source.startswith("data:"):
+        return _decode_data_url(source)
+
+    # Local file path (no scheme, or Windows drive like D:\...)
+    parsed = urlparse(source)
+    if not parsed.scheme or (len(parsed.scheme) == 1 and parsed.scheme.isalpha()):
+        path = Path(source).expanduser().resolve()
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {source}")
+        if not path.is_file():
+            raise ValueError(f"Not a regular file: {source}")
+        data = path.read_bytes()
+        mime, _ = mimetypes.guess_type(str(path))
+        return data, mime or default_mime
+
+    # Remote URL
+    _validate_url(source)
+    import httpx
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30)) as client:
+        resp = await client.get(source, follow_redirects=True)
+        if resp.status_code != 200:
+            raise ValueError(f"Failed to download: HTTP {resp.status_code}")
+        mime_type = _strip_mime_params(resp.headers.get("content-type", default_mime))
+        return resp.content, mime_type
+
+
 @tool
 async def describe_image(image_url: str) -> str:
-    """Describe/analyze an image. Provide either a URL or a data:image base64 URL.
+    """Describe/analyze an image. Provide a URL, a data:image base64 URL, or a local file path.
 
     Args:
-        image_url: URL of the image, or a data:image/...;base64,... data URL.
+        image_url: URL of the image, a data:image/...;base64,... data URL, or a local file path.
     """
     runner = _get_runner()
     if runner is None:
         return "[error] Media understanding not enabled. Set tools.media_understanding.enabled: true in config."
 
     try:
-        import httpx
-
-        if image_url.startswith("data:"):
-            data, mime_type = _decode_data_url(image_url)
-        else:
-            _validate_url(image_url)
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30)) as client:
-                resp = await client.get(image_url, follow_redirects=True)
-                if resp.status_code != 200:
-                    return f"[error] Failed to download image: HTTP {resp.status_code}"
-                data = resp.content
-                mime_type = _strip_mime_params(resp.headers.get("content-type", "image/png"))
+        data, mime_type = await _resolve_media_input(image_url, "image/png")
 
         from src.media_understanding.types import MediaCapability
 
@@ -101,28 +121,17 @@ async def describe_image(image_url: str) -> str:
 
 @tool
 async def transcribe_audio(audio_url: str) -> str:
-    """Transcribe audio/speech to text. Provide either a URL or a data:audio base64 URL.
+    """Transcribe audio/speech to text. Provide a URL, a data:audio base64 URL, or a local file path.
 
     Args:
-        audio_url: URL of the audio file, or a data:audio/...;base64,... data URL.
+        audio_url: URL of the audio file, a data:audio/...;base64,... data URL, or a local file path.
     """
     runner = _get_runner()
     if runner is None:
         return "[error] Media understanding not enabled. Set tools.media_understanding.enabled: true in config."
 
     try:
-        import httpx
-
-        if audio_url.startswith("data:"):
-            data, mime_type = _decode_data_url(audio_url)
-        else:
-            _validate_url(audio_url)
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30)) as client:
-                resp = await client.get(audio_url, follow_redirects=True)
-                if resp.status_code != 200:
-                    return f"[error] Failed to download audio: HTTP {resp.status_code}"
-                data = resp.content
-                mime_type = _strip_mime_params(resp.headers.get("content-type", "audio/wav"))
+        data, mime_type = await _resolve_media_input(audio_url, "audio/wav")
 
         from src.media_understanding.types import MediaCapability
 
@@ -140,25 +149,14 @@ async def describe_video(video_url: str) -> str:
     """Describe/analyze a video (extracts a frame and describes it).
 
     Args:
-        video_url: URL of the video file, or a data:video/...;base64,... data URL.
+        video_url: URL of the video file, a data:video/...;base64,... data URL, or a local file path.
     """
     runner = _get_runner()
     if runner is None:
         return "[error] Media understanding not enabled. Set tools.media_understanding.enabled: true in config."
 
     try:
-        import httpx
-
-        if video_url.startswith("data:"):
-            data, mime_type = _decode_data_url(video_url)
-        else:
-            _validate_url(video_url)
-            async with httpx.AsyncClient(timeout=httpx.Timeout(60)) as client:
-                resp = await client.get(video_url, follow_redirects=True)
-                if resp.status_code != 200:
-                    return f"[error] Failed to download video: HTTP {resp.status_code}"
-                data = resp.content
-                mime_type = _strip_mime_params(resp.headers.get("content-type", "video/mp4"))
+        data, mime_type = await _resolve_media_input(video_url, "video/mp4")
 
         from src.media_understanding.types import MediaCapability
 
