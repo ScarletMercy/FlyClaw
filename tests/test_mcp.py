@@ -175,6 +175,18 @@ class TestMCPManager:
         })
         assert "test" in manager._configs
 
+    def test_load_config_creates_lazy_tool(self):
+        from src.mcp.manager import MCPManager
+        from src.mcp.config_models import MCPServerConfig
+
+        manager = MCPManager()
+        manager.load_config({
+            "myserver": MCPServerConfig(transport="stdio", command="echo"),
+        })
+        tools = manager.get_all_tools()
+        assert len(tools) == 1
+        assert tools[0].name == "mcp__myserver__list_tools"
+
     def test_get_all_tools_empty(self):
         from src.mcp.manager import MCPManager
 

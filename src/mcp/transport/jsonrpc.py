@@ -50,7 +50,7 @@ class JSONRPCProtocol:
         if params is not None:
             message["params"] = params
 
-        future: asyncio.Future = asyncio.get_event_loop().create_future()
+        future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
 
         try:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 from typing import Any
 
 from src.mcp.transport.base import MCPTransport
@@ -37,6 +38,14 @@ class StdioTransport(MCPTransport):
             return
 
         env = {**os.environ, **(self._env or {})}
+
+        # Resolve command via PATH (important on Windows where
+        # CreateProcess does not search PATH like Unix shells)
+        resolved = shutil.which(self._command)
+        if resolved:
+            self._command = resolved
+        else:
+            logger.warning("Command '%s' not found in PATH", self._command)
 
         logger.info("Starting MCP server: %s %s", self._command, " ".join(self._args))
         self._process = await asyncio.create_subprocess_exec(

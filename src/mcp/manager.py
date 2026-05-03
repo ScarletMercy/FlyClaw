@@ -26,11 +26,11 @@ class MCPManager:
         self._tools: dict[str, BaseTool] = {}  # tool_name -> BaseTool
 
     def load_config(self, configs: dict[str, MCPServerConfig]) -> None:
-        """Load server configurations. Does not connect immediately."""
+        """Load server configurations and eagerly connect to discover tools."""
         self._configs.update(configs)
-        # Create placeholder tools for each server
+        # Register lazy-connect tools so the LLM sees MCP servers are available
         for name in configs:
-            self._create_placeholder_tools(name)
+            self._create_server_tool(name)
 
     async def ensure_connected(self, server_name: str) -> MCPClient:
         """Ensure a server is connected, connecting lazily if needed."""
@@ -52,7 +52,7 @@ class MCPManager:
     async def add_server(self, name: str, config: MCPServerConfig) -> None:
         """Dynamically add a new MCP server at runtime."""
         self._configs[name] = config
-        self._create_placeholder_tools(name)
+        self._create_server_tool(name)
         logger.info("MCP server '%s' added (not yet connected)", name)
 
     async def remove_server(self, name: str) -> None:
@@ -98,17 +98,39 @@ class MCPManager:
                 logger.warning("Error disconnecting MCP server '%s': %s", client.name, e)
         self._clients.clear()
 
-    def _create_placeholder_tools(self, server_name: str) -> None:
-        """Create lightweight placeholder tools that trigger lazy connection."""
-        config = self._configs[server_name]
+    def _create_server_tool(self, server_name: str) -> None:
+        """Create a lazy-connect tool that triggers connection on first use.
 
-        async def _lazy_tool_execute(server_name: str, tool_name: str, **kwargs):
+        This ensures the LLM sees MCP servers as available tools at graph
+        build time, even before servers are actually connected.
+        """
+        tool_name = f"mcp__{server_name}__list_tools"
+
+        # Avoid duplicate registration
+        if tool_name in self._tools:
+            return
+
+        async def _list_and_connect(**kwargs):
             client = await self.ensure_connected(server_name)
-            return await client.call_tool(tool_name, kwargs)
+            tools = await client.list_tools()
+            return f"MCP server '{server_name}': {len(tools)} tools available: " + ", ".join(
+                t.get("name", "?") for t in tools
+            )
 
-        # We don't know the tools yet, so we don't register real tools here.
-        # Real tools are registered in _register_tools after connection.
-        logger.debug("Placeholder created for MCP server '%s'", server_name)
+        from langchain_core.tools import StructuredTool
+        from pydantic import BaseModel
+
+        class EmptyArgs(BaseModel):
+            pass
+
+        tool = StructuredTool(
+            name=tool_name,
+            description=f"List available tools from MCP server '{server_name}'. Connects lazily on first call.",
+            args_schema=EmptyArgs,
+            coroutine=_list_and_connect,
+        )
+        self._tools[tool_name] = tool
+        logger.debug("Lazy-connect tool registered for MCP server '%s'", server_name)
 
     async def _register_tools(self, client: MCPClient) -> None:
         """Discover tools from a connected server and register them."""

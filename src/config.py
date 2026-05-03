@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 import yaml
+from pydantic import BaseModel, Field, ValidationError
 
 from src.mcp.config_models import MCPConfig
-from pydantic import BaseModel, ValidationError, Field
 
 _log = logging.getLogger("myclaw.config")
 
