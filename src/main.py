@@ -166,7 +166,7 @@ class Application:
             logger.info("Plugins: %d loaded, %d tools", registry.plugin_count, registry.tool_count)
 
         # Initialize MCP subsystem
-        if getattr(self.config, "mcp", None) and self.config.mcp.enabled and self.config.mcp.servers:
+        if getattr(self.config, "mcp", None) and self.config.mcp.enabled and self.config.mcp.servers is not None:
             from src.mcp.manager import get_mcp_manager
 
             mcp_manager = get_mcp_manager()
