@@ -31,7 +31,7 @@ class MCPConfig(BaseModel):
     """Top-level MCP configuration."""
 
     enabled: bool = True
-    servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
+    servers: dict[str, MCPServerConfig] | None = Field(default_factory=dict)
     defaults: MCPDefaultsConfig = Field(default_factory=MCPDefaultsConfig)
 
 
