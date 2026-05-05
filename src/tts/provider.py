@@ -1,4 +1,5 @@
 """TTS providers: OpenAI, ElevenLabs, Azure."""
+
 from __future__ import annotations
 
 import html as _html
@@ -16,7 +17,7 @@ class OpenAITtsProvider:
     """OpenAI-compatible TTS provider (works with OpenAI, Groq, Together, local, etc.)."""
 
     async def synthesize(self, text: str, config: TtsConfig, model_config: ModelConfig) -> bytes:
-        text = text[:config.max_chars]
+        text = text[: config.max_chars]
         if not text.strip():
             return b""
         api_key = config.api_key or model_config.api_key or ""
@@ -33,7 +34,7 @@ class ElevenLabsTtsProvider:
     """ElevenLabs TTS provider."""
 
     async def synthesize(self, text: str, config: TtsConfig, model_config: ModelConfig) -> bytes:
-        text = text[:config.max_chars]
+        text = text[: config.max_chars]
         if not text.strip():
             return b""
         api_key = config.api_key  # ElevenLabs requires its own API key
@@ -46,7 +47,8 @@ class ElevenLabsTtsProvider:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"https://api.elevenlabs.io/v1/text-to-speech/{voice}",
-                json=payload, headers=headers,
+                json=payload,
+                headers=headers,
             )
             resp.raise_for_status()
             return resp.content
@@ -56,7 +58,7 @@ class AzureTtsProvider:
     """Azure Cognitive Services TTS provider."""
 
     async def synthesize(self, text: str, config: TtsConfig, model_config: ModelConfig) -> bytes:
-        text = text[:config.max_chars]
+        text = text[: config.max_chars]
         if not text.strip():
             return b""
         # Azure needs api_key and region (base_url format: "eastus.api.cognitive.microsoft.com")

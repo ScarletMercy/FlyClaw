@@ -1,5 +1,6 @@
 """Auto-index watcher for memory files. Watches configured directories and
 re-indexes changed files into the memory store."""
+
 import asyncio
 import logging
 from pathlib import Path
@@ -8,6 +9,7 @@ from typing import Callable, Optional
 logger = logging.getLogger("myclaw.memory.watcher")
 
 _watcher_task: Optional[asyncio.Task] = None
+
 
 async def start_memory_watcher(
     paths: list[str],
@@ -33,9 +35,19 @@ async def start_memory_watcher(
             async for changes in watchfiles.awatch(*abs_paths, stop_event=asyncio.Event()):
                 for change_type, path_str in changes:
                     p = Path(path_str)
-                    if p.is_file() and p.suffix in ('.md', '.txt', '.rst', '.py', '.js', '.ts', '.json', '.yaml', '.yml'):
+                    if p.is_file() and p.suffix in (
+                        ".md",
+                        ".txt",
+                        ".rst",
+                        ".py",
+                        ".js",
+                        ".ts",
+                        ".json",
+                        ".yaml",
+                        ".yml",
+                    ):
                         try:
-                            content = p.read_text(encoding='utf-8')
+                            content = p.read_text(encoding="utf-8")
                             on_change(str(p), content)
                             logger.info("Memory re-indexed: %s (%s)", p.name, change_type.name)
                         except Exception as e:
@@ -46,6 +58,7 @@ async def start_memory_watcher(
             logger.error("Memory watcher error: %s", e)
 
     _watcher_task = asyncio.create_task(_watch())
+
 
 async def stop_memory_watcher() -> None:
     global _watcher_task

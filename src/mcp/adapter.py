@@ -10,10 +10,21 @@ from pydantic import BaseModel, Field, create_model
 
 logger = logging.getLogger("myclaw.mcp.adapter")
 
-_DANGEROUS_KEYWORDS = frozenset([
-    "delete", "remove", "write", "execute", "send", "drop",
-    "truncate", "kill", "shutdown", "restart", "purge",
-])
+_DANGEROUS_KEYWORDS = frozenset(
+    [
+        "delete",
+        "remove",
+        "write",
+        "execute",
+        "send",
+        "drop",
+        "truncate",
+        "kill",
+        "shutdown",
+        "restart",
+        "purge",
+    ]
+)
 
 
 def _json_schema_to_pydantic(schema: dict, tool_name: str) -> type[BaseModel]:
@@ -67,6 +78,7 @@ class MCPToolAdapter:
 
         async def execute(**kwargs):
             from src.mcp.manager import get_mcp_manager
+
             manager = get_mcp_manager()
             client = await manager.ensure_connected(server_name)
             result = await client.call_tool(raw_name, kwargs)

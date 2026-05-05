@@ -6,7 +6,6 @@ import json
 import logging
 import re
 import time as _time
-from collections import deque
 from typing import Any, Callable, Optional
 
 import httpx
@@ -21,7 +20,7 @@ from lark_oapi.ws.client import Client as WsClient
 from lark_oapi.event.dispatcher_handler import EventDispatcherHandlerBuilder
 from lark_oapi.api.im.v1.model.p2_im_message_receive_v1 import P2ImMessageReceiveV1
 
-from .base import Channel
+from .base import Channel, api_request_with_retry
 
 logger = logging.getLogger("myclaw.feishu")
 
@@ -47,41 +46,9 @@ def _resolve_api_base(domain: str) -> str:
     return "https://open.feishu.cn/open-apis"
 
 
-_MAX_API_RETRIES = 3
-
-
-async def _feishu_api_request(
-    request_fn,
-    *,
-    description: str = "Feishu API",
-) -> httpx.Response:
-    """Execute an httpx request to the Feishu API with 429 retry logic."""
-    import random as _random
-
-    for attempt in range(_MAX_API_RETRIES + 1):
-        resp = await request_fn()
-        if resp.status_code != 429:
-            return resp
-        if attempt >= _MAX_API_RETRIES:
-            logger.warning("%s: 429 rate limit persisted after %d retries", description, _MAX_API_RETRIES)
-            return resp
-        retry_after = resp.headers.get("Retry-After")
-        if retry_after:
-            try:
-                wait = float(retry_after)
-            except ValueError:
-                wait = 1.0
-        else:
-            wait = min(1.0 * (2 ** attempt), 8.0)
-            wait += _random.uniform(0, wait * 0.1)
-        logger.warning("%s: 429 rate limited, retry %d/%d in %.1fs", description, attempt + 1, _MAX_API_RETRIES, wait)
-        await asyncio.sleep(wait)
-    return resp
-
-
 async def feishu_api_request(request_fn, *, description: str = "Feishu API") -> httpx.Response:
     """Public wrapper for Feishu API requests with 429 retry logic."""
-    return await _feishu_api_request(request_fn, description=description)
+    return await api_request_with_retry(request_fn, description=description)
 
 
 async def _get_tenant_token(app_id: str, app_secret: str, domain: str) -> str:
@@ -92,7 +59,7 @@ async def _get_tenant_token(app_id: str, app_secret: str, domain: str) -> str:
 
     api_base = _resolve_api_base(domain)
     async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-        resp = await _feishu_api_request(
+        resp = await api_request_with_retry(
             lambda: client.post(
                 f"{api_base}/auth/v3/tenant_access_token/internal",
                 json={"app_id": app_id, "app_secret": app_secret},
@@ -117,9 +84,10 @@ def _format_for_card_md(text: str) -> str:
     - Multiple newlines get collapsed, use double newline for paragraph breaks
     """
     import re
+
     # Convert markdown list items "- item" to "• item" with explicit newlines
-    text = re.sub(r'\n-\s*', '\n• ', text)
-    text = re.sub(r'^-\s*', '• ', text)
+    text = re.sub(r"\n-\s*", "\n• ", text)
+    text = re.sub(r"^-\s*", "• ", text)
     return text
 
 
@@ -183,14 +151,10 @@ class StreamingCardSession:
                     "print_step": {"default": 1},
                 },
             },
-            "body": {
-                "elements": [
-                    {"tag": "markdown", "content": "⏳ Thinking...", "element_id": "content"}
-                ]
-            },
+            "body": {"elements": [{"tag": "markdown", "content": "⏳ Thinking...", "element_id": "content"}]},
         }
 
-        resp = await _feishu_api_request(
+        resp = await api_request_with_retry(
             lambda: self._http_client.post(
                 f"{api_base}/cardkit/v1/cards",
                 headers={
@@ -215,12 +179,7 @@ class StreamingCardSession:
         card_content = json.dumps({"type": "card", "data": {"card_id": self._card_id}})
         try:
             if reply_to:
-                body = (
-                    CreateMessageRequestBody.builder()
-                    .msg_type("interactive")
-                    .content(card_content)
-                    .build()
-                )
+                body = CreateMessageRequestBody.builder().msg_type("interactive").content(card_content).build()
                 req = ReplyMessageRequest.builder().message_id(reply_to).request_body(body).build()
                 resp_data = await asyncio.to_thread(
                     lark_client.im.v1.message.reply,
@@ -292,7 +251,7 @@ class StreamingCardSession:
             token = await self._ensure_token()
             if not token:
                 return
-            await _feishu_api_request(
+            await api_request_with_retry(
                 lambda: self._http_client.put(
                     f"{api_base}/cardkit/v1/cards/{self._card_id}/elements/content/content",
                     headers={
@@ -325,7 +284,7 @@ class StreamingCardSession:
             if text and text != self._current_text:
                 self._sequence += 1
                 try:
-                    await _feishu_api_request(
+                    await api_request_with_retry(
                         lambda: self._http_client.put(
                             f"{api_base}/cardkit/v1/cards/{self._card_id}/elements/content/content",
                             headers={
@@ -348,7 +307,7 @@ class StreamingCardSession:
             self._sequence += 1
             summary = text.replace("\n", " ").strip()[:50]
             try:
-                await _feishu_api_request(
+                await api_request_with_retry(
                     lambda: self._http_client.patch(
                         f"{api_base}/cardkit/v1/cards/{self._card_id}/settings",
                         headers={
@@ -402,7 +361,7 @@ async def get_bot_info(app_id: str, app_secret: str, domain: str) -> Optional[di
         api_base = _resolve_api_base(domain)
         token = await _get_tenant_token(app_id, app_secret, domain)
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            resp = await _feishu_api_request(
+            resp = await api_request_with_retry(
                 lambda: client.get(
                     f"{api_base}/bot/v3/info/",
                     headers={"Authorization": f"Bearer {token}"},
@@ -445,9 +404,7 @@ def _parse_post_content(content: str) -> str:
                         if tag == "text":
                             parts.append(elem.get("text", ""))
                         elif tag == "a":
-                            parts.append(
-                                f"[{elem.get('text', elem.get('href', ''))}]({elem.get('href', '')})"
-                            )
+                            parts.append(f"[{elem.get('text', elem.get('href', ''))}]({elem.get('href', '')})")
                         elif tag == "at":
                             parts.append(f"@{elem.get('user_name', elem.get('user_id', ''))}")
         return "".join(parts)
@@ -635,6 +592,7 @@ def _extract_mentions(event_data: dict, bot_open_id: str) -> tuple[str, list[dic
 
 class FeishuChannel(Channel):
     def __init__(self, config):
+        super().__init__()
         global _feishu_client, _feishu_channel
         self.config = config
         _feishu_client = _build_lark_client(config.app_id, config.app_secret, config.domain)
@@ -644,8 +602,6 @@ class FeishuChannel(Channel):
         self._chat_queues: dict[str, asyncio.Queue] = {}
         self._streaming_sessions: dict[str, StreamingCardSession] = {}
         self._on_message_callback: Optional[Callable] = None
-        self._processed_messages: deque = deque(maxlen=10000)
-        self._processed_messages_lock = asyncio.Lock()
         self._bot_info: Optional[dict] = None
         self._mu_runner = None
         self._ws_client: Optional[WsClient] = None
@@ -664,11 +620,13 @@ class FeishuChannel(Channel):
         def _sync_on_message(data):
             try:
                 future = asyncio.run_coroutine_threadsafe(self._on_message(data), main_loop)
+
                 def _done(fut):
                     try:
                         fut.result()
                     except Exception as exc:
                         logger.error("Message handler exception: %s", exc, exc_info=True)
+
                 future.add_done_callback(_done)
             except Exception as e:
                 logger.error("Message callback error: %s", e, exc_info=True)
@@ -678,11 +636,7 @@ class FeishuChannel(Channel):
             logger.error("Cannot start Feishu: bot identity check failed")
             return
 
-        handler = (
-            EventDispatcherHandlerBuilder("", "")
-            .register_p2_im_message_receive_v1(_sync_on_message)
-            .build()
-        )
+        handler = EventDispatcherHandlerBuilder("", "").register_p2_im_message_receive_v1(_sync_on_message).build()
 
         domain_url = lark.FEISHU_DOMAIN if self.config.domain != "lark" else lark.LARK_DOMAIN
         self._ws_client = WsClient(
@@ -720,7 +674,6 @@ class FeishuChannel(Channel):
                     return False
                 return True
 
-
         _fh = logging.StreamHandler()
         _fh.setFormatter(logging.Formatter("[lark] %(message)s"))
         _fh.setLevel(logging.ERROR)
@@ -738,6 +691,7 @@ class FeishuChannel(Channel):
                 self._running = False
 
         import threading
+
         ws_thread = threading.Thread(target=_start_ws, daemon=True)
         ws_thread.start()
 
@@ -759,10 +713,8 @@ class FeishuChannel(Channel):
         if not message_id:
             return
 
-        async with self._processed_messages_lock:
-            if message_id in self._processed_messages:
-                return
-            self._processed_messages.append(message_id)
+        if await self.check_dedup(message_id):
+            return
 
         bot = await get_bot_info(self.config.app_id, self.config.app_secret, self.config.domain)
         bot_open_id = bot["open_id"] if bot else ""
@@ -786,9 +738,7 @@ class FeishuChannel(Channel):
 
         # Auto-process media attachments (image/audio/video/file)
         if self._mu_runner and msg_type in ("image", "audio", "video", "file"):
-            media_desc = await _process_media_message(
-                msg_type, content, message_id, self.client, self._mu_runner
-            )
+            media_desc = await _process_media_message(msg_type, content, message_id, self.client, self._mu_runner)
             if media_desc:
                 text = media_desc
             if not text.strip():
@@ -846,7 +796,7 @@ class FeishuChannel(Channel):
         text: str,
         reply_to: Optional[str] = None,
     ):
-        chunks = self._chunk_text(text, 4000)
+        chunks = self.chunk_text(text, 4000)
         for chunk in chunks:
             await self._do_send(chat_id, chunk, reply_to=reply_to)
             if len(chunks) > 1:
@@ -866,26 +816,15 @@ class FeishuChannel(Channel):
 
         try:
             if reply_to:
-                body = (
-                    CreateMessageRequestBody.builder().msg_type(msg_type).content(content).build()
-                )
-                req = (
-                    ReplyMessageRequest.builder()
-                    .message_id(reply_to)
-                    .request_body(body)
-                    .build()
-                )
+                body = CreateMessageRequestBody.builder().msg_type(msg_type).content(content).build()
+                req = ReplyMessageRequest.builder().message_id(reply_to).request_body(body).build()
                 resp = await asyncio.to_thread(
                     self.client.im.v1.message.reply,
                     req,
                 )
             else:
                 body = (
-                    CreateMessageRequestBody.builder()
-                    .receive_id(chat_id)
-                    .msg_type(msg_type)
-                    .content(content)
-                    .build()
+                    CreateMessageRequestBody.builder().receive_id(chat_id).msg_type(msg_type).content(content).build()
                 )
                 req = CreateMessageRequest.builder().receive_id_type("chat_id").request_body(body).build()
                 resp = await asyncio.to_thread(
@@ -945,8 +884,7 @@ class FeishuChannel(Channel):
             async with lock:
                 # Clean up stale streaming sessions (TTL: 10 minutes)
                 now = _time.monotonic()
-                stale_keys = [k for k, v in self._streaming_sessions.items()
-                              if now - v._last_update > 600]
+                stale_keys = [k for k, v in self._streaming_sessions.items() if now - v._last_update > 600]
                 for k in stale_keys:
                     try:
                         await self._streaming_sessions[k].close()
@@ -984,22 +922,6 @@ class FeishuChannel(Channel):
                         fallback_accumulated.clear()
 
         return stream_fn
-
-    @staticmethod
-    def _chunk_text(text: str, limit: int = 4000) -> list[str]:
-        if len(text) <= limit:
-            return [text]
-        chunks = []
-        while text:
-            if len(text) <= limit:
-                chunks.append(text)
-                break
-            cut = text.rfind("\n", 0, limit)
-            if cut < limit // 2:
-                cut = limit
-            chunks.append(text[:cut])
-            text = text[cut:].lstrip("\n")
-        return chunks
 
     async def send_image(self, chat_id: str, image_key: str) -> bool:
         content = json.dumps({"image_key": image_key})
@@ -1082,9 +1004,7 @@ class FeishuChannel(Channel):
         denylisted: bool = False,
     ) -> Optional[str]:
         api_base = _resolve_api_base(self.config.domain)
-        token = await _get_tenant_token(
-            self.config.app_id, self.config.app_secret, self.config.domain
-        )
+        token = await _get_tenant_token(self.config.app_id, self.config.app_secret, self.config.domain)
 
         warning = "⚠️ DANGEROUS COMMAND" if denylisted else "Command requires approval"
         card_json = {
@@ -1129,7 +1049,7 @@ class FeishuChannel(Channel):
 
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-                resp = await _feishu_api_request(
+                resp = await api_request_with_retry(
                     lambda: client.post(
                         f"{api_base}/cardkit/v1/cards",
                         headers={

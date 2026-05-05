@@ -12,6 +12,7 @@ logger = logging.getLogger("myclaw.qq_tools")
 
 def _get_qq_channel():
     from src.channels.qq import get_qq_channel
+
     return get_qq_channel()
 
 

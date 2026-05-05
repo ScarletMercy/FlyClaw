@@ -1,4 +1,5 @@
 """Dashboard routes for MyClaw web UI."""
+
 from __future__ import annotations
 
 import asyncio
@@ -55,6 +56,7 @@ def _install_log_handler():
 
 def _check_auth(request: Request, app: FastAPI):
     from src.config import load_config
+
     cfg = load_config()
     if not cfg.gateway.auth_token:
         return
@@ -83,6 +85,7 @@ def register_dashboard(app: FastAPI, application):
     _install_log_handler()
 
     from jinja2 import Template
+
     _template_path = Path(__file__).parent / "templates" / "dashboard.html"
     _jinja_template = Template(_template_path.read_text(encoding="utf-8"))
 
@@ -100,6 +103,7 @@ def register_dashboard(app: FastAPI, application):
         tools = []
         try:
             from src.tools.registry import get_tool_registry
+
             for t in get_tool_registry().collect():
                 tools.append({"name": t.name, "description": (t.description or "")[:120]})
         except Exception:
@@ -194,7 +198,9 @@ def register_dashboard(app: FastAPI, application):
                 "domain": cfg.channels.feishu.domain,
             },
             "sessions": _app_ref.session_tracker.active_count if _app_ref.session_tracker else 0,
-            "tools": len(_app_ref.compiled_graph.get_graph().nodes) - 2 if _app_ref.compiled_graph else 0,  # subtract agent + tools nodes
+            "tools": len(_app_ref.compiled_graph.get_graph().nodes) - 2
+            if _app_ref.compiled_graph
+            else 0,  # subtract agent + tools nodes
             "skills": len(skills),
             "cron": {
                 "enabled": cfg.cron.enabled,
@@ -259,13 +265,16 @@ def register_dashboard(app: FastAPI, application):
         # Gather tools from the registry
         try:
             from src.tools.registry import get_tool_registry
+
             registry = get_tool_registry()
             all_tools = registry.collect()
             for t in all_tools:
-                tools_info.append({
-                    "name": t.name,
-                    "description": (t.description or "")[:120],
-                })
+                tools_info.append(
+                    {
+                        "name": t.name,
+                        "description": (t.description or "")[:120],
+                    }
+                )
         except Exception:
             pass
         return tools_info
@@ -340,6 +349,11 @@ def register_dashboard(app: FastAPI, application):
             "checkpointer": {
                 "type": cfg.checkpointer.type,
             },
+            "auth": {
+                "enabled": getattr(cfg.auth, "enabled", False),
+                "pairing_enabled": getattr(cfg.auth, "pairing_enabled", False),
+                "default_role": getattr(cfg.auth, "default_role", "guest"),
+            },
         }
 
     @router.get("/api/dashboard/logs")
@@ -383,6 +397,95 @@ def register_dashboard(app: FastAPI, application):
                 "X-Accel-Buffering": "no",
             },
         )
+
+    # ── Auth dashboard API ──────────────────────────────────
+
+    @router.get("/api/dashboard/users")
+    async def dashboard_users(request: Request):
+        _check_auth(request, app)
+        cfg = _app_ref.config
+        if not getattr(cfg.auth, "enabled", False):
+            return {"enabled": False, "users": []}
+        try:
+            from src.auth.rbac import get_rbac
+
+            rbac = get_rbac()
+            if rbac is None:
+                return {"enabled": True, "users": []}
+            users = rbac.store.list_users()
+            result = []
+            for u in users:
+                devices = rbac.store.list_user_devices(u.user_id)
+                result.append(
+                    {
+                        **u.model_dump(),
+                        "device_count": len(devices),
+                        "trusted_devices": sum(1 for d in devices if d.trusted),
+                    }
+                )
+            return {"enabled": True, "users": result}
+        except Exception as e:
+            return {"enabled": True, "users": [], "error": str(e)}
+
+    @router.get("/api/dashboard/users/{user_id}/devices")
+    async def dashboard_user_devices(user_id: str, request: Request):
+        _check_auth(request, app)
+        try:
+            from src.auth.rbac import get_rbac
+
+            rbac = get_rbac()
+            if rbac is None:
+                return []
+            return [d.model_dump() for d in rbac.store.list_user_devices(user_id)]
+        except Exception:
+            return []
+
+    @router.patch("/api/dashboard/users/{user_id}/role")
+    async def dashboard_update_role(user_id: str, request: Request):
+        _check_auth(request, app)
+        try:
+            body = await request.json()
+            from src.auth.models import UserRole
+            from src.auth.rbac import get_rbac
+
+            rbac = get_rbac()
+            if rbac is None:
+                raise HTTPException(status_code=500, detail="RBAC not initialized")
+            new_role = UserRole(body.get("role", "guest"))
+            rbac.store.update_user_role(user_id, new_role)
+            return {"ok": True, "user_id": user_id, "role": new_role.value}
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @router.delete("/api/dashboard/users/{user_id}")
+    async def dashboard_delete_user(user_id: str, request: Request):
+        _check_auth(request, app)
+        try:
+            from src.auth.rbac import get_rbac
+
+            rbac = get_rbac()
+            if rbac is None:
+                raise HTTPException(status_code=500, detail="RBAC not initialized")
+            removed = rbac.store.delete_user(user_id)
+            return {"ok": removed}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    @router.delete("/api/dashboard/devices/{device_id}")
+    async def dashboard_delete_device(device_id: str, request: Request):
+        _check_auth(request, app)
+        try:
+            from src.auth.rbac import get_rbac
+
+            rbac = get_rbac()
+            if rbac is None:
+                raise HTTPException(status_code=500, detail="RBAC not initialized")
+            removed = rbac.store.delete_device(device_id)
+            return {"ok": removed}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
 
     app.include_router(router)
     logger.info("Dashboard registered at /dashboard")

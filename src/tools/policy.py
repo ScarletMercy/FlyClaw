@@ -6,6 +6,8 @@ from typing import Optional
 
 from langchain_core.tools import BaseTool
 
+from src.auth.models import User
+
 logger = logging.getLogger("myclaw.tool_policy")
 
 
@@ -25,6 +27,7 @@ class ToolPolicy:
         tools: list[BaseTool],
         sender_id: str = "",
         owner_id: str = "",
+        user: Optional[User] = None,
     ) -> list[BaseTool]:
         filtered = []
         for tool in tools:
@@ -43,6 +46,25 @@ class ToolPolicy:
                 continue
 
             filtered.append(tool)
+
+        # Apply RBAC filtering if user is provided
+        if user is not None:
+            from src.auth.rbac import get_rbac
+
+            rbac = get_rbac()
+            if rbac is not None:
+                rbac_filtered = []
+                for tool in filtered:
+                    if rbac.check_tool_access(user, tool.name):
+                        rbac_filtered.append(tool)
+                    else:
+                        logger.debug(
+                            "Tool %s filtered by RBAC for user %s (role=%s)",
+                            tool.name,
+                            user.user_id,
+                            user.role.value,
+                        )
+                filtered = rbac_filtered
 
         return filtered
 
@@ -77,6 +99,7 @@ def apply_tool_policy(
     tools: list[BaseTool],
     sender_id: str = "",
     config=None,
+    user: Optional[User] = None,
 ) -> list[BaseTool]:
     if config is None or not hasattr(config, "tools"):
         return tools
@@ -92,4 +115,4 @@ def apply_tool_policy(
         denied_patterns=policy_cfg.deny or [],
         owner_only_tools=policy_cfg.owner_only or [],
     )
-    return policy.filter_tools(tools, sender_id=sender_id, owner_id=owner_id)
+    return policy.filter_tools(tools, sender_id=sender_id, owner_id=owner_id, user=user)

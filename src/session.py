@@ -36,10 +36,7 @@ class SessionTracker:
 
     def get_sessions(self) -> list[dict]:
         now = time.monotonic()
-        return [
-            {"thread_id": tid, "last_active": now - last}
-            for tid, last in self._last_activity.items()
-        ]
+        return [{"thread_id": tid, "last_active": now - last} for tid, last in self._last_activity.items()]
 
     async def start_periodic_cleanup(
         self,
@@ -49,6 +46,7 @@ class SessionTracker:
         if self._task is not None and not self._task.done():
             logger.warning("Periodic cleanup already running")
             return
+
         async def _loop():
             while True:
                 await asyncio.sleep(interval_seconds)

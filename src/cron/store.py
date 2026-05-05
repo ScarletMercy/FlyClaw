@@ -15,6 +15,7 @@ logger = logging.getLogger("myclaw.cron.store")
 class ConcurrentUpdateError(Exception):
     """Raised when a concurrent update conflict is detected."""
 
+
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS cron_jobs (
     id TEXT PRIMARY KEY,
@@ -36,13 +37,9 @@ CREATE TABLE IF NOT EXISTS cron_run_logs (
 )
 """
 
-_CREATE_INDEX_JOB_ID_SQL = (
-    "CREATE INDEX IF NOT EXISTS idx_run_logs_job_id ON cron_run_logs(job_id)"
-)
+_CREATE_INDEX_JOB_ID_SQL = "CREATE INDEX IF NOT EXISTS idx_run_logs_job_id ON cron_run_logs(job_id)"
 
-_CREATE_INDEX_CREATED_AT_SQL = (
-    "CREATE INDEX IF NOT EXISTS idx_run_logs_created_at ON cron_run_logs(created_at)"
-)
+_CREATE_INDEX_CREATED_AT_SQL = "CREATE INDEX IF NOT EXISTS idx_run_logs_created_at ON cron_run_logs(created_at)"
 
 
 class CronStore:
@@ -52,14 +49,7 @@ class CronStore:
         self._conn: Optional[aiosqlite.Connection] = None
 
     async def __aenter__(self):
-        if self._conn is None:
-            self._conn = await aiosqlite.connect(str(self.db_path))
-            await self._conn.execute("PRAGMA journal_mode=WAL")
-            await self._conn.execute(_CREATE_TABLE_SQL)
-            await self._conn.execute(_CREATE_RUN_LOG_SQL)
-            await self._conn.execute(_CREATE_INDEX_JOB_ID_SQL)
-            await self._conn.execute(_CREATE_INDEX_CREATED_AT_SQL)
-            await self._conn.commit()
+        await self._get_conn()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -141,16 +131,13 @@ class CronStore:
         job = await self.get_job(job_id)
         if job is None:
             return
-        if consecutive_errors is not None:
-            job.consecutive_errors = consecutive_errors
-        if last_run_at is not None:
-            job.last_run_at = last_run_at
-        if last_run_status is not None:
-            job.last_run_status = last_run_status
-        if last_error is not None:
-            job.last_error = last_error
-        if next_run_at is not None:
-            job.next_run_at = next_run_at
+        updates = {
+            "consecutive_errors": consecutive_errors, "last_run_at": last_run_at,
+            "last_run_status": last_run_status, "last_error": last_error, "next_run_at": next_run_at,
+        }
+        for key, val in updates.items():
+            if val is not None:
+                setattr(job, key, val)
         await self.save_job(job)
 
     async def save_run_log(

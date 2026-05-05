@@ -24,9 +24,7 @@ def format_skills_full(skills: list[Skill]) -> str:
         parts.append(f"  </skill>")
     parts.append("</skills>")
     parts.append("")
-    parts.append(
-        "To use a skill, read its SKILL.md file with the appropriate tool to load full instructions."
-    )
+    parts.append("To use a skill, read its SKILL.md file with the appropriate tool to load full instructions.")
     return "\n".join(parts)
 
 
@@ -40,9 +38,7 @@ def format_skills_compact(skills: list[Skill]) -> str:
         p = _compact_path(s.file_path)
         parts.append(f"  {_esc(s.name)}: {_esc(p)}")
     parts.append("")
-    parts.append(
-        "To use a skill, read its SKILL.md file with the appropriate tool to load full instructions."
-    )
+    parts.append("To use a skill, read its SKILL.md file with the appropriate tool to load full instructions.")
     return "\n".join(parts)
 
 
@@ -91,9 +87,7 @@ def build_skill_commands(skills: list[Skill]) -> list[SkillCommandSpec]:
                 name=cmd_name,
                 skill_name=s.name,
                 description=desc,
-                dispatch_tool=s.metadata.command_tool
-                if s.metadata.command_dispatch == "tool"
-                else None,
+                dispatch_tool=s.metadata.command_tool if s.metadata.command_dispatch == "tool" else None,
                 arg_mode=s.metadata.command_arg_mode,
             )
         )

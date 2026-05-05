@@ -4,6 +4,7 @@ Tracks active sub-agent runs, enforces depth limits, and provides
 status querying. Pattern follows the original openclaw
 src/agents/subagent-registry.ts and src/agents/subagent-depth.ts.
 """
+
 from __future__ import annotations
 
 import asyncio

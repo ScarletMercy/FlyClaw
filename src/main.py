@@ -21,6 +21,10 @@ from src.skills.types import Skill
 from src.skills.prompt import build_skill_commands
 from src.session import SessionTracker
 from src.commands.dispatcher import CommandDispatcher, build_builtin_help
+from src.auth.store import AuthStore
+from src.auth.rbac import RBAC
+from src.auth.models import UserRole
+from src.auth.rbac import set_rbac
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,6 +63,7 @@ class Application:
         self._checkpointer_ctx = None
         self._memory_store = None
         self._memory_searcher = None
+        self._rbac: RBAC | None = None
 
     def _resolve_session_key(self, sender_id: str, chat_type: str, chat_id: str, scope: str) -> str:
         if scope == "global":
@@ -128,6 +133,8 @@ class Application:
                 f"Reply 'yes' to allow or 'no' to deny. (request: {request_id})",
             )
             # Auto-approve since QQ has no interactive buttons
+            from langgraph.types import Command
+
             decision = "allow_once"
             await self.compiled_graph.aupdate_state(run_config, Command(resume=decision))
             return
@@ -185,16 +192,29 @@ class Application:
         # Initialize memory/RAG system
         if getattr(self.config, "memory", None) and self.config.memory.enabled:
             try:
-                from src.memory.store import MemoryStore
                 from src.memory.embeddings import EmbeddingProvider
                 from src.memory.search import MemorySearcher
-                from src.tools.memory_tools import set_memory_searcher
+                from src.tools.ai_tools import set_memory_searcher
 
-                store = MemoryStore(
-                    self.config.memory.db_path,
-                    dimensions=self.config.memory.embedding_dimensions,
-                    fts_tokenizer=self.config.memory.fts_tokenizer,
-                )
+                # Choose backend
+                backend = getattr(self.config.memory, "backend", "sqlite")
+                if backend == "lancedb":
+                    from src.memory.lance_store import LanceMemoryStore
+
+                    store = LanceMemoryStore(
+                        self.config.memory.db_path,
+                        dimensions=self.config.memory.embedding_dimensions,
+                        fts_tokenizer=self.config.memory.fts_tokenizer,
+                        lancedb_uri=getattr(self.config.memory, "lancedb_uri", "data/memory_lancedb"),
+                    )
+                else:
+                    from src.memory.store import MemoryStore
+
+                    store = MemoryStore(
+                        self.config.memory.db_path,
+                        dimensions=self.config.memory.embedding_dimensions,
+                        fts_tokenizer=self.config.memory.fts_tokenizer,
+                    )
                 await store.initialize()
                 self._memory_store = store
 
@@ -216,9 +236,21 @@ class Application:
             except Exception as e:
                 logger.warning("Failed to initialize memory system: %s", e)
 
+        # Initialize RBAC
+        if self.config.auth.enabled:
+            auth_store = AuthStore(self.config.auth.db_path)
+            self._rbac = RBAC(auth_store, self.config)
+            set_rbac(self._rbac)
+            logger.info(
+                "RBAC initialized (default_role=%s, pairing=%s)",
+                self.config.auth.default_role,
+                self.config.auth.pairing_enabled,
+            )
+
         # Create model and collect tools
         if self.config.model.fallbacks:
             from src.graph import create_model_chain
+
             model = create_model_chain(self.config)
             logger.info("Model chain: primary + %d fallbacks", len(self.config.model.fallbacks))
         else:
@@ -263,9 +295,7 @@ class Application:
 
         from src.channels.typing import TypingIndicator
 
-        self.typing = TypingIndicator(
-            self.feishu.client, enabled=self.config.channels.feishu.typing_indicator
-        )
+        self.typing = TypingIndicator(self.feishu.client, enabled=self.config.channels.feishu.typing_indicator)
 
         # Initialize command dispatcher
         self.dispatcher = CommandDispatcher(skills if skills else [], config=self.config)
@@ -299,11 +329,10 @@ class Application:
             async def cron_execute(job):
                 return await execute_cron_job(job, self.compiled_graph, self.config, self.feishu)
 
-            self.cron_service = CronService(
-                cron_store, cron_execute, config=self.config, feishu_channel=self.feishu
-            )
+            self.cron_service = CronService(cron_store, cron_execute, config=self.config, feishu_channel=self.feishu)
             logger.info("Cron service initialized")
             from src.tools.cron_tools import set_cron_service
+
             set_cron_service(self.cron_service)
 
         # Register message callback
@@ -316,9 +345,7 @@ class Application:
         # Create FastAPI gateway
         from src.gateway import create_gateway
 
-        self.api = create_gateway(
-            self.config, self.compiled_graph, self.feishu, self.cron_service
-        )
+        self.api = create_gateway(self.config, self.compiled_graph, self.feishu, self.cron_service)
 
         # Register startup/shutdown handlers
         self.api.on_event("startup")(self._on_startup)
@@ -326,11 +353,74 @@ class Application:
 
         # Register dashboard
         from src.dashboard.routes import register_dashboard
+
         register_dashboard(self.api, self)
 
         # Reset exec tool config cache so it picks up the loaded config
         from src.tools.exec import reset_config_cache
+
         reset_config_cache()
+
+    def _register_auth_commands(self):
+        """Register /pair, /role, /whoami commands."""
+        rbac = self._rbac
+        store = rbac.store
+
+        async def cmd_pair(args: str, ctx: dict) -> str:
+            if not self.config.auth.pairing_enabled:
+                return "Pairing is not enabled."
+            sender_id = ctx.get("sender_id", "")
+            if not sender_id:
+                return "Cannot determine your identity."
+            pairing = store.create_pairing_code(
+                user_id=sender_id,
+                ttl_seconds=self.config.auth.pairing_ttl_seconds,
+            )
+            return (
+                f"Your pairing code: `{pairing.code}`\n"
+                f"Valid for {self.config.auth.pairing_ttl_seconds // 60} minutes.\n"
+                f"Submit it at the Dashboard or via API to complete pairing."
+            )
+
+        async def cmd_whoami(args: str, ctx: dict) -> str:
+            sender_id = ctx.get("sender_id", "")
+            if not sender_id:
+                return "Unknown identity."
+            user = rbac.resolve_user(sender_id)
+            lines = [
+                f"User ID: {user.user_id}",
+                f"Role: {user.role.value}",
+                f"Display: {user.display_name or '(not set)'}",
+            ]
+            devices = store.list_user_devices(sender_id)
+            if devices:
+                lines.append(f"Devices: {len(devices)} ({sum(1 for d in devices if d.trusted)} trusted)")
+            return "\n".join(lines)
+
+        async def cmd_role(args: str, ctx: dict) -> str:
+            """Admin: change a user's role. Usage: /role <user_id> <role>"""
+            sender_id = ctx.get("sender_id", "")
+            caller = rbac.resolve_user(sender_id)
+            if not rbac.check_admin_access(caller):
+                return "Permission denied. Admin access required."
+            parts = args.strip().split()
+            if len(parts) < 2:
+                return "Usage: /role <user_id> <owner|admin|user|guest>"
+            target_id, role_str = parts[0], parts[1]
+            try:
+                target_role = UserRole(role_str)
+            except ValueError:
+                return f"Invalid role: {role_str}. Use: owner, admin, user, guest"
+            # Non-owner cannot assign owner role
+            if target_role == UserRole.owner and not caller.is_owner:
+                return "Only owners can assign the owner role."
+            if store.update_user_role(target_id, target_role):
+                return f"User {target_id} role updated to {target_role.value}"
+            return f"User {target_id} not found."
+
+        self.dispatcher.register_builtin("pair", cmd_pair)
+        self.dispatcher.register_builtin("whoami", cmd_whoami)
+        self.dispatcher.register_builtin("role", cmd_role)
 
     def _register_builtin_commands(self, tools, skills):
         async def cmd_help(args: str, ctx: dict) -> str:
@@ -367,6 +457,7 @@ class Application:
                 pass
             try:
                 from src.mcp.manager import get_mcp_manager
+
                 mcp_mgr = get_mcp_manager()
                 servers = await mcp_mgr.list_servers()
                 connected = sum(1 for s in servers if s.connected)
@@ -388,7 +479,12 @@ class Application:
         self.dispatcher.register_builtin("reset", cmd_reset)
         self.dispatcher.register_builtin("status", cmd_status)
         self.dispatcher.register_builtin("skills", cmd_skills)
-        logger.info("Commands: %d skill + 4 built-in", len(self.dispatcher._commands))
+
+        # Auth commands
+        if self.config.auth.enabled and self._rbac:
+            self._register_auth_commands()
+
+        logger.info("Commands: %d skill + built-in", len(self.dispatcher._commands))
 
     def _create_message_callback(self, session_scope: str, channel_prefix: str = "feishu"):
         async def on_message(
@@ -427,6 +523,7 @@ class Application:
                 await self.typing.start(message_id)
 
             from src.tools.cron_tools import set_current_chat_id
+
             set_current_chat_id(chat_id)
 
             from src.graph import create_agent_state
@@ -477,7 +574,9 @@ class Application:
                     try:
                         from src.link_understanding import detect_and_preview_links
 
-                        preview = await detect_and_preview_links(text, max_previews=self.config.link_understanding.max_previews)
+                        preview = await detect_and_preview_links(
+                            text, max_previews=self.config.link_understanding.max_previews
+                        )
                         if preview:
                             assistant_text += "\n" + preview
                     except Exception:
@@ -490,6 +589,7 @@ class Application:
                         await self._handle_tts(assistant_text, chat_id)
                         if self.config.tts.auto_mode == "tagged":
                             from src.tts.directives import strip_tts_directives
+
                             tts_text = strip_tts_directives(assistant_text)
                     except Exception as e:
                         logger.warning("TTS processing failed: %s", e)
@@ -503,7 +603,11 @@ class Application:
                 logger.info("Reply to %s: %.100s", session_key, display_text)
 
                 # Session memory: auto-write Q&A to memory
-                if getattr(self, '_memory_searcher', None) and self.config.memory.enabled and getattr(self.config.memory, 'auto_session_memory', False):
+                if (
+                    getattr(self, "_memory_searcher", None)
+                    and self.config.memory.enabled
+                    and getattr(self.config.memory, "auto_session_memory", False)
+                ):
                     try:
                         await self._memory_searcher.store.add_document(
                             f"session:{session_key}",
@@ -560,15 +664,13 @@ class Application:
         await self.session_tracker.start_periodic_cleanup(self.compiled_graph)
 
         # Start memory watcher for auto-reindexing
-        if self._memory_searcher and getattr(self.config.memory, 'watch', False):
+        if self._memory_searcher and getattr(self.config.memory, "watch", False):
             try:
                 from src.memory.watcher import start_memory_watcher
 
                 await start_memory_watcher(
                     self.config.memory.extra_paths,
-                    lambda path, content: asyncio.ensure_future(
-                        self._memory_searcher.index_document(path, content)
-                    ),
+                    lambda path, content: asyncio.ensure_future(self._memory_searcher.index_document(path, content)),
                 )
             except Exception as e:
                 logger.warning("Failed to start memory watcher: %s", e)
@@ -588,13 +690,14 @@ class Application:
 
     async def _on_shutdown(self):
         try:
-            if hasattr(self, '_memory_store') and self._memory_store:
+            if hasattr(self, "_memory_store") and self._memory_store:
                 await self._memory_store.close()
             if self.config.skills.enabled and self.config.skills.watch:
                 from src.skills.watcher import stop_skills_watcher
 
                 await stop_skills_watcher()
             from src.memory.watcher import stop_memory_watcher
+
             await stop_memory_watcher()
             if self.cron_service:
                 await self.cron_service.stop()
@@ -605,6 +708,7 @@ class Application:
             # Shutdown MCP connections
             try:
                 from src.mcp.manager import get_mcp_manager
+
                 mcp_mgr = get_mcp_manager()
                 await mcp_mgr.disconnect_all()
             except Exception:
@@ -614,7 +718,7 @@ class Application:
             logger.info("MyClaw stopped")
         except Exception as e:
             logger.error("Error during shutdown: %s", e, exc_info=True)
-            if hasattr(self, '_checkpointer_ctx') and self._checkpointer_ctx:
+            if hasattr(self, "_checkpointer_ctx") and self._checkpointer_ctx:
                 try:
                     await self._checkpointer_ctx.__aexit__(None, None, None)
                 except Exception:

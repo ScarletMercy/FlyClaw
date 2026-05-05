@@ -1,4 +1,5 @@
 """High-level runner that resolves config and dispatches to the right capability."""
+
 from __future__ import annotations
 
 import logging
@@ -57,7 +58,8 @@ class MediaUnderstandingRunner:
             if not self.config.image.enabled:
                 return MediaResult(capability=capability, text="", error="Image understanding disabled")
             return await understand_image(
-                self._get_image_client(), data,
+                self._get_image_client(),
+                data,
                 mime_type=mime_type or "image/png",
                 max_bytes=self.config.max_image_size,
             )
@@ -65,7 +67,8 @@ class MediaUnderstandingRunner:
             if not self.config.audio.enabled:
                 return MediaResult(capability=capability, text="", error="Audio transcription disabled")
             return await transcribe_audio(
-                self._get_audio_client(), data,
+                self._get_audio_client(),
+                data,
                 mime_type=mime_type or "audio/wav",
                 max_bytes=self.config.max_audio_size,
             )
@@ -73,7 +76,8 @@ class MediaUnderstandingRunner:
             if not self.config.video.enabled:
                 return MediaResult(capability=capability, text="", error="Video understanding disabled")
             return await understand_video(
-                self._get_video_client(), data,
+                self._get_video_client(),
+                data,
                 mime_type=mime_type or "video/mp4",
                 max_bytes=self.config.max_video_size,
             )

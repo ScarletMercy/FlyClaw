@@ -1,4 +1,5 @@
 """Embedding provider using OpenAI-compatible API."""
+
 from __future__ import annotations
 
 import logging
@@ -36,7 +37,7 @@ class EmbeddingProvider:
         batch_size = 100
 
         for i in range(0, len(texts), batch_size):
-            batch = texts[i:i + batch_size]
+            batch = texts[i : i + batch_size]
             payload = {
                 "model": self._model,
                 "input": batch,

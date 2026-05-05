@@ -6,6 +6,7 @@ Usage:
   myclaw status         Show system status
   myclaw sessions       List active sessions
 """
+
 from __future__ import annotations
 
 import argparse
@@ -16,6 +17,7 @@ from pathlib import Path
 
 def _load_config():
     from src.config import load_config
+
     return load_config()
 
 
@@ -126,6 +128,7 @@ def cmd_status(args):
 
     # Check if server is running by probing health endpoint
     import urllib.request
+
     try:
         url = f"http://{config.gateway.host}:{config.gateway.port}/healthz"
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {config.gateway.auth_token}"})
@@ -145,10 +148,13 @@ def cmd_sessions(args):
 
     async def _list_sessions():
         import aiosqlite
+
         async with aiosqlite.connect(str(db_path)) as conn:
             # LangGraph checkpoint tables: checkpoints, writes
             try:
-                cursor = await conn.execute("SELECT thread_id, parent_checkpoint_id FROM checkpoints ORDER BY thread_id")
+                cursor = await conn.execute(
+                    "SELECT thread_id, parent_checkpoint_id FROM checkpoints ORDER BY thread_id"
+                )
                 rows = await cursor.fetchall()
                 if not rows:
                     print("No sessions found")
@@ -194,8 +200,10 @@ def cli_main():
         sys.exit(cmd_sessions(args))
     elif args.command == "setup":
         from src.setup import run_wizard
+
         run_wizard()
     else:
         # Default: start the server
         from src.main import main
+
         main()

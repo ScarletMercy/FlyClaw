@@ -146,7 +146,9 @@ async def download_from_url(url: str, timeout: int = 30) -> Optional[tuple[bytes
             content_type = resp.headers.get("content-type", "application/octet-stream")
             content_length = int(resp.headers.get("content-length", 0))
             if content_length > _MAX_DOWNLOAD_SIZE:
-                logger.error("Download URL failed: content-length %d exceeds limit %d", content_length, _MAX_DOWNLOAD_SIZE)
+                logger.error(
+                    "Download URL failed: content-length %d exceeds limit %d", content_length, _MAX_DOWNLOAD_SIZE
+                )
                 return None
             chunks = []
             total = 0

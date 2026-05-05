@@ -170,9 +170,11 @@ class TestMCPManager:
         from src.mcp.config_models import MCPServerConfig
 
         manager = MCPManager()
-        manager.load_config({
-            "test": MCPServerConfig(transport="stdio", command="echo"),
-        })
+        manager.load_config(
+            {
+                "test": MCPServerConfig(transport="stdio", command="echo"),
+            }
+        )
         assert "test" in manager._configs
 
     def test_load_config_creates_lazy_tool(self):
@@ -180,9 +182,11 @@ class TestMCPManager:
         from src.mcp.config_models import MCPServerConfig
 
         manager = MCPManager()
-        manager.load_config({
-            "myserver": MCPServerConfig(transport="stdio", command="echo"),
-        })
+        manager.load_config(
+            {
+                "myserver": MCPServerConfig(transport="stdio", command="echo"),
+            }
+        )
         tools = manager.get_all_tools()
         assert len(tools) == 1
         assert tools[0].name == "mcp__myserver__list_tools"
@@ -202,9 +206,7 @@ class TestMCPManager:
 
         loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(
-                manager.add_server("test", MCPServerConfig(transport="stdio", command="echo"))
-            )
+            loop.run_until_complete(manager.add_server("test", MCPServerConfig(transport="stdio", command="echo")))
             assert "test" in manager._configs
 
             loop.run_until_complete(manager.remove_server("test"))

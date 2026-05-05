@@ -59,9 +59,7 @@ class CronService:
             f"Consecutive errors: {job.consecutive_errors}\n"
             f"Last error: {job.last_error or 'unknown'}"
         )
-        logger.warning(
-            "Failure alert for job '%s': %d consecutive errors", job.name, job.consecutive_errors
-        )
+        logger.warning("Failure alert for job '%s': %d consecutive errors", job.name, job.consecutive_errors)
 
         if self._feishu_channel and job.delivery.mode == "announce":
             target = job.delivery.to or job.delivery.channel or ""
@@ -73,6 +71,7 @@ class CronService:
 
     async def start(self):
         import zoneinfo
+
         try:
             tz = zoneinfo.ZoneInfo("Asia/Shanghai")
         except Exception:
@@ -121,7 +120,13 @@ class CronService:
                 job.next_run_at = next_time.timestamp() if next_time else None
             except Exception:
                 job.next_run_at = None
-            logger.info("Scheduled job '%s' (id=%s, next=%s, scheduler_running=%s)", job.name, job.id, job.next_run_at, self._scheduler.running)
+            logger.info(
+                "Scheduled job '%s' (id=%s, next=%s, scheduler_running=%s)",
+                job.name,
+                job.id,
+                job.next_run_at,
+                self._scheduler.running,
+            )
         except Exception as e:
             logger.error("Failed to schedule job '%s': %s", job.name, e)
 
@@ -152,7 +157,8 @@ class CronService:
                 if dep is None:
                     logger.warning(
                         "Job '%s' depends on '%s' which does not exist, skipping execution",
-                        job.name, dep_id,
+                        job.name,
+                        dep_id,
                     )
                     return
                 if dep.last_run_status != "success":
@@ -160,7 +166,8 @@ class CronService:
             if unmet:
                 logger.info(
                     "Job '%s' skipped — dependencies not satisfied: %s",
-                    job.name, ", ".join(unmet),
+                    job.name,
+                    ", ".join(unmet),
                 )
                 return
 
@@ -205,9 +212,7 @@ class CronService:
                 job.consecutive_errors += 1
                 job.last_run_status = "error"
                 job.last_error = f"{type(e).__name__}: {e}"
-                logger.error(
-                    "Job '%s' failed (consecutive=%d): %s", job.name, job.consecutive_errors, e
-                )
+                logger.error("Job '%s' failed (consecutive=%d): %s", job.name, job.consecutive_errors, e)
 
                 if job.consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
                     job.enabled = False
@@ -256,22 +261,10 @@ class CronService:
         job = self._jobs.get(job_id)
         if job is None:
             return None
-        if patch.name is not None:
-            job.name = patch.name
-        if patch.description is not None:
-            job.description = patch.description
-        if patch.enabled is not None:
-            job.enabled = patch.enabled
-        if patch.schedule is not None:
-            job.schedule = patch.schedule
-        if patch.payload is not None:
-            job.payload = patch.payload
-        if patch.delivery is not None:
-            job.delivery = patch.delivery
-        if patch.session_target is not None:
-            job.session_target = patch.session_target
-        if patch.depends_on is not None:
-            job.depends_on = patch.depends_on
+        for field in ("name", "description", "enabled", "schedule", "payload", "delivery", "session_target", "depends_on"):
+            val = getattr(patch, field, None)
+            if val is not None:
+                setattr(job, field, val)
 
         await self.store.save_job(job)
         self._unschedule_job(job.id)
@@ -295,6 +288,7 @@ class CronService:
             return None
         if job_id in self._running_jobs:
             from .types import CronRunResult
+
             return CronRunResult(
                 job_id=job_id,
                 status="error",
@@ -323,7 +317,9 @@ class CronService:
             if all_met:
                 logger.info(
                     "Triggering dependent job '%s' (id=%s) after '%s' completed",
-                    other_job.name, other_id, completed_job_id,
+                    other_job.name,
+                    other_id,
+                    completed_job_id,
                 )
                 asyncio.create_task(self._run_job(other_id))
 

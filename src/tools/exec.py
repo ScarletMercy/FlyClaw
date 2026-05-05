@@ -285,11 +285,16 @@ async def exec_command(
     no_output_timeout_val = (cfg.tools.exec.no_output_timeout_seconds if cfg else None) or 0
     sandbox_enabled = cfg.tools.exec.sandbox_enabled if cfg else True
     sandbox_allowed_dirs = cfg.tools.exec.sandbox_allowed_dirs if cfg else ["."]
-    sandbox_env_whitelist = cfg.tools.exec.sandbox_env_whitelist if cfg else ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "SystemRoot", "COMSPEC", "LANG", "PYTHONPATH"]
+    sandbox_env_whitelist = (
+        cfg.tools.exec.sandbox_env_whitelist
+        if cfg
+        else ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "SystemRoot", "COMSPEC", "LANG", "PYTHONPATH"]
+    )
 
     # Sandbox: working directory restriction
     if sandbox_enabled:
         from pathlib import Path
+
         workspace = Path(cfg.agents.workspace).resolve()
         if workdir:
             wd = Path(workdir).resolve()
@@ -348,6 +353,7 @@ async def exec_command(
             env = None
             if sandbox_enabled:
                 import os
+
                 env = {k: os.environ[k] for k in sandbox_env_whitelist if k in os.environ}
 
             proc = await asyncio.create_subprocess_shell(
@@ -370,12 +376,14 @@ async def exec_command(
                 if stdout:
                     output_parts.append(stdout.decode("utf-8", errors="replace"))
                 if stderr:
-                    output_parts.append(f"[stderr]\n{stderr.decode("utf-8", errors="replace")}")
+                    output_parts.append(f"[stderr]\n{stderr.decode('utf-8', errors='replace')}")
                 output = "\n".join(output_parts) or "(no output)"
 
                 if len(output.encode("utf-8", errors="replace")) > max_output:
                     encoded = output.encode("utf-8", errors="replace")[:max_output]
-                    output = encoded.decode("utf-8", errors="replace") + f"\n... [truncated at {max_output} bytes] ...\n"
+                    output = (
+                        encoded.decode("utf-8", errors="replace") + f"\n... [truncated at {max_output} bytes] ...\n"
+                    )
 
                 if exit_code != 0:
                     output += f"\n[exit code: {exit_code}]"
