@@ -4,6 +4,7 @@ Uses the official QQ Bot API (WebSocket + HTTP) for real-time messaging.
 Supports C2C (direct), group, and guild channel messages.
 Supports markdown, typing indicator, audio/TTS, local file upload, 429 retry.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -11,15 +12,13 @@ import base64
 import hashlib
 import json
 import logging
-import random as _random
 import time as _time
-from collections import deque
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 import httpx
 
-from .base import Channel
+from .base import Channel, api_request_with_retry
 
 logger = logging.getLogger("myclaw.qq")
 
@@ -30,6 +29,7 @@ _qq_channel: Optional[QQChannel] = None  # forward ref; set in QQChannel.__init_
 def get_qq_channel() -> Optional[QQChannel]:
     """Get the global QQChannel instance (for tool access)."""
     return _qq_channel
+
 
 # --- QQ Bot API constants ---
 API_BASE = "https://api.sgroup.qq.com"
@@ -56,43 +56,12 @@ FULL_INTENTS = INTENT_PUBLIC_GUILD_MESSAGES | INTENT_DIRECT_MESSAGE | INTENT_GRO
 _RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
 _MAX_RECONNECT_ATTEMPTS = 100
 _MSG_SEQ_MAX = 65536
-_MAX_API_RETRIES = 3
-
-
-# ---------------------------------------------------------------------------
-# 429 Retry wrapper
-# ---------------------------------------------------------------------------
-
-async def _qq_api_request(
-    request_fn,
-    *,
-    description: str = "QQ API",
-) -> httpx.Response:
-    """Execute an httpx request with 429 rate-limit retry logic."""
-    for attempt in range(_MAX_API_RETRIES + 1):
-        resp = await request_fn()
-        if resp.status_code != 429:
-            return resp
-        if attempt >= _MAX_API_RETRIES:
-            logger.warning("%s: 429 rate limit persisted after %d retries", description, _MAX_API_RETRIES)
-            return resp
-        retry_after = resp.headers.get("Retry-After")
-        if retry_after:
-            try:
-                wait = float(retry_after)
-            except ValueError:
-                wait = 1.0
-        else:
-            wait = min(1.0 * (2 ** attempt), 8.0)
-            wait += _random.uniform(0, wait * 0.1)
-        logger.warning("%s: 429 rate limited, retry %d/%d in %.1fs", description, attempt + 1, _MAX_API_RETRIES, wait)
-        await asyncio.sleep(wait)
-    return resp
 
 
 # ---------------------------------------------------------------------------
 # Token Manager
 # ---------------------------------------------------------------------------
+
 
 class _QQTokenManager:
     """Manages QQ Bot access token with auto-refresh."""
@@ -114,7 +83,7 @@ class _QQTokenManager:
 
     async def _fetch_token(self) -> str:
         async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
-            resp = await _qq_api_request(
+            resp = await api_request_with_retry(
                 lambda: client.post(
                     TOKEN_URL,
                     json={"appId": self._app_id, "clientSecret": self._client_secret},
@@ -160,6 +129,7 @@ class _QQTokenManager:
 # WebSocket Client
 # ---------------------------------------------------------------------------
 
+
 class _QQWebSocketClient:
     """Manages the QQ Bot WebSocket gateway connection."""
 
@@ -187,7 +157,7 @@ class _QQWebSocketClient:
         token = await self._token_mgr.get_token()
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
-            resp = await _qq_api_request(
+            resp = await api_request_with_retry(
                 lambda: client.get(
                     f"{API_BASE}/gateway",
                     headers={"Authorization": f"QQBot {token}"},
@@ -230,24 +200,32 @@ class _QQWebSocketClient:
         heartbeat_interval = hello.get("d", {}).get("heartbeat_interval", 41250)
 
         if self._session_id and self._last_seq is not None:
-            await self._ws.send(json.dumps({
-                "op": OP_RESUME,
-                "d": {
-                    "token": f"QQBot {token}",
-                    "session_id": self._session_id,
-                    "seq": self._last_seq,
-                },
-            }))
+            await self._ws.send(
+                json.dumps(
+                    {
+                        "op": OP_RESUME,
+                        "d": {
+                            "token": f"QQBot {token}",
+                            "session_id": self._session_id,
+                            "seq": self._last_seq,
+                        },
+                    }
+                )
+            )
             self._log.info("Resuming QQ session %s", self._session_id)
         else:
-            await self._ws.send(json.dumps({
-                "op": OP_IDENTIFY,
-                "d": {
-                    "token": f"QQBot {token}",
-                    "intents": FULL_INTENTS,
-                    "shard": [0, 1],
-                },
-            }))
+            await self._ws.send(
+                json.dumps(
+                    {
+                        "op": OP_IDENTIFY,
+                        "d": {
+                            "token": f"QQBot {token}",
+                            "intents": FULL_INTENTS,
+                            "shard": [0, 1],
+                        },
+                    }
+                )
+            )
             self._log.info("Identified with QQ gateway")
 
         self._heartbeat_task = asyncio.create_task(self._heartbeat(heartbeat_interval))
@@ -270,6 +248,7 @@ class _QQWebSocketClient:
 
     async def _recv_loop(self):
         import websockets
+
         try:
             async for raw in self._ws:
                 if not self._running:
@@ -375,6 +354,7 @@ class _QQWebSocketClient:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _parse_chat_id(chat_id: str) -> tuple[str, str]:
     """Parse chat_id like 'c2c:openid' -> ('c2c', 'openid')."""
     if ":" in chat_id:
@@ -387,16 +367,16 @@ def _parse_chat_id(chat_id: str) -> tuple[str, str]:
 # QQChannel
 # ---------------------------------------------------------------------------
 
+
 class QQChannel(Channel):
     """QQ Bot channel implementation."""
 
     def __init__(self, config):
+        super().__init__()
         global _qq_channel
         self.config = config
         self._running = False
         self._on_message_callback: Optional[Callable] = None
-        self._processed_messages: deque = deque(maxlen=10000)
-        self._processed_messages_lock = asyncio.Lock()
         self._token_manager: Optional[_QQTokenManager] = None
         self._ws_client: Optional[_QQWebSocketClient] = None
         self._http_client: Optional[httpx.AsyncClient] = None
@@ -501,14 +481,12 @@ class QQChannel(Channel):
         else:
             return
 
-        if not message_id or not content.strip():
+        if not message_id:
             return
 
         # Message dedup
-        async with self._processed_messages_lock:
-            if message_id in self._processed_messages:
-                return
-            self._processed_messages.append(message_id)
+        if await self.check_dedup(message_id):
+            return
 
         # Policy checks
         if chat_type == "group":
@@ -530,19 +508,37 @@ class QQChannel(Channel):
 
         # Process attachments
         attachments = data.get("attachments", [])
+        image_urls = []
         if attachments:
             for att in attachments:
                 ct = att.get("content_type", "")
-                if ct.startswith("image"):
-                    text += f"\n[image: {att.get('url', 'attachment')}]"
+                url = att.get("url", "")
+                if ct.startswith("image") and url:
+                    image_urls.append(url)
+                elif ct.startswith("image"):
+                    text += "\n[image]"
                 elif ct.startswith("video"):
                     text += "\n[video]"
                 elif ct.startswith("audio"):
                     text += "\n[audio]"
 
+        # If only images were sent (no text), build a describe request
+        if not text.strip() and image_urls:
+            text = "请描述这张图片"
+            if len(image_urls) > 1:
+                text = f"请描述这 {len(image_urls)} 张图片"
+            for url in image_urls:
+                text += f"\n[image_url: {url}]"
+        elif image_urls:
+            for url in image_urls:
+                text += f"\n[image_url: {url}]"
+
         logger.info(
             "QQ message: chat=%s sender=%s type=%s text=%.100s",
-            chat_id, sender_id, chat_type, text,
+            chat_id,
+            sender_id,
+            chat_type,
+            text,
         )
 
         # Start typing indicator for C2C
@@ -625,7 +621,7 @@ class QQChannel(Channel):
         url = f"{API_BASE}{path}"
 
         try:
-            resp = await _qq_api_request(
+            resp = await api_request_with_retry(
                 lambda: self._http_client.post(url, headers=headers, json=body),
                 description=description,
             )
@@ -633,7 +629,7 @@ class QQChannel(Channel):
                 self._token_manager.clear_cache()
                 token = await self._token_manager.get_token()
                 headers["Authorization"] = f"QQBot {token}"
-                resp = await _qq_api_request(
+                resp = await api_request_with_retry(
                     lambda: self._http_client.post(url, headers=headers, json=body),
                     description=description,
                 )
@@ -653,7 +649,7 @@ class QQChannel(Channel):
         text: str,
         reply_to: Optional[str] = None,
     ) -> Any:
-        chunks = self._chunk_text(text, 2000)
+        chunks = self.chunk_text(text, 2000)
         results = []
         for chunk in chunks:
             result = await self._send_message(chat_id, chunk, reply_to)
@@ -697,9 +693,7 @@ class QQChannel(Channel):
                 body["media"] = media
             if msg_type == 2 and markdown:
                 body["markdown"] = markdown
-            return await self._api_post(
-                f"/v2/users/{target}/messages", body, description="QQ send C2C"
-            )
+            return await self._api_post(f"/v2/users/{target}/messages", body, description="QQ send C2C")
 
         elif kind == "group":
             body = {
@@ -713,9 +707,7 @@ class QQChannel(Channel):
                 body["media"] = media
             if msg_type == 2 and markdown:
                 body["markdown"] = markdown
-            return await self._api_post(
-                f"/v2/groups/{target}/messages", body, description="QQ send group"
-            )
+            return await self._api_post(f"/v2/groups/{target}/messages", body, description="QQ send group")
 
         elif kind == "channel":
             body = {
@@ -729,9 +721,7 @@ class QQChannel(Channel):
                 body["media"] = media
             if msg_type == 2 and markdown:
                 body["markdown"] = markdown
-            return await self._api_post(
-                f"/channels/{target}/messages", body, description="QQ send channel"
-            )
+            return await self._api_post(f"/channels/{target}/messages", body, description="QQ send channel")
 
         elif kind == "dm":
             body = {
@@ -745,9 +735,7 @@ class QQChannel(Channel):
                 body["media"] = media
             if msg_type == 2 and markdown:
                 body["markdown"] = markdown
-            return await self._api_post(
-                f"/dms/{target}/messages", body, description="QQ send DM"
-            )
+            return await self._api_post(f"/dms/{target}/messages", body, description="QQ send DM")
 
         else:
             logger.error("Unknown chat_id format: %s", chat_id)
@@ -800,7 +788,10 @@ class QQChannel(Channel):
         data = p.read_bytes()
         b64 = base64.b64encode(data).decode()
         return await self._upload_media(
-            chat_id, file_type, file_data=b64, file_name=p.name,
+            chat_id,
+            file_type,
+            file_data=b64,
+            file_name=p.name,
         )
 
     # --- Public send methods ---
@@ -865,7 +856,10 @@ class QQChannel(Channel):
 
         b64 = base64.b64encode(audio_bytes).decode()
         file_info = await self._upload_media(
-            chat_id, file_type=3, file_data=b64, file_name=file_name,
+            chat_id,
+            file_type=3,
+            file_data=b64,
+            file_name=file_name,
         )
         if file_info:
             result = await self._send_message(chat_id, "", msg_type=7, media={"file_info": file_info})
@@ -898,8 +892,11 @@ class QQChannel(Channel):
             kind, _ = _parse_chat_id(chat_id)
             if kind in ("c2c", "group"):
                 return await self._send_message(
-                    chat_id, text, reply_to=reply_to,
-                    msg_type=2, markdown={"content": text},
+                    chat_id,
+                    text,
+                    reply_to=reply_to,
+                    msg_type=2,
+                    markdown={"content": text},
                 )
 
         return await self.send_text(chat_id, text, reply_to)
@@ -921,19 +918,3 @@ class QQChannel(Channel):
         return stream_fn
 
     # --- Helpers ---
-
-    @staticmethod
-    def _chunk_text(text: str, limit: int = 2000) -> list[str]:
-        if len(text) <= limit:
-            return [text]
-        chunks = []
-        while text:
-            if len(text) <= limit:
-                chunks.append(text)
-                break
-            cut = text.rfind("\n", 0, limit)
-            if cut < limit // 2:
-                cut = limit
-            chunks.append(text[:cut])
-            text = text[cut:].lstrip("\n")
-        return chunks

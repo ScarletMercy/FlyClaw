@@ -3,6 +3,7 @@
 Parses [[tts:text]] and [[tts:provider=name|text]] directives from agent output.
 Follows the pattern from the original openclaw src/tts/directives.ts.
 """
+
 from __future__ import annotations
 
 import re
@@ -37,7 +38,7 @@ def parse_tts_directives(content: str) -> list[TtsDirective]:
             parts = inner.split("|", 1)
             prefix = parts[0].strip()
             if prefix.startswith("provider="):
-                provider = prefix[len("provider="):].strip()
+                provider = prefix[len("provider=") :].strip()
                 text = parts[1].strip()
 
         if text:

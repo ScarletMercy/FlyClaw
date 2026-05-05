@@ -152,6 +152,7 @@ async def cron_toggle(job_id: str) -> str:
     if not job:
         return f"Job not found: {job_id}"
     from src.cron.types import CronJobPatch
+
     patch = CronJobPatch(enabled=not job.enabled)
     updated = await svc.update_job(job_id, patch)
     if updated:

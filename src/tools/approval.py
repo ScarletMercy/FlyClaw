@@ -51,9 +51,7 @@ class ApprovalManager:
             try:
                 raw_data = json.loads(self._durable_path.read_text(encoding="utf-8"))
                 # Validate with Pydantic model
-                validated = ApprovalData.model_validate(
-                    raw_data if isinstance(raw_data, dict) else {}
-                )
+                validated = ApprovalData.model_validate(raw_data if isinstance(raw_data, dict) else {})
                 self._durable = validated.root
             except Exception as e:
                 logger.warning("Failed to load approvals.json: %s", e)
@@ -63,6 +61,7 @@ class ApprovalManager:
         try:
             self._data_dir.mkdir(parents=True, exist_ok=True)
             import tempfile
+
             fd, tmp_path = tempfile.mkstemp(dir=str(self._data_dir), suffix=".tmp")
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -83,9 +82,7 @@ class ApprovalManager:
     def _make_digest(tool_name: str, args_preview: str) -> str:
         return hashlib.sha256(f"{tool_name}:{args_preview}".encode()).hexdigest()[:16]
 
-    def needs_approval(
-        self, tool_name: str, args: str, approval_mode: str, denylisted: bool
-    ) -> bool:
+    def needs_approval(self, tool_name: str, args: str, approval_mode: str, denylisted: bool) -> bool:
         if approval_mode == "off":
             return False
         if approval_mode == "always":

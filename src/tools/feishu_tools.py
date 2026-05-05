@@ -24,8 +24,10 @@ async def _lark_call_with_retry(call_fn, description: str = "Feishu API"):
         if attempt >= _LARK_MAX_RETRIES:
             logger.warning("%s: rate limited (code=%s) after %d retries", description, code, _LARK_MAX_RETRIES)
             return resp
-        wait = min(1.0 * (2 ** attempt), 8.0) + random.uniform(0, 0.5)
-        logger.warning("%s: rate limited (code=%s), retry %d/%d in %.1fs", description, code, attempt + 1, _LARK_MAX_RETRIES, wait)
+        wait = min(1.0 * (2**attempt), 8.0) + random.uniform(0, 0.5)
+        logger.warning(
+            "%s: rate limited (code=%s), retry %d/%d in %.1fs", description, code, attempt + 1, _LARK_MAX_RETRIES, wait
+        )
         await asyncio.sleep(wait)
     return resp
 
@@ -37,7 +39,43 @@ async def _lark_thread(fn, *args, description: str = "Feishu API"):
 
 def _get_feishu_client():
     from src.channels.feishu import get_feishu_client
+
     return get_feishu_client()
+
+
+def _resolve_api(api_path: str, client):
+    """Resolve dotted API path like 'im.v1.chat.get' to a bound method."""
+    obj = client
+    for attr in api_path.split("."):
+        obj = getattr(obj, attr)
+    return obj
+
+
+async def _feishu_call(api_path, req, *, extract=None, ok_msg=None):
+    """Unified Feishu SDK call: client validation + retry + error handling + JSON formatting.
+
+    Args:
+        api_path: Dotted path to SDK method (e.g. "im.v1.chat.get") or callable(client).
+        req: Request object to pass to the SDK method.
+        extract: Callable(resp) -> result dict/list/str/None. If None, returns ok_msg.
+        ok_msg: String to return on success when extract returns None.
+    """
+    client = _get_feishu_client()
+    if client is None:
+        return "[error] Feishu client not initialized"
+    try:
+        fn = _resolve_api(api_path, client) if isinstance(api_path, str) else api_path(client)
+        resp = await _lark_thread(fn, req)
+        if not resp.success():
+            return f"[error] {resp.code}: {resp.msg}"
+        if extract:
+            result = extract(resp)
+            if result is None:
+                return ok_msg or "No data found"
+            return result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
+        return ok_msg or "OK"
+    except Exception as e:
+        return f"[error] {type(e).__name__}: {e}"
 
 
 @tool
@@ -49,31 +87,15 @@ async def feishu_send_message(chat_id: str, text: str, msg_type: str = "text") -
         text: Message text content. For text type, plain text. For interactive, JSON card content.
         msg_type: "text" (default) or "interactive" (card JSON).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
+    from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
 
-        if msg_type == "interactive":
-            content = text
-        else:
-            content = json.dumps({"text": text}, ensure_ascii=False)
-
-        body = (
-            CreateMessageRequestBody.builder()
-            .receive_id(chat_id)
-            .msg_type(msg_type)
-            .content(content)
-            .build()
-        )
-        req = CreateMessageRequest.builder().receive_id_type("chat_id").request_body(body).build()
-        resp = await _lark_thread(client.im.v1.message.create, req)
-        if resp.success() and resp.data:
-            return f"Message sent to {chat_id}, message_id={resp.data.message_id}"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    content = text if msg_type == "interactive" else json.dumps({"text": text}, ensure_ascii=False)
+    body = CreateMessageRequestBody.builder().receive_id(chat_id).msg_type(msg_type).content(content).build()
+    req = CreateMessageRequest.builder().receive_id_type("chat_id").request_body(body).build()
+    return await _feishu_call(
+        "im.v1.message.create", req,
+        extract=lambda r: f"Message sent to {chat_id}, message_id={r.data.message_id}" if r.data else None,
+    )
 
 
 @tool
@@ -83,29 +105,18 @@ async def feishu_get_user_info(user_id: str) -> str:
     Args:
         user_id: User's open_id, user_id, or union_id.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.contact.v3 import GetUserRequest
+    from lark_oapi.api.contact.v3 import GetUserRequest
 
-        req = GetUserRequest.builder().user_id(user_id).user_id_type("open_id").build()
-        resp = await _lark_thread(client.contact.v3.user.get, req)
-        if resp.success() and resp.data.user:
-            u = resp.data.user
-            info = {
-                "name": u.name,
-                "open_id": u.open_id,
-                "union_id": u.union_id,
-                "user_id": u.user_id,
-                "email": u.email,
-                "mobile": u.mobile,
-                "department_ids": u.department_ids,
-            }
-            return json.dumps(info, ensure_ascii=False, default=str)
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = GetUserRequest.builder().user_id(user_id).user_id_type("open_id").build()
+    return await _feishu_call(
+        "contact.v3.user.get", req,
+        extract=lambda r: {
+            "name": r.data.user.name, "open_id": r.data.user.open_id,
+            "union_id": r.data.user.union_id, "user_id": r.data.user.user_id,
+            "email": r.data.user.email, "mobile": r.data.user.mobile,
+            "department_ids": r.data.user.department_ids,
+        } if r.data and r.data.user else None,
+    )
 
 
 @tool
@@ -134,11 +145,13 @@ async def feishu_get_chat_member_list(chat_id: str, page_size: int = 50) -> str:
                 return f"[error] {resp.code}: {resp.msg}"
             if resp.data and resp.data.items:
                 for item in resp.data.items:
-                    members.append({
-                        "member_id": item.member_id,
-                        "member_id_type": item.member_id_type,
-                        "name": getattr(item, "name", ""),
-                    })
+                    members.append(
+                        {
+                            "member_id": item.member_id,
+                            "member_id_type": item.member_id_type,
+                            "name": getattr(item, "name", ""),
+                        }
+                    )
             if not resp.data or not resp.data.has_more:
                 break
             page_token = resp.data.page_token
@@ -174,6 +187,7 @@ async def feishu_create_chat(name: str, description: str = "", user_ids: str = "
             uid_list = [uid.strip() for uid in user_ids.split(",") if uid.strip()]
             for uid in uid_list[:50]:
                 from lark_oapi.api.im.v1 import CreateChatMembersRequest, CreateChatMembersRequestBody
+
                 member_body = CreateChatMembersRequestBody.builder().id_list([uid]).build()
                 member_req = CreateChatMembersRequest.builder().chat_id(chat_id).request_body(member_body).build()
                 mr = await _lark_thread(client.im.v1.chat_member.create, member_req)
@@ -191,27 +205,18 @@ async def feishu_get_chat_info(chat_id: str) -> str:
     Args:
         chat_id: The chat ID to query.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.im.v1 import GetChatRequest
+    from lark_oapi.api.im.v1 import GetChatRequest
 
-        req = GetChatRequest.builder().chat_id(chat_id).build()
-        resp = await _lark_thread(client.im.v1.chat.get, req)
-        if resp.success() and resp.data:
-            info = {
-                "name": resp.data.name,
-                "chat_id": resp.data.chat_id,
-                "owner_id": resp.data.owner_id,
-                "member_count": resp.data.user_count,
-                "description": getattr(resp.data, "description", ""),
-                "chat_type": getattr(resp.data, "chat_type", ""),
-            }
-            return json.dumps(info, ensure_ascii=False, default=str)
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = GetChatRequest.builder().chat_id(chat_id).build()
+    return await _feishu_call(
+        "im.v1.chat.get", req,
+        extract=lambda r: {
+            "name": r.data.name, "chat_id": r.data.chat_id,
+            "owner_id": r.data.owner_id, "member_count": r.data.user_count,
+            "description": getattr(r.data, "description", ""),
+            "chat_type": getattr(r.data, "chat_type", ""),
+        } if r.data else None,
+    )
 
 
 @tool
@@ -269,47 +274,25 @@ async def feishu_list_calendar_events(start_time: str = "", end_time: str = "", 
         end_time: End time in ISO format. Defaults to 7 days from now.
         user_id: User's open_id (empty for bot's calendar).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from datetime import datetime as _dt, timedelta
+    from datetime import datetime as _dt, timedelta
 
-        from lark_oapi.api.calendar.v4 import ListCalendarEventRequest
+    from lark_oapi.api.calendar.v4 import ListCalendarEventRequest
 
-        now = _dt.now()
-        if start_time:
-            start_ts = int(_dt.fromisoformat(start_time).timestamp() * 1000)
-        else:
-            start_ts = int((now - timedelta(days=7)).timestamp() * 1000)
-        if end_time:
-            end_ts = int(_dt.fromisoformat(end_time).timestamp() * 1000)
-        else:
-            end_ts = int((now + timedelta(days=7)).timestamp() * 1000)
-        cal_id = f"user_{user_id}" if user_id else ""
-
-        req = (
-            ListCalendarEventRequest.builder()
-            .calendar_id(cal_id)
-            .start_time(start_ts)
-            .end_time(end_ts)
-            .page_size(50)
-            .build()
-        )
-        resp = await _lark_thread(client.calendar.v4.calendar_event.list, req)
-        if resp.success() and resp.data and resp.data.items:
-            events = []
-            for ev in resp.data.items:
-                events.append({
-                    "summary": getattr(ev, "summary", ""),
-                    "start_time": str(getattr(ev, "start_time", "")),
-                    "end_time": str(getattr(ev, "end_time", "")),
-                    "description": getattr(ev, "description", "")[:200],
-                })
-            return json.dumps(events, ensure_ascii=False, default=str)
-        return "No calendar events found"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    now = _dt.now()
+    start_ts = int(_dt.fromisoformat(start_time).timestamp() * 1000) if start_time else int((now - timedelta(days=7)).timestamp() * 1000)
+    end_ts = int(_dt.fromisoformat(end_time).timestamp() * 1000) if end_time else int((now + timedelta(days=7)).timestamp() * 1000)
+    cal_id = f"user_{user_id}" if user_id else ""
+    req = ListCalendarEventRequest.builder().calendar_id(cal_id).start_time(start_ts).end_time(end_ts).page_size(50).build()
+    return await _feishu_call(
+        "calendar.v4.calendar_event.list", req,
+        extract=lambda r: [{
+            "summary": getattr(ev, "summary", ""),
+            "start_time": str(getattr(ev, "start_time", "")),
+            "end_time": str(getattr(ev, "end_time", "")),
+            "description": getattr(ev, "description", "")[:200],
+        } for ev in r.data.items] if r.data and r.data.items else None,
+        ok_msg="No calendar events found",
+    )
 
 
 @tool
@@ -320,28 +303,18 @@ async def feishu_create_document(title: str, folder_token: str = "") -> str:
         title: Document title.
         folder_token: Target folder token (empty for root folder).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.docx.v1 import CreateDocumentRequest, CreateDocumentRequestBody
+    from lark_oapi.api.docx.v1 import CreateDocumentRequest, CreateDocumentRequestBody
 
-        body = CreateDocumentRequestBody.builder().title(title).folder_token(folder_token or "").build()
-        req = CreateDocumentRequest.builder().request_body(body).build()
-        resp = await _lark_thread(client.docx.v1.document.create, req)
-        if resp.success() and resp.data:
-            doc = resp.data.document
-            url = getattr(doc, "url", "") if doc else ""
-            token = getattr(doc, "document_id", "") if doc else ""
-            result = f"Document created: {title}"
-            if url:
-                result += f"\nURL: {url}"
-            if token:
-                result += f"\nToken: {token}"
-            return result
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    body = CreateDocumentRequestBody.builder().title(title).folder_token(folder_token or "").build()
+    req = CreateDocumentRequest.builder().request_body(body).build()
+    return await _feishu_call(
+        "docx.v1.document.create", req,
+        extract=lambda r: (
+            f"Document created: {title}\n"
+            + (f"URL: {r.data.document.url}\n" if getattr(r.data.document, "url", "") else "")
+            + (f"Token: {r.data.document.document_id}" if getattr(r.data.document, "document_id", "") else "")
+        ).rstrip("\n") if r.data and r.data.document else None,
+    )
 
 
 @tool
@@ -433,15 +406,9 @@ async def feishu_write_document(doc_token: str, content: str) -> str:
 
         # 1. Get root block's existing children count (root block_id == document_id)
         get_req = (
-            GetDocumentBlockChildrenRequest.builder()
-            .document_id(doc_token)
-            .block_id(doc_token)
-            .page_size(500)
-            .build()
+            GetDocumentBlockChildrenRequest.builder().document_id(doc_token).block_id(doc_token).page_size(500).build()
         )
-        get_resp = await asyncio.to_thread(
-            client.docx.v1.document_block_children.get, get_req
-        )
+        get_resp = await asyncio.to_thread(client.docx.v1.document_block_children.get, get_req)
         children_count = 0
         if get_resp.success() and get_resp.data and get_resp.data.items:
             children_count = len(get_resp.data.items)
@@ -462,29 +429,16 @@ async def feishu_write_document(doc_token: str, content: str) -> str:
                 .request_body(del_body)
                 .build()
             )
-            del_resp = await asyncio.to_thread(
-                client.docx.v1.document_block_children.batch_delete, del_req
-            )
+            del_resp = await asyncio.to_thread(client.docx.v1.document_block_children.batch_delete, del_req)
             if del_resp.success():
                 deleted = children_count
             else:
                 logger.warning("Failed to clear document content: %s %s", del_resp.code, del_resp.msg)
 
         # 3. Convert markdown to Feishu blocks via SDK
-        convert_body = (
-            ConvertDocumentRequestBody.builder()
-            .content_type("markdown")
-            .content(content)
-            .build()
-        )
-        convert_req = (
-            ConvertDocumentRequest.builder()
-            .request_body(convert_body)
-            .build()
-        )
-        convert_resp = await asyncio.to_thread(
-            client.docx.v1.document.convert, convert_req
-        )
+        convert_body = ConvertDocumentRequestBody.builder().content_type("markdown").content(content).build()
+        convert_req = ConvertDocumentRequest.builder().request_body(convert_body).build()
+        convert_resp = await asyncio.to_thread(client.docx.v1.document.convert, convert_req)
         if not convert_resp.success() or not convert_resp.data:
             return f"[error] Markdown conversion failed: {convert_resp.code} {convert_resp.msg}"
 
@@ -509,9 +463,7 @@ async def feishu_write_document(doc_token: str, content: str) -> str:
             .request_body(insert_body)
             .build()
         )
-        insert_resp = await asyncio.to_thread(
-            client.docx.v1.document_block_descendant.create, insert_req
-        )
+        insert_resp = await asyncio.to_thread(client.docx.v1.document_block_descendant.create, insert_req)
         if insert_resp.success():
             return f"Document updated: {doc_token} ({deleted} cleared, {len(blocks)} blocks inserted)"
         return f"[error] Block insertion failed: {insert_resp.code} {insert_resp.msg}"
@@ -554,14 +506,18 @@ async def feishu_create_calendar_event(
             api_base = _resolve_api_base(domain)
 
             import httpx
+
             async with httpx.AsyncClient(timeout=15) as hc:
                 cal_resp = await hc.get(
                     f"{api_base}/calendar/v4/calendars",
                     headers={"Authorization": f"Bearer {api_token}"},
                 )
             cal_data = cal_resp.json()
-            logger.info("Calendar list response: code=%s items=%s",
-                        cal_data.get("code"), len(cal_data.get("data", {}).get("calendar_list", [])))
+            logger.info(
+                "Calendar list response: code=%s items=%s",
+                cal_data.get("code"),
+                len(cal_data.get("data", {}).get("calendar_list", [])),
+            )
             if cal_data.get("code") == 0:
                 cal_list = cal_data.get("data", {}).get("calendar_list", [])
                 for cal in cal_list:
@@ -587,18 +543,36 @@ async def feishu_create_calendar_event(
             .end_time(TimeStamp.builder().timestamp(str(end_ts)).build())
             .build()
         )
-        req = (
-            CreateCalendarEventRequest.builder()
-            .calendar_id(calendar_id)
-            .request_body(body)
-            .build()
-        )
+        req = CreateCalendarEventRequest.builder().calendar_id(calendar_id).request_body(body).build()
         resp = await _lark_thread(client.calendar.v4.calendar_event.create, req)
         if resp.success():
             return f"Calendar event created: {title} (calendar: {calendar_id})"
         return f"[error] {resp.code}: {resp.msg}"
     except Exception as e:
         return f"[error] {type(e).__name__}: {e}"
+
+
+def _parse_messages(resp):
+    """Extract formatted message list from im.v1.message.list response."""
+    if not resp.data or not resp.data.items:
+        return None
+    messages = []
+    for item in resp.data.items:
+        msg = getattr(item, "message", None)
+        if not msg:
+            continue
+        body_content = getattr(msg.body, "content", "") if msg.body else ""
+        try:
+            body = json.loads(body_content) if body_content else {}
+            text = body.get("text", body.get("content", str(body)))
+        except Exception:
+            text = body_content
+        sender = getattr(msg, "sender", None)
+        sender_id = ""
+        if sender and hasattr(sender, "sender_id") and sender.sender_id:
+            sender_id = sender.sender_id.open_id
+        messages.append(f"[{msg.message_type}] {sender_id}: {text[:200]}")
+    return "\n---\n".join(messages) if messages else "No readable messages found"
 
 
 @tool
@@ -609,36 +583,10 @@ async def feishu_get_message_list(chat_id: str, count: int = 20) -> str:
         chat_id: The chat ID.
         count: Number of messages to retrieve (max 50).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.im.v1 import ListMessageRequest
+    from lark_oapi.api.im.v1 import ListMessageRequest
 
-        req = ListMessageRequest.builder().container_id_type("chat").container_id(chat_id).page_size(min(count, 50)).build()
-        resp = await _lark_thread(client.im.v1.message.list, req)
-        if resp.success() and resp.data and resp.data.items:
-            messages = []
-            for item in resp.data.items:
-                msg = item.message if hasattr(item, 'message') else None
-                if not msg:
-                    continue
-                body_content = getattr(msg.body, 'content', '') if msg.body else ''
-                text = ""
-                try:
-                    body = json.loads(body_content) if body_content else {}
-                    text = body.get("text", body.get("content", str(body)))
-                except Exception:
-                    text = body_content
-                sender = getattr(msg, 'sender', None)
-                sender_id = ""
-                if sender and hasattr(sender, 'sender_id') and sender.sender_id:
-                    sender_id = sender.sender_id.open_id
-                messages.append(f"[{msg.message_type}] {sender_id}: {text[:200]}")
-            return "\n---\n".join(messages) if messages else "No readable messages found"
-        return "No messages found"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = ListMessageRequest.builder().container_id_type("chat").container_id(chat_id).page_size(min(count, 50)).build()
+    return await _feishu_call("im.v1.message.list", req, extract=_parse_messages, ok_msg="No messages found")
 
 
 @tool
@@ -648,19 +596,10 @@ async def feishu_recall_message(message_id: str) -> str:
     Args:
         message_id: The message ID to recall.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.im.v1 import DeleteMessageRequest
+    from lark_oapi.api.im.v1 import DeleteMessageRequest
 
-        req = DeleteMessageRequest.builder().message_id(message_id).build()
-        resp = await _lark_thread(client.im.v1.message.delete, req)
-        if resp.success():
-            return f"Message recalled: {message_id}"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = DeleteMessageRequest.builder().message_id(message_id).build()
+    return await _feishu_call("im.v1.message.delete", req, ok_msg=f"Message recalled: {message_id}")
 
 
 @tool
@@ -686,11 +625,10 @@ async def feishu_create_folder(name: str, folder_token: str = "") -> str:
             try:
                 cfg = load_config()
                 domain = cfg.channels.feishu.domain
-                api_token = await _get_tenant_token(
-                    cfg.channels.feishu.app_id, cfg.channels.feishu.app_secret, domain
-                )
+                api_token = await _get_tenant_token(cfg.channels.feishu.app_id, cfg.channels.feishu.app_secret, domain)
                 if api_token:
                     import httpx
+
                     api_base = _resolve_api_base(domain)
                     async with httpx.AsyncClient(timeout=10) as hc:
                         r = await hc.get(
@@ -711,12 +649,7 @@ async def feishu_create_folder(name: str, folder_token: str = "") -> str:
                 effective_token = "0"
 
         # Use SDK to create folder
-        body = (
-            CreateFolderFileRequestBody.builder()
-            .name(name)
-            .folder_token(effective_token)
-            .build()
-        )
+        body = CreateFolderFileRequestBody.builder().name(name).folder_token(effective_token).build()
         req = CreateFolderFileRequest.builder().request_body(body).build()
         resp = await _lark_thread(client.drive.v1.file.create_folder, req)
 
@@ -747,26 +680,14 @@ async def feishu_drive_list(folder_token: str = "") -> str:
     Args:
         folder_token: Folder token to list (empty for root).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.drive.v1 import ListFileRequest
+    from lark_oapi.api.drive.v1 import ListFileRequest
 
-        req = ListFileRequest.builder().folder_token(folder_token or "").build()
-        resp = await _lark_thread(client.drive.v1.file.list, req)
-        if resp.success() and resp.data and resp.data.files:
-            items = []
-            for f in resp.data.files:
-                items.append({
-                    "name": f.name,
-                    "token": f.token,
-                    "type": f.type,
-                })
-            return json.dumps(items, ensure_ascii=False, default=str)
-        return "No files found"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = ListFileRequest.builder().folder_token(folder_token or "").build()
+    return await _feishu_call(
+        "drive.v1.file.list", req,
+        extract=lambda r: [{"name": f.name, "token": f.token, "type": f.type} for f in r.data.files] if r.data and r.data.files else None,
+        ok_msg="No files found",
+    )
 
 
 @tool
@@ -778,36 +699,19 @@ async def feishu_send_card(chat_id: str, title: str, content: str) -> str:
         title: Card title.
         content: Card body text (supports markdown).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        card = {
-            "schema": "2.0",
-            "header": {"title": {"tag": "plain_text", "content": title}},
-            "body": {
-                "elements": [
-                    {"tag": "markdown", "content": content}
-                ]
-            },
-        }
-        msg_content = json.dumps(card, ensure_ascii=False)
-        from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
+    from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
 
-        body = (
-            CreateMessageRequestBody.builder()
-            .receive_id(chat_id)
-            .msg_type("interactive")
-            .content(msg_content)
-            .build()
-        )
-        req = CreateMessageRequest.builder().receive_id_type("chat_id").request_body(body).build()
-        resp = await _lark_thread(client.im.v1.message.create, req)
-        if resp.success() and resp.data:
-            return f"Card sent to {chat_id}, message_id={resp.data.message_id}"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    card = json.dumps({
+        "schema": "2.0",
+        "header": {"title": {"tag": "plain_text", "content": title}},
+        "body": {"elements": [{"tag": "markdown", "content": content}]},
+    }, ensure_ascii=False)
+    body = CreateMessageRequestBody.builder().receive_id(chat_id).msg_type("interactive").content(card).build()
+    req = CreateMessageRequest.builder().receive_id_type("chat_id").request_body(body).build()
+    return await _feishu_call(
+        "im.v1.message.create", req,
+        extract=lambda r: f"Card sent to {chat_id}, message_id={r.data.message_id}" if r.data else None,
+    )
 
 
 @tool
@@ -818,21 +722,14 @@ async def feishu_create_bitable(name: str, folder_token: str = "") -> str:
         name: Bitable name.
         folder_token: Parent folder token (empty for root).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.bitable.v1 import CreateAppRequest, ReqApp
+    from lark_oapi.api.bitable.v1 import CreateAppRequest, ReqApp
 
-        body = ReqApp.builder().name(name).folder_token(folder_token or "").build()
-        req = CreateAppRequest.builder().request_body(body).build()
-        resp = await _lark_thread(client.bitable.v1.app.create, req)
-        if resp.success() and resp.data:
-            app = resp.data.app
-            return f"Bitable created: {app.name} (app_token={app.app_token})"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    body = ReqApp.builder().name(name).folder_token(folder_token or "").build()
+    req = CreateAppRequest.builder().request_body(body).build()
+    return await _feishu_call(
+        "bitable.v1.app.create", req,
+        extract=lambda r: f"Bitable created: {r.data.app.name} (app_token={r.data.app.app_token})" if r.data and r.data.app else None,
+    )
 
 
 @tool
@@ -844,22 +741,14 @@ async def feishu_bitable_list_records(app_token: str, table_id: str, page_size: 
         table_id: Table ID within the bitable.
         page_size: Max records to fetch (max 500).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.bitable.v1 import ListAppTableRecordRequest
+    from lark_oapi.api.bitable.v1 import ListAppTableRecordRequest
 
-        req = ListAppTableRecordRequest.builder().app_token(app_token).table_id(table_id).page_size(min(page_size, 500)).build()
-        resp = await _lark_thread(client.bitable.v1.app_table_record.list, req)
-        if resp.success() and resp.data and resp.data.items:
-            records = []
-            for r in resp.data.items:
-                records.append(r.fields if hasattr(r, 'fields') else str(r))
-            return json.dumps(records, ensure_ascii=False, default=str)
-        return "No records found"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = ListAppTableRecordRequest.builder().app_token(app_token).table_id(table_id).page_size(min(page_size, 500)).build()
+    return await _feishu_call(
+        "bitable.v1.app_table_record.list", req,
+        extract=lambda r: [rec.fields if hasattr(rec, "fields") else str(rec) for rec in r.data.items] if r.data and r.data.items else None,
+        ok_msg="No records found",
+    )
 
 
 @tool
@@ -871,27 +760,21 @@ async def feishu_bitable_add_record(app_token: str, table_id: str, fields_json: 
         table_id: Table ID.
         fields_json: Record fields as JSON object, e.g. '{"Name": "test", "Age": 25}'.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.bitable.v1 import CreateAppTableRecordRequest, AppTableRecord
+    from lark_oapi.api.bitable.v1 import CreateAppTableRecordRequest, AppTableRecord
 
-        fields = json.loads(fields_json)
-        body = AppTableRecord.builder().fields(fields).build()
-        req = CreateAppTableRecordRequest.builder().app_token(app_token).table_id(table_id).request_body(body).build()
-        resp = await _lark_thread(client.bitable.v1.app_table_record.create, req)
-        if resp.success() and resp.data:
-            record = resp.data.record
-            return f"Record added (record_id={record.record_id})"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    fields = json.loads(fields_json)
+    body = AppTableRecord.builder().fields(fields).build()
+    req = CreateAppTableRecordRequest.builder().app_token(app_token).table_id(table_id).request_body(body).build()
+    return await _feishu_call(
+        "bitable.v1.app_table_record.create", req,
+        extract=lambda r: f"Record added (record_id={r.data.record.record_id})" if r.data and r.data.record else None,
+    )
 
 
 # ============================================================
 # Document advanced operations (feishu_doc supplement)
 # ============================================================
+
 
 @tool
 async def feishu_doc_append(doc_token: str, content: str) -> str:
@@ -906,8 +789,10 @@ async def feishu_doc_append(doc_token: str, content: str) -> str:
         return "[error] Feishu client not initialized"
     try:
         from lark_oapi.api.docx.v1 import (
-            ConvertDocumentRequest, ConvertDocumentRequestBody,
-            CreateDocumentBlockDescendantRequest, CreateDocumentBlockDescendantRequestBody,
+            ConvertDocumentRequest,
+            ConvertDocumentRequestBody,
+            CreateDocumentBlockDescendantRequest,
+            CreateDocumentBlockDescendantRequestBody,
         )
 
         convert_body = ConvertDocumentRequestBody.builder().content_type("markdown").content(content).build()
@@ -921,10 +806,20 @@ async def feishu_doc_append(doc_token: str, content: str) -> str:
         if not blocks or not first_level_ids:
             return "[error] Conversion produced no blocks"
 
-        insert_body = CreateDocumentBlockDescendantRequestBody.builder() \
-            .children_id(first_level_ids).index(-1).descendants(blocks).build()
-        insert_req = CreateDocumentBlockDescendantRequest.builder() \
-            .document_id(doc_token).block_id(doc_token).request_body(insert_body).build()
+        insert_body = (
+            CreateDocumentBlockDescendantRequestBody.builder()
+            .children_id(first_level_ids)
+            .index(-1)
+            .descendants(blocks)
+            .build()
+        )
+        insert_req = (
+            CreateDocumentBlockDescendantRequest.builder()
+            .document_id(doc_token)
+            .block_id(doc_token)
+            .request_body(insert_body)
+            .build()
+        )
         insert_resp = await _lark_thread(client.docx.v1.document_block_descendant.create, insert_req)
         if insert_resp.success():
             return f"Appended {len(blocks)} blocks to {doc_token}"
@@ -948,13 +843,16 @@ async def feishu_doc_insert(doc_token: str, content: str, after_block_id: str) -
     try:
         from lark_oapi.api.docx.v1 import (
             GetDocumentBlockChildrenRequest,
-            ConvertDocumentRequest, ConvertDocumentRequestBody,
-            CreateDocumentBlockDescendantRequest, CreateDocumentBlockDescendantRequestBody,
+            ConvertDocumentRequest,
+            ConvertDocumentRequestBody,
+            CreateDocumentBlockDescendantRequest,
+            CreateDocumentBlockDescendantRequestBody,
         )
 
         # Find insertion index by listing children
-        children_req = GetDocumentBlockChildrenRequest.builder() \
-            .document_id(doc_token).block_id(doc_token).page_size(500).build()
+        children_req = (
+            GetDocumentBlockChildrenRequest.builder().document_id(doc_token).block_id(doc_token).page_size(500).build()
+        )
         children_resp = await _lark_thread(client.docx.v1.document_block_children.get, children_req)
 
         insert_index = -1  # default: append at end
@@ -975,10 +873,20 @@ async def feishu_doc_insert(doc_token: str, content: str, after_block_id: str) -
         if not blocks or not first_level_ids:
             return "[error] Conversion produced no blocks"
 
-        insert_body = CreateDocumentBlockDescendantRequestBody.builder() \
-            .children_id(first_level_ids).index(insert_index).descendants(blocks).build()
-        insert_req = CreateDocumentBlockDescendantRequest.builder() \
-            .document_id(doc_token).block_id(doc_token).request_body(insert_body).build()
+        insert_body = (
+            CreateDocumentBlockDescendantRequestBody.builder()
+            .children_id(first_level_ids)
+            .index(insert_index)
+            .descendants(blocks)
+            .build()
+        )
+        insert_req = (
+            CreateDocumentBlockDescendantRequest.builder()
+            .document_id(doc_token)
+            .block_id(doc_token)
+            .request_body(insert_body)
+            .build()
+        )
         insert_resp = await _lark_thread(client.docx.v1.document_block_descendant.create, insert_req)
         if insert_resp.success():
             return f"Inserted {len(blocks)} blocks after {after_block_id} (index={insert_index})"
@@ -994,26 +902,14 @@ async def feishu_doc_list_blocks(doc_token: str) -> str:
     Args:
         doc_token: Document token.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.docx.v1 import ListDocumentBlockRequest
+    from lark_oapi.api.docx.v1 import ListDocumentBlockRequest
 
-        req = ListDocumentBlockRequest.builder().document_id(doc_token).page_size(500).build()
-        resp = await _lark_thread(client.docx.v1.document_block.list, req)
-        if resp.success() and resp.data and resp.data.items:
-            result = []
-            for b in resp.data.items:
-                result.append({
-                    "block_id": b.block_id,
-                    "block_type": b.block_type,
-                    "parent_id": b.parent_id,
-                })
-            return json.dumps(result, ensure_ascii=False, default=str)
-        return "No blocks found"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = ListDocumentBlockRequest.builder().document_id(doc_token).page_size(500).build()
+    return await _feishu_call(
+        "docx.v1.document_block.list", req,
+        extract=lambda r: [{"block_id": b.block_id, "block_type": b.block_type, "parent_id": b.parent_id} for b in r.data.items] if r.data and r.data.items else None,
+        ok_msg="No blocks found",
+    )
 
 
 @tool
@@ -1024,26 +920,16 @@ async def feishu_doc_get_block(doc_token: str, block_id: str) -> str:
         doc_token: Document token.
         block_id: Block ID to retrieve.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.docx.v1 import GetDocumentBlockRequest
+    from lark_oapi.api.docx.v1 import GetDocumentBlockRequest
 
-        req = GetDocumentBlockRequest.builder().document_id(doc_token).block_id(block_id).build()
-        resp = await _lark_thread(client.docx.v1.document_block.get, req)
-        if resp.success() and resp.data and resp.data.block:
-            b = resp.data.block
-            info = {
-                "block_id": b.block_id,
-                "block_type": b.block_type,
-                "parent_id": b.parent_id,
-                "children": b.children,
-            }
-            return json.dumps(info, ensure_ascii=False, default=str)
-        return f"[error] Block not found: {block_id}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = GetDocumentBlockRequest.builder().document_id(doc_token).block_id(block_id).build()
+    return await _feishu_call(
+        "docx.v1.document_block.get", req,
+        extract=lambda r: {
+            "block_id": r.data.block.block_id, "block_type": r.data.block.block_type,
+            "parent_id": r.data.block.parent_id, "children": r.data.block.children,
+        } if r.data and r.data.block else f"[error] Block not found: {block_id}",
+    )
 
 
 @tool
@@ -1055,32 +941,17 @@ async def feishu_doc_update_block(doc_token: str, block_id: str, content: str) -
         block_id: Block ID to update.
         content: New text content.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.docx.v1 import (
-            PatchDocumentBlockRequest,
-            UpdateBlockRequest,
-            UpdateTextElementsRequest,
-            TextElement, TextRun,
-        )
+    from lark_oapi.api.docx.v1 import (
+        PatchDocumentBlockRequest, UpdateBlockRequest, UpdateTextElementsRequest, TextElement, TextRun,
+    )
 
-        text_elements = [TextElement.builder()
-                         .text_run(TextRun.builder().content(content).build())
-                         .build()]
-        update_body = UpdateBlockRequest.builder() \
-            .block_id(block_id) \
-            .update_text_elements(UpdateTextElementsRequest.builder().elements(text_elements).build()) \
-            .build()
-        req = PatchDocumentBlockRequest.builder() \
-            .document_id(doc_token).block_id(block_id).request_body(update_body).build()
-        resp = await _lark_thread(client.docx.v1.document_block.patch, req)
-        if resp.success():
-            return f"Block updated: {block_id}"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    text_elements = [TextElement.builder().text_run(TextRun.builder().content(content).build()).build()]
+    update_body = (
+        UpdateBlockRequest.builder().block_id(block_id)
+        .update_text_elements(UpdateTextElementsRequest.builder().elements(text_elements).build()).build()
+    )
+    req = PatchDocumentBlockRequest.builder().document_id(doc_token).block_id(block_id).request_body(update_body).build()
+    return await _feishu_call("docx.v1.document_block.patch", req, ok_msg=f"Block updated: {block_id}")
 
 
 @tool
@@ -1097,14 +968,20 @@ async def feishu_doc_delete_block(doc_token: str, block_id: str) -> str:
     try:
         from lark_oapi.api.docx.v1 import (
             GetDocumentBlockChildrenRequest,
-            BatchDeleteDocumentBlockChildrenRequest, BatchDeleteDocumentBlockChildrenRequestBody,
+            BatchDeleteDocumentBlockChildrenRequest,
+            BatchDeleteDocumentBlockChildrenRequestBody,
         )
 
         # Search for block across all levels (root children first, then sub-blocks)
         async def _find_block(root_block_id: str) -> tuple:
             """Return (parent_id, index) or (None, -1)."""
-            children_req = GetDocumentBlockChildrenRequest.builder() \
-                .document_id(doc_token).block_id(root_block_id).page_size(500).build()
+            children_req = (
+                GetDocumentBlockChildrenRequest.builder()
+                .document_id(doc_token)
+                .block_id(root_block_id)
+                .page_size(500)
+                .build()
+            )
             children_resp = await _lark_thread(client.docx.v1.document_block_children.get, children_req)
             if not children_resp.success() or not children_resp.data or not children_resp.data.items:
                 return None, -1
@@ -1114,7 +991,7 @@ async def feishu_doc_delete_block(doc_token: str, block_id: str) -> str:
             # Recurse into child blocks that can contain children
             container_types = {1, 2, 3, 13, 14, 15, 17, 18, 19, 22, 23, 24}  # page, text, heading, list, table, etc.
             for item in children_resp.data.items:
-                bt = getattr(item, 'block_type', 0)
+                bt = getattr(item, "block_type", 0)
                 if bt in container_types:
                     pid, idx = await _find_block(item.block_id)
                     if pid is not None:
@@ -1126,10 +1003,19 @@ async def feishu_doc_delete_block(doc_token: str, block_id: str) -> str:
             return f"[error] Block {block_id} not found in document"
 
         # end_index is exclusive in Lark API
-        del_body = BatchDeleteDocumentBlockChildrenRequestBody.builder() \
-            .start_index(target_index).end_index(target_index + 1).build()
-        del_req = BatchDeleteDocumentBlockChildrenRequest.builder() \
-            .document_id(doc_token).block_id(parent_id).request_body(del_body).build()
+        del_body = (
+            BatchDeleteDocumentBlockChildrenRequestBody.builder()
+            .start_index(target_index)
+            .end_index(target_index + 1)
+            .build()
+        )
+        del_req = (
+            BatchDeleteDocumentBlockChildrenRequest.builder()
+            .document_id(doc_token)
+            .block_id(parent_id)
+            .request_body(del_body)
+            .build()
+        )
         del_resp = await _lark_thread(client.docx.v1.document_block_children.batch_delete, del_req)
         if del_resp.success():
             return f"Block deleted: {block_id}"
@@ -1156,23 +1042,33 @@ async def feishu_doc_create_table(doc_token: str, row_size: int, column_size: in
         return "[error] Feishu client not initialized"
     try:
         from lark_oapi.api.docx.v1 import (
-            CreateDocumentBlockChildrenRequest, CreateDocumentBlockChildrenRequestBody,
-            Block, Table, TableProperty,
+            CreateDocumentBlockChildrenRequest,
+            CreateDocumentBlockChildrenRequestBody,
+            Block,
+            Table,
+            TableProperty,
         )
 
-        cells = [''] * (row_size * column_size)
+        cells = [""] * (row_size * column_size)
         prop = TableProperty.builder().row_size(row_size).column_size(column_size).build()
         table = Table.builder().cells(cells).property(prop).build()
         block = Block.builder().block_type(17).table(table).build()
 
         body = CreateDocumentBlockChildrenRequestBody.builder().children([block]).index(-1).build()
-        req = CreateDocumentBlockChildrenRequest.builder() \
-            .document_id(doc_token).block_id(doc_token).request_body(body).build()
+        req = (
+            CreateDocumentBlockChildrenRequest.builder()
+            .document_id(doc_token)
+            .block_id(doc_token)
+            .request_body(body)
+            .build()
+        )
         resp = await _lark_thread(client.docx.v1.document_block_children.create, req)
         if resp.success() and resp.data and resp.data.blocks:
             return f"Table created: {resp.data.blocks[0].block_id} ({row_size}x{column_size})"
-        return f"[error] Table creation not supported by current API scope (code={resp.code}). " \
-               "Use feishu_doc_append with markdown table syntax instead."
+        return (
+            f"[error] Table creation not supported by current API scope (code={resp.code}). "
+            "Use feishu_doc_append with markdown table syntax instead."
+        )
     except Exception as e:
         return f"[error] {type(e).__name__}: {e}"
 
@@ -1186,27 +1082,11 @@ async def feishu_doc_insert_table_row(doc_token: str, table_block_id: str, row_i
         table_block_id: Table block ID.
         row_index: Row index to insert at (-1 for end).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.docx.v1 import (
-            PatchDocumentBlockRequest, UpdateBlockRequest,
-            InsertTableRowRequest,
-        )
+    from lark_oapi.api.docx.v1 import PatchDocumentBlockRequest, UpdateBlockRequest, InsertTableRowRequest
 
-        body = UpdateBlockRequest.builder() \
-            .block_id(table_block_id) \
-            .insert_table_row(InsertTableRowRequest.builder().row_index(row_index).build()) \
-            .build()
-        req = PatchDocumentBlockRequest.builder() \
-            .document_id(doc_token).block_id(table_block_id).request_body(body).build()
-        resp = await _lark_thread(client.docx.v1.document_block.patch, req)
-        if resp.success():
-            return f"Row inserted at index {row_index}"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    body = UpdateBlockRequest.builder().block_id(table_block_id).insert_table_row(InsertTableRowRequest.builder().row_index(row_index).build()).build()
+    req = PatchDocumentBlockRequest.builder().document_id(doc_token).block_id(table_block_id).request_body(body).build()
+    return await _feishu_call("docx.v1.document_block.patch", req, ok_msg=f"Row inserted at index {row_index}")
 
 
 @tool
@@ -1218,27 +1098,11 @@ async def feishu_doc_insert_table_col(doc_token: str, table_block_id: str, col_i
         table_block_id: Table block ID.
         col_index: Column index to insert at (-1 for end).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.docx.v1 import (
-            PatchDocumentBlockRequest, UpdateBlockRequest,
-            InsertTableColumnRequest,
-        )
+    from lark_oapi.api.docx.v1 import PatchDocumentBlockRequest, UpdateBlockRequest, InsertTableColumnRequest
 
-        body = UpdateBlockRequest.builder() \
-            .block_id(table_block_id) \
-            .insert_table_column(InsertTableColumnRequest.builder().column_index(col_index).build()) \
-            .build()
-        req = PatchDocumentBlockRequest.builder() \
-            .document_id(doc_token).block_id(table_block_id).request_body(body).build()
-        resp = await _lark_thread(client.docx.v1.document_block.patch, req)
-        if resp.success():
-            return f"Column inserted at index {col_index}"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    body = UpdateBlockRequest.builder().block_id(table_block_id).insert_table_column(InsertTableColumnRequest.builder().column_index(col_index).build()).build()
+    req = PatchDocumentBlockRequest.builder().document_id(doc_token).block_id(table_block_id).request_body(body).build()
+    return await _feishu_call("docx.v1.document_block.patch", req, ok_msg=f"Column inserted at index {col_index}")
 
 
 @tool
@@ -1251,28 +1115,13 @@ async def feishu_doc_delete_table_rows(doc_token: str, table_block_id: str, row_
         row_start: Start row index (0-based).
         row_end: End row index (inclusive).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.docx.v1 import (
-            PatchDocumentBlockRequest, UpdateBlockRequest,
-            DeleteTableRowsRequest,
-        )
+    from lark_oapi.api.docx.v1 import PatchDocumentBlockRequest, UpdateBlockRequest, DeleteTableRowsRequest
 
-        body = UpdateBlockRequest.builder() \
-            .block_id(table_block_id) \
-            .delete_table_rows(DeleteTableRowsRequest.builder() \
-                .row_start_index(row_start).row_end_index(row_end).build()) \
-            .build()
-        req = PatchDocumentBlockRequest.builder() \
-            .document_id(doc_token).block_id(table_block_id).request_body(body).build()
-        resp = await _lark_thread(client.docx.v1.document_block.patch, req)
-        if resp.success():
-            return f"Rows deleted: {row_start}-{row_end}"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    body = UpdateBlockRequest.builder().block_id(table_block_id).delete_table_rows(
+        DeleteTableRowsRequest.builder().row_start_index(row_start).row_end_index(row_end).build()
+    ).build()
+    req = PatchDocumentBlockRequest.builder().document_id(doc_token).block_id(table_block_id).request_body(body).build()
+    return await _feishu_call("docx.v1.document_block.patch", req, ok_msg=f"Rows deleted: {row_start}-{row_end}")
 
 
 @tool
@@ -1285,33 +1134,19 @@ async def feishu_doc_delete_table_cols(doc_token: str, table_block_id: str, col_
         col_start: Start column index (0-based).
         col_end: End column index (inclusive).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.docx.v1 import (
-            PatchDocumentBlockRequest, UpdateBlockRequest,
-            DeleteTableColumnsRequest,
-        )
+    from lark_oapi.api.docx.v1 import PatchDocumentBlockRequest, UpdateBlockRequest, DeleteTableColumnsRequest
 
-        body = UpdateBlockRequest.builder() \
-            .block_id(table_block_id) \
-            .delete_table_columns(DeleteTableColumnsRequest.builder() \
-                .column_start_index(col_start).column_end_index(col_end).build()) \
-            .build()
-        req = PatchDocumentBlockRequest.builder() \
-            .document_id(doc_token).block_id(table_block_id).request_body(body).build()
-        resp = await _lark_thread(client.docx.v1.document_block.patch, req)
-        if resp.success():
-            return f"Columns deleted: {col_start}-{col_end}"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    body = UpdateBlockRequest.builder().block_id(table_block_id).delete_table_columns(
+        DeleteTableColumnsRequest.builder().column_start_index(col_start).column_end_index(col_end).build()
+    ).build()
+    req = PatchDocumentBlockRequest.builder().document_id(doc_token).block_id(table_block_id).request_body(body).build()
+    return await _feishu_call("docx.v1.document_block.patch", req, ok_msg=f"Columns deleted: {col_start}-{col_end}")
 
 
 # ============================================================
 # Drive operations supplement
 # ============================================================
+
 
 @tool
 async def feishu_drive_info(file_token: str) -> str:
@@ -1320,29 +1155,17 @@ async def feishu_drive_info(file_token: str) -> str:
     Args:
         file_token: File or folder token.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.drive.v1 import ListFileRequest
+    from lark_oapi.api.drive.v1 import ListFileRequest
 
-        # Search root folder for the file
-        req = ListFileRequest.builder().folder_token("").page_size(100).build()
-        resp = await _lark_thread(client.drive.v1.file.list, req)
-        if resp.success() and resp.data and resp.data.files:
-            for f in resp.data.files:
-                if f.token == file_token:
-                    info = {
-                        "token": f.token,
-                        "name": f.name,
-                        "type": f.type,
-                        "url": getattr(f, "url", ""),
-                    }
-                    return json.dumps(info, ensure_ascii=False, default=str)
-            return f"[error] File {file_token} not found in root folder listing"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = ListFileRequest.builder().folder_token("").page_size(100).build()
+    return await _feishu_call(
+        "drive.v1.file.list", req,
+        extract=lambda r: next(
+            ({"token": f.token, "name": f.name, "type": f.type, "url": getattr(f, "url", "")}
+             for f in r.data.files if f.token == file_token),
+            f"[error] File {file_token} not found in root folder listing",
+        ) if r.data and r.data.files else None,
+    )
 
 
 @tool
@@ -1364,12 +1187,14 @@ async def feishu_drive_move(file_token: str, folder_token: str, file_type: str =
         if not file_type:
             from src.channels.feishu import _resolve_api_base, _get_tenant_token
             from src.config import load_config
+
             cfg = load_config()
             api_token = await _get_tenant_token(
                 cfg.channels.feishu.app_id, cfg.channels.feishu.app_secret, cfg.channels.feishu.domain
             )
             if api_token:
                 import httpx
+
                 api_base = _resolve_api_base(cfg.channels.feishu.domain)
                 async with httpx.AsyncClient(timeout=10) as hc:
                     r = await hc.get(
@@ -1401,19 +1226,41 @@ async def feishu_drive_delete(file_token: str, file_type: str) -> str:
         file_token: File token to delete.
         file_type: File type (docx, sheet, bitable, folder, file, etc).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.drive.v1 import DeleteFileRequest
+    from lark_oapi.api.drive.v1 import DeleteFileRequest
 
-        req = DeleteFileRequest.builder().file_token(file_token).type(file_type).build()
-        resp = await _lark_thread(client.drive.v1.file.delete, req)
-        if resp.success():
-            return f"File deleted: {file_token}"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = DeleteFileRequest.builder().file_token(file_token).type(file_type).build()
+    return await _feishu_call("drive.v1.file.delete", req, ok_msg=f"File deleted: {file_token}")
+
+
+def _parse_comments(resp):
+    """Extract comment list from drive.v1.file_comment.list response."""
+    if not resp.data or not resp.data.items:
+        return None
+    comments = []
+    for c in resp.data.items:
+        content_str = ""
+        reply_list = getattr(c, "reply_list", None)
+        if reply_list:
+            for reply in getattr(reply_list, "replies", []) or []:
+                rc = getattr(reply, "content", None)
+                if rc:
+                    for elem in getattr(rc, "elements", []) or []:
+                        tr = getattr(elem, "text_run", None)
+                        if tr:
+                            content_str += getattr(tr, "text", "")
+        if not content_str:
+            body_obj = getattr(c, "body", None)
+            if body_obj and hasattr(body_obj, "content") and isinstance(body_obj.content, list):
+                for p in body_obj.content:
+                    if hasattr(p, "text"):
+                        content_str += getattr(p, "text", "")
+        created_by = getattr(c, "created_by", None)
+        comments.append({
+            "comment_id": getattr(c, "comment_id", ""),
+            "content": content_str,
+            "user_id": getattr(created_by, "user_id", "") if created_by else "",
+        })
+    return comments
 
 
 @tool
@@ -1425,49 +1272,10 @@ async def feishu_drive_list_comments(file_token: str, file_type: str = "docx", p
         file_type: File type (docx, sheet, bitable, file, etc).
         page_size: Max comments to fetch.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.drive.v1 import ListFileCommentRequest
+    from lark_oapi.api.drive.v1 import ListFileCommentRequest
 
-        req = ListFileCommentRequest.builder() \
-            .file_token(file_token).file_type(file_type).page_size(min(page_size, 100)).build()
-        resp = await _lark_thread(client.drive.v1.file_comment.list, req)
-        if resp.success() and resp.data and resp.data.items:
-            comments = []
-            for c in resp.data.items:
-                content_str = ""
-                # Extract text from reply_list.replies[].content.elements[].text_run
-                reply_list = getattr(c, "reply_list", None)
-                if reply_list:
-                    replies = getattr(reply_list, "replies", []) or []
-                    for reply in replies:
-                        reply_content = getattr(reply, "content", None)
-                        if reply_content:
-                            elements = getattr(reply_content, "elements", []) or []
-                            for elem in elements:
-                                text_run = getattr(elem, "text_run", None)
-                                if text_run:
-                                    content_str += getattr(text_run, "text", "")
-                # Fallback: try body.content
-                if not content_str:
-                    body_obj = getattr(c, "body", None)
-                    if body_obj and hasattr(body_obj, "content") and isinstance(body_obj.content, list):
-                        for p in body_obj.content:
-                            if hasattr(p, "text"):
-                                content_str += getattr(p, "text", "")
-                created_by = getattr(c, "created_by", None)
-                user_id = getattr(created_by, "user_id", "") if created_by else ""
-                comments.append({
-                    "comment_id": getattr(c, "comment_id", ""),
-                    "content": content_str,
-                    "user_id": user_id,
-                })
-            return json.dumps(comments, ensure_ascii=False, default=str)
-        return "No comments found"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = ListFileCommentRequest.builder().file_token(file_token).file_type(file_type).page_size(min(page_size, 100)).build()
+    return await _feishu_call("drive.v1.file_comment.list", req, extract=_parse_comments, ok_msg="No comments found")
 
 
 @tool
@@ -1497,17 +1305,14 @@ async def feishu_drive_add_comment(file_token: str, content: str, file_type: str
         # Build the comment body with required reply_list structure
         body_data = {
             "reply_list": {
-                "replies": [{
-                    "content": {
-                        "elements": [{"type": "text_run", "text_run": {"text": content}}]
-                    }
-                }]
+                "replies": [{"content": {"elements": [{"type": "text_run", "text_run": {"text": content}}]}}]
             }
         }
         if block_id:
             body_data["block_id"] = block_id
 
         import httpx
+
         async with httpx.AsyncClient(timeout=15) as hc:
             r = await hc.post(
                 f"{api_base}/drive/v1/files/{file_token}/comments",
@@ -1521,7 +1326,9 @@ async def feishu_drive_add_comment(file_token: str, content: str, file_type: str
         data = r.json()
         if data.get("code") == 0:
             comment_id = data.get("data", {}).get("comment_id", "")
-            return f"Comment added to {file_token}" + (f" (id: {comment_id})" if comment_id else "(no comment_id returned)")
+            return f"Comment added to {file_token}" + (
+                f" (id: {comment_id})" if comment_id else "(no comment_id returned)"
+            )
         return f"[error] {data.get('code', r.status_code)}: {data.get('msg', '')}"
     except Exception as e:
         return f"[error] {type(e).__name__}: {e}"
@@ -1557,11 +1364,7 @@ async def feishu_drive_reply_comment(file_token: str, comment_id: str, content: 
                 f"{api_base}/drive/v1/files/{file_token}/comments/{comment_id}/replies",
                 headers={"Authorization": f"Bearer {api_token}", "Content-Type": "application/json; charset=utf-8"},
                 params={"file_type": file_type},
-                json={
-                    "content": {
-                        "elements": [{"type": "text_run", "text_run": {"text": content}}]
-                    }
-                },
+                json={"content": {"elements": [{"type": "text_run", "text_run": {"text": content}}]}},
             )
         data = r.json()
         if data.get("code") == 0:
@@ -1578,6 +1381,7 @@ async def feishu_drive_reply_comment(file_token: str, comment_id: str, content: 
 # ============================================================
 # Bitable supplement
 # ============================================================
+
 
 @tool
 async def feishu_bitable_get_meta(url: str) -> str:
@@ -1609,6 +1413,7 @@ async def feishu_bitable_get_meta(url: str) -> str:
             if idx + 1 < len(path_parts):
                 node_token = path_parts[idx + 1]
                 from lark_oapi.api.wiki.v2 import GetNodeSpaceRequest
+
                 node_req = GetNodeSpaceRequest.builder().token(node_token).build()
                 node_resp = await _lark_thread(client.wiki.v2.space.get_node, node_req)
                 if node_resp.success() and node_resp.data and node_resp.data.node:
@@ -1652,26 +1457,14 @@ async def feishu_bitable_list_fields(app_token: str, table_id: str) -> str:
         app_token: Bitable app token.
         table_id: Table ID.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.bitable.v1 import ListAppTableFieldRequest
+    from lark_oapi.api.bitable.v1 import ListAppTableFieldRequest
 
-        req = ListAppTableFieldRequest.builder().app_token(app_token).table_id(table_id).build()
-        resp = await _lark_thread(client.bitable.v1.app_table_field.list, req)
-        if resp.success() and resp.data and resp.data.items:
-            fields = []
-            for f in resp.data.items:
-                fields.append({
-                    "field_id": f.field_id,
-                    "field_name": f.field_name,
-                    "type": f.type,
-                })
-            return json.dumps(fields, ensure_ascii=False, default=str)
-        return "No fields found"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = ListAppTableFieldRequest.builder().app_token(app_token).table_id(table_id).build()
+    return await _feishu_call(
+        "bitable.v1.app_table_field.list", req,
+        extract=lambda r: [{"field_id": f.field_id, "field_name": f.field_name, "type": f.type} for f in r.data.items] if r.data and r.data.items else None,
+        ok_msg="No fields found",
+    )
 
 
 @tool
@@ -1683,24 +1476,16 @@ async def feishu_bitable_get_record(app_token: str, table_id: str, record_id: st
         table_id: Table ID.
         record_id: Record ID to retrieve.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.bitable.v1 import GetAppTableRecordRequest
+    from lark_oapi.api.bitable.v1 import GetAppTableRecordRequest
 
-        req = GetAppTableRecordRequest.builder() \
-            .app_token(app_token).table_id(table_id).record_id(record_id).build()
-        resp = await _lark_thread(client.bitable.v1.app_table_record.get, req)
-        if resp.success() and resp.data and resp.data.record:
-            r = resp.data.record
-            return json.dumps({
-                "record_id": r.record_id,
-                "fields": r.fields if hasattr(r, "fields") else {},
-            }, ensure_ascii=False, default=str)
-        return f"[error] Record not found: {record_id}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = GetAppTableRecordRequest.builder().app_token(app_token).table_id(table_id).record_id(record_id).build()
+    return await _feishu_call(
+        "bitable.v1.app_table_record.get", req,
+        extract=lambda r: {
+            "record_id": r.data.record.record_id,
+            "fields": r.data.record.fields if hasattr(r.data.record, "fields") else {},
+        } if r.data and r.data.record else f"[error] Record not found: {record_id}",
+    )
 
 
 @tool
@@ -1713,23 +1498,15 @@ async def feishu_bitable_update_record(app_token: str, table_id: str, record_id:
         record_id: Record ID to update.
         fields_json: Updated fields as JSON object, e.g. '{"Name": "new value"}'.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.bitable.v1 import UpdateAppTableRecordRequest
+    from lark_oapi.api.bitable.v1 import UpdateAppTableRecordRequest, AppTableRecord
 
-        fields = json.loads(fields_json)
-        from lark_oapi.api.bitable.v1 import AppTableRecord
-        record = AppTableRecord.builder().fields(fields).build()
-        req = UpdateAppTableRecordRequest.builder() \
-            .app_token(app_token).table_id(table_id).record_id(record_id).request_body(record).build()
-        resp = await _lark_thread(client.bitable.v1.app_table_record.update, req)
-        if resp.success() and resp.data and resp.data.record:
-            return f"Record updated: {record_id}"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    fields = json.loads(fields_json)
+    record = AppTableRecord.builder().fields(fields).build()
+    req = UpdateAppTableRecordRequest.builder().app_token(app_token).table_id(table_id).record_id(record_id).request_body(record).build()
+    return await _feishu_call(
+        "bitable.v1.app_table_record.update", req,
+        extract=lambda r: f"Record updated: {record_id}" if r.data and r.data.record else None,
+    )
 
 
 @tool
@@ -1742,27 +1519,20 @@ async def feishu_bitable_create_field(app_token: str, table_id: str, field_name:
         field_name: Field name.
         field_type: Field type number (1=Text, 2=Number, 3=SingleSelect, 4=MultiSelect, 5=Date, 7=Checkbox, 11=Phone, 13=URL, 15=Email, 1001=CreatedTime, 1002=ModifiedTime, 1003=CreatedBy, 1004=LastModifiedBy).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.bitable.v1 import CreateAppTableFieldRequest
+    from lark_oapi.api.bitable.v1 import CreateAppTableFieldRequest, AppTableField
 
-        from lark_oapi.api.bitable.v1 import AppTableField
-        field_obj = AppTableField.builder().field_name(field_name).type(field_type).build()
-        req = CreateAppTableFieldRequest.builder() \
-            .app_token(app_token).table_id(table_id).request_body(field_obj).build()
-        resp = await _lark_thread(client.bitable.v1.app_table_field.create, req)
-        if resp.success() and resp.data and resp.data.field:
-            return f"Field created: {field_name} (field_id={resp.data.field.field_id})"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    field_obj = AppTableField.builder().field_name(field_name).type(field_type).build()
+    req = CreateAppTableFieldRequest.builder().app_token(app_token).table_id(table_id).request_body(field_obj).build()
+    return await _feishu_call(
+        "bitable.v1.app_table_field.create", req,
+        extract=lambda r: f"Field created: {field_name} (field_id={r.data.field.field_id})" if r.data and r.data.field else None,
+    )
 
 
 # ============================================================
 # Wiki operations
 # ============================================================
+
 
 @tool
 async def feishu_wiki_list_spaces() -> str:
@@ -1770,26 +1540,14 @@ async def feishu_wiki_list_spaces() -> str:
 
     Args: (none)
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.wiki.v2 import ListSpaceRequest
+    from lark_oapi.api.wiki.v2 import ListSpaceRequest
 
-        req = ListSpaceRequest.builder().page_size(50).build()
-        resp = await _lark_thread(client.wiki.v2.space.list, req)
-        if resp.success() and resp.data and resp.data.items:
-            spaces = []
-            for s in resp.data.items:
-                spaces.append({
-                    "space_id": getattr(s, "space_id", ""),
-                    "name": getattr(s, "name", ""),
-                    "description": getattr(s, "description", ""),
-                })
-            return json.dumps(spaces, ensure_ascii=False, default=str)
-        return "No wiki spaces found"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = ListSpaceRequest.builder().page_size(50).build()
+    return await _feishu_call(
+        "wiki.v2.space.list", req,
+        extract=lambda r: [{"space_id": getattr(s, "space_id", ""), "name": getattr(s, "name", ""), "description": getattr(s, "description", "")} for s in r.data.items] if r.data and r.data.items else None,
+        ok_msg="No wiki spaces found",
+    )
 
 
 @tool
@@ -1800,28 +1558,14 @@ async def feishu_wiki_list_nodes(space_id: str, parent_node_token: str = "") -> 
         space_id: Wiki space ID.
         parent_node_token: Parent node token (empty for root).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.wiki.v2 import ListSpaceNodeRequest
+    from lark_oapi.api.wiki.v2 import ListSpaceNodeRequest
 
-        req = ListSpaceNodeRequest.builder() \
-            .space_id(space_id).parent_node_token(parent_node_token).page_size(50).build()
-        resp = await _lark_thread(client.wiki.v2.space_node.list, req)
-        if resp.success() and resp.data and resp.data.items:
-            nodes = []
-            for n in resp.data.items:
-                nodes.append({
-                    "node_token": getattr(n, "node_token", ""),
-                    "title": getattr(n, "title", ""),
-                    "obj_type": getattr(n, "obj_type", ""),
-                    "obj_token": getattr(n, "obj_token", ""),
-                })
-            return json.dumps(nodes, ensure_ascii=False, default=str)
-        return "No nodes found"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = ListSpaceNodeRequest.builder().space_id(space_id).parent_node_token(parent_node_token).page_size(50).build()
+    return await _feishu_call(
+        "wiki.v2.space_node.list", req,
+        extract=lambda r: [{"node_token": getattr(n, "node_token", ""), "title": getattr(n, "title", ""), "obj_type": getattr(n, "obj_type", ""), "obj_token": getattr(n, "obj_token", "")} for n in r.data.items] if r.data and r.data.items else None,
+        ok_msg="No nodes found",
+    )
 
 
 @tool
@@ -1831,32 +1575,23 @@ async def feishu_wiki_get_node(token: str) -> str:
     Args:
         token: Wiki node token.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.wiki.v2 import GetNodeSpaceRequest
+    from lark_oapi.api.wiki.v2 import GetNodeSpaceRequest
 
-        req = GetNodeSpaceRequest.builder().token(token).build()
-        resp = await _lark_thread(client.wiki.v2.space.get_node, req)
-        if resp.success() and resp.data and resp.data.node:
-            n = resp.data.node
-            info = {
-                "node_token": getattr(n, "node_token", ""),
-                "space_id": getattr(n, "space_id", ""),
-                "title": getattr(n, "title", ""),
-                "obj_type": getattr(n, "obj_type", ""),
-                "obj_token": getattr(n, "obj_token", ""),
-                "parent_node_token": getattr(n, "parent_node_token", ""),
-            }
-            return json.dumps(info, ensure_ascii=False, default=str)
-        return f"[error] Node not found: {token}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = GetNodeSpaceRequest.builder().token(token).build()
+    return await _feishu_call(
+        "wiki.v2.space.get_node", req,
+        extract=lambda r: {
+            "node_token": getattr(r.data.node, "node_token", ""), "space_id": getattr(r.data.node, "space_id", ""),
+            "title": getattr(r.data.node, "title", ""), "obj_type": getattr(r.data.node, "obj_type", ""),
+            "obj_token": getattr(r.data.node, "obj_token", ""), "parent_node_token": getattr(r.data.node, "parent_node_token", ""),
+        } if r.data and r.data.node else f"[error] Node not found: {token}",
+    )
 
 
 @tool
-async def feishu_wiki_create_node(space_id: str, title: str, obj_type: str = "docx", parent_node_token: str = "") -> str:
+async def feishu_wiki_create_node(
+    space_id: str, title: str, obj_type: str = "docx", parent_node_token: str = ""
+) -> str:
     """Create a new node in a wiki space.
 
     Args:
@@ -1865,27 +1600,20 @@ async def feishu_wiki_create_node(space_id: str, title: str, obj_type: str = "do
         obj_type: Object type (docx, sheet, bitable, mindnote, file).
         parent_node_token: Parent node token (empty for root).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.wiki.v2 import CreateSpaceNodeRequest, Node
+    from lark_oapi.api.wiki.v2 import CreateSpaceNodeRequest, Node
 
-        body = Node.builder() \
-            .title(title).obj_type(obj_type).parent_node_token(parent_node_token).build()
-        req = CreateSpaceNodeRequest.builder() \
-            .space_id(space_id).request_body(body).build()
-        resp = await _lark_thread(client.wiki.v2.space_node.create, req)
-        if resp.success() and resp.data and resp.data.node:
-            n = resp.data.node
-            return f"Wiki node created: {n.title} (token={n.node_token}, obj_token={n.obj_token})"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    body = Node.builder().title(title).obj_type(obj_type).parent_node_token(parent_node_token).build()
+    req = CreateSpaceNodeRequest.builder().space_id(space_id).request_body(body).build()
+    return await _feishu_call(
+        "wiki.v2.space_node.create", req,
+        extract=lambda r: f"Wiki node created: {r.data.node.title} (token={r.data.node.node_token}, obj_token={r.data.node.obj_token})" if r.data and r.data.node else None,
+    )
 
 
 @tool
-async def feishu_wiki_move_node(space_id: str, node_token: str, target_space_id: str = "", target_parent_token: str = "") -> str:
+async def feishu_wiki_move_node(
+    space_id: str, node_token: str, target_space_id: str = "", target_parent_token: str = ""
+) -> str:
     """Move a wiki node to another location.
 
     Args:
@@ -1894,23 +1622,11 @@ async def feishu_wiki_move_node(space_id: str, node_token: str, target_space_id:
         target_space_id: Target space ID (empty = same space).
         target_parent_token: Target parent node token.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.wiki.v2 import MoveSpaceNodeRequest, MoveSpaceNodeRequestBody
+    from lark_oapi.api.wiki.v2 import MoveSpaceNodeRequest, MoveSpaceNodeRequestBody
 
-        body = MoveSpaceNodeRequestBody.builder() \
-            .target_space_id(target_space_id or space_id) \
-            .target_parent_token(target_parent_token).build()
-        req = MoveSpaceNodeRequest.builder() \
-            .space_id(space_id).node_token(node_token).request_body(body).build()
-        resp = await _lark_thread(client.wiki.v2.space_node.move, req)
-        if resp.success():
-            return f"Wiki node moved: {node_token}"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    body = MoveSpaceNodeRequestBody.builder().target_space_id(target_space_id or space_id).target_parent_token(target_parent_token).build()
+    req = MoveSpaceNodeRequest.builder().space_id(space_id).node_token(node_token).request_body(body).build()
+    return await _feishu_call("wiki.v2.space_node.move", req, ok_msg=f"Wiki node moved: {node_token}")
 
 
 @tool
@@ -1922,26 +1638,17 @@ async def feishu_wiki_rename_node(space_id: str, node_token: str, title: str) ->
         node_token: Node token to rename.
         title: New title.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.wiki.v2 import UpdateTitleSpaceNodeRequest, UpdateTitleSpaceNodeRequestBody
+    from lark_oapi.api.wiki.v2 import UpdateTitleSpaceNodeRequest, UpdateTitleSpaceNodeRequestBody
 
-        body = UpdateTitleSpaceNodeRequestBody.builder().title(title).build()
-        req = UpdateTitleSpaceNodeRequest.builder() \
-            .space_id(space_id).node_token(node_token).request_body(body).build()
-        resp = await _lark_thread(client.wiki.v2.space_node.update_title, req)
-        if resp.success():
-            return f"Wiki node renamed: {node_token} -> {title}"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    body = UpdateTitleSpaceNodeRequestBody.builder().title(title).build()
+    req = UpdateTitleSpaceNodeRequest.builder().space_id(space_id).node_token(node_token).request_body(body).build()
+    return await _feishu_call("wiki.v2.space_node.update_title", req, ok_msg=f"Wiki node renamed: {node_token} -> {title}")
 
 
 # ============================================================
 # Permission management
 # ============================================================
+
 
 @tool
 async def feishu_perm_list_members(token: str, perm_type: str = "docx", page_size: int = 50) -> str:
@@ -1952,32 +1659,20 @@ async def feishu_perm_list_members(token: str, perm_type: str = "docx", page_siz
         perm_type: Resource type (docx, sheet, bitable, file, wiki, etc).
         page_size: Max members to fetch.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.drive.v1 import ListPermissionMemberRequest
+    from lark_oapi.api.drive.v1 import ListPermissionMemberRequest
 
-        req = ListPermissionMemberRequest.builder() \
-            .token(token).type(perm_type).build()
-        resp = await _lark_thread(client.drive.v1.permission_member.list, req)
-        if resp.success() and resp.data and resp.data.items:
-            members = []
-            for m in resp.data.items:
-                members.append({
-                    "member_id": getattr(m, "member_id", ""),
-                    "member_type": getattr(m, "member_type", ""),
-                    "perm": getattr(m, "perm", ""),
-                    "name": getattr(m, "name", ""),
-                })
-            return json.dumps(members, ensure_ascii=False, default=str)
-        return "No members found"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = ListPermissionMemberRequest.builder().token(token).type(perm_type).build()
+    return await _feishu_call(
+        "drive.v1.permission_member.list", req,
+        extract=lambda r: [{"member_id": getattr(m, "member_id", ""), "member_type": getattr(m, "member_type", ""), "perm": getattr(m, "perm", ""), "name": getattr(m, "name", "")} for m in r.data.items] if r.data and r.data.items else None,
+        ok_msg="No members found",
+    )
 
 
 @tool
-async def feishu_perm_add_member(token: str, perm_type: str = "docx", member_type: str = "openid", member_id: str = "", perm: str = "read_only") -> str:
+async def feishu_perm_add_member(
+    token: str, perm_type: str = "docx", member_type: str = "openid", member_id: str = "", perm: str = "read_only"
+) -> str:
     """Add a member with permissions to a resource.
 
     Args:
@@ -1987,23 +1682,15 @@ async def feishu_perm_add_member(token: str, perm_type: str = "docx", member_typ
         member_id: Member ID value.
         perm: Permission level (read_only, edit, full_access).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.drive.v1 import CreatePermissionMemberRequest
-        from lark_oapi.api.drive.v1.model import BaseMember
+    from lark_oapi.api.drive.v1 import CreatePermissionMemberRequest
+    from lark_oapi.api.drive.v1.model import BaseMember
 
-        body = BaseMember.builder() \
-            .member_type(member_type).member_id(member_id).perm(perm).build()
-        req = CreatePermissionMemberRequest.builder() \
-            .token(token).type(perm_type).need_notification(True).request_body(body).build()
-        resp = await _lark_thread(client.drive.v1.permission_member.create, req)
-        if resp.success():
-            return f"Permission granted: {member_type}:{member_id} = {perm} on {token}"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    body = BaseMember.builder().member_type(member_type).member_id(member_id).perm(perm).build()
+    req = CreatePermissionMemberRequest.builder().token(token).type(perm_type).need_notification(True).request_body(body).build()
+    return await _feishu_call(
+        "drive.v1.permission_member.create", req,
+        ok_msg=f"Permission granted: {member_type}:{member_id} = {perm} on {token}",
+    )
 
 
 @tool
@@ -2016,25 +1703,19 @@ async def feishu_perm_remove_member(token: str, perm_type: str, member_type: str
         member_type: Member type (openid, unionid, email, openchat, userid, etc).
         member_id: Member ID to remove.
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.drive.v1 import DeletePermissionMemberRequest
+    from lark_oapi.api.drive.v1 import DeletePermissionMemberRequest
 
-        req = DeletePermissionMemberRequest.builder() \
-            .token(token).type(perm_type).member_type(member_type).member_id(member_id).build()
-        resp = await _lark_thread(client.drive.v1.permission_member.delete, req)
-        if resp.success():
-            return f"Permission removed: {member_type}:{member_id} from {token}"
-        return f"[error] {resp.code}: {resp.msg}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = DeletePermissionMemberRequest.builder().token(token).type(perm_type).member_type(member_type).member_id(member_id).build()
+    return await _feishu_call(
+        "drive.v1.permission_member.delete", req,
+        ok_msg=f"Permission removed: {member_type}:{member_id} from {token}",
+    )
 
 
 # ============================================================
 # Chat supplement
 # ============================================================
+
 
 @tool
 async def feishu_get_member_info(member_id: str, id_type: str = "open_id") -> str:
@@ -2044,34 +1725,24 @@ async def feishu_get_member_info(member_id: str, id_type: str = "open_id") -> st
         member_id: User ID (open_id, union_id, or user_id).
         id_type: ID type (open_id, union_id, user_id).
     """
-    client = _get_feishu_client()
-    if client is None:
-        return "[error] Feishu client not initialized"
-    try:
-        from lark_oapi.api.contact.v3 import GetUserRequest
+    from lark_oapi.api.contact.v3 import GetUserRequest
 
-        req = GetUserRequest.builder().user_id(member_id).user_id_type(id_type).build()
-        resp = await _lark_thread(client.contact.v3.user.get, req)
-        if resp.success() and resp.data and resp.data.user:
-            u = resp.data.user
-            info = {
-                "open_id": getattr(u, "open_id", ""),
-                "union_id": getattr(u, "union_id", ""),
-                "user_id": getattr(u, "user_id", ""),
-                "name": getattr(u, "name", ""),
-                "en_name": getattr(u, "en_name", ""),
-                "email": getattr(u, "email", ""),
-                "mobile": getattr(u, "mobile", ""),
-            }
-            return json.dumps(info, ensure_ascii=False, default=str)
-        return f"[error] User not found: {member_id}"
-    except Exception as e:
-        return f"[error] {type(e).__name__}: {e}"
+    req = GetUserRequest.builder().user_id(member_id).user_id_type(id_type).build()
+    return await _feishu_call(
+        "contact.v3.user.get", req,
+        extract=lambda r: {
+            "open_id": getattr(r.data.user, "open_id", ""), "union_id": getattr(r.data.user, "union_id", ""),
+            "user_id": getattr(r.data.user, "user_id", ""), "name": getattr(r.data.user, "name", ""),
+            "en_name": getattr(r.data.user, "en_name", ""), "email": getattr(r.data.user, "email", ""),
+            "mobile": getattr(r.data.user, "mobile", ""),
+        } if r.data and r.data.user else f"[error] User not found: {member_id}",
+    )
 
 
 # ============================================================
 # Document image upload
 # ============================================================
+
 
 @tool
 async def feishu_doc_upload_image(doc_token: str, file_path: str) -> str:
@@ -2088,8 +1759,10 @@ async def feishu_doc_upload_image(doc_token: str, file_path: str) -> str:
         import os
         from lark_oapi.api.drive.v1 import UploadAllMediaRequest, UploadAllMediaRequestBody
         from lark_oapi.api.docx.v1 import (
-            CreateDocumentBlockChildrenRequest, CreateDocumentBlockChildrenRequestBody,
-            Block, Image,
+            CreateDocumentBlockChildrenRequest,
+            CreateDocumentBlockChildrenRequestBody,
+            Block,
+            Image,
         )
 
         abs_path = os.path.abspath(file_path)
@@ -2102,9 +1775,15 @@ async def feishu_doc_upload_image(doc_token: str, file_path: str) -> str:
         # Upload image to drive
         def _do_upload():
             with open(abs_path, "rb") as f:
-                body = UploadAllMediaRequestBody.builder() \
-                    .file_name(file_name).parent_type("docx_image") \
-                    .parent_node(doc_token).size(file_size).file(f).build()
+                body = (
+                    UploadAllMediaRequestBody.builder()
+                    .file_name(file_name)
+                    .parent_type("docx_image")
+                    .parent_node(doc_token)
+                    .size(file_size)
+                    .file(f)
+                    .build()
+                )
                 req = UploadAllMediaRequest.builder().request_body(body).build()
                 return client.drive.v1.media.upload_all(req)
 
@@ -2123,10 +1802,14 @@ async def feishu_doc_upload_image(doc_token: str, file_path: str) -> str:
         image = Image.builder().token(file_token).build()
         block = Block.builder().block_type(27).image(image).build()  # 27 = image
 
-        body = CreateDocumentBlockChildrenRequestBody.builder() \
-            .children([block]).index(-1).build()
-        req = CreateDocumentBlockChildrenRequest.builder() \
-            .document_id(doc_token).block_id(doc_token).request_body(body).build()
+        body = CreateDocumentBlockChildrenRequestBody.builder().children([block]).index(-1).build()
+        req = (
+            CreateDocumentBlockChildrenRequest.builder()
+            .document_id(doc_token)
+            .block_id(doc_token)
+            .request_body(body)
+            .build()
+        )
         insert_resp = await _lark_thread(client.docx.v1.document_block_children.create, req)
         if insert_resp.success() and insert_resp.data and insert_resp.data.blocks:
             return f"Image uploaded and inserted: {file_name} (block_id={insert_resp.data.blocks[0].block_id})"

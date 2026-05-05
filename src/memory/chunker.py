@@ -3,6 +3,7 @@
 Splits text into overlapping chunks at paragraph boundaries,
 targeting a configurable token count per chunk.
 """
+
 from __future__ import annotations
 
 import re
@@ -47,18 +48,22 @@ def chunk_markdown(
         if current_parts and _estimate_tokens("".join(current_parts) + para) > chunk_tokens:
             # Flush current chunk
             chunk_text = "\n\n".join(current_parts)
-            chunks.append({
-                "text": chunk_text,
-                "index": len(chunks),
-                "start_char": chunk_start,
-                "end_char": chunk_start + len(chunk_text),
-            })
+            chunks.append(
+                {
+                    "text": chunk_text,
+                    "index": len(chunks),
+                    "start_char": chunk_start,
+                    "end_char": chunk_start + len(chunk_text),
+                }
+            )
 
             # Compute overlap from the end of flushed chunk
             overlap_text = _extract_overlap(chunk_text, overlap_chars)
             current_parts = [overlap_text, para] if overlap_text else [para]
             current_chars = sum(len(p) for p in current_parts)
-            chunk_start = chunk_start + len(chunk_text) - len(overlap_text) if overlap_text else chunk_start + len(chunk_text)
+            chunk_start = (
+                chunk_start + len(chunk_text) - len(overlap_text) if overlap_text else chunk_start + len(chunk_text)
+            )
         else:
             current_parts.append(para)
             current_chars = new_chars
@@ -66,12 +71,14 @@ def chunk_markdown(
     # Flush remaining
     if current_parts:
         chunk_text = "\n\n".join(current_parts)
-        chunks.append({
-            "text": chunk_text,
-            "index": len(chunks),
-            "start_char": chunk_start,
-            "end_char": chunk_start + len(chunk_text),
-        })
+        chunks.append(
+            {
+                "text": chunk_text,
+                "index": len(chunks),
+                "start_char": chunk_start,
+                "end_char": chunk_start + len(chunk_text),
+            }
+        )
 
     return chunks
 
@@ -84,5 +91,5 @@ def _extract_overlap(text: str, max_chars: int) -> str:
     window = text[-max_chars:]
     cut = window.find("\n\n")
     if 0 < cut < len(window) - 1:
-        return window[cut + 2:]
+        return window[cut + 2 :]
     return window

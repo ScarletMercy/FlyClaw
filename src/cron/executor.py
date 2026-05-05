@@ -202,7 +202,7 @@ async def execute_with_retry(
 
         if attempt < max_retries:
             # Exponential backoff with jitter: delay = base * 2^attempt + random_jitter
-            delay = min(base_delay * (2 ** attempt), max_delay)
+            delay = min(base_delay * (2**attempt), max_delay)
             jitter = random.uniform(0, 1) * delay * 0.1  # Add 0-10% jitter
             delay = delay + jitter
             logger.info(
@@ -248,9 +248,7 @@ async def _deliver_result(job: CronJob, output: str, feishu_channel: Any = None)
             headers = {"Content-Type": "application/json"}
             webhook_secret = getattr(delivery, "webhook_secret", "") or ""
             if webhook_secret:
-                signature = hmac.new(
-                    webhook_secret.encode(), payload.encode(), hashlib.sha256
-                ).hexdigest()
+                signature = hmac.new(webhook_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
                 headers["X-MyClaw-Signature"] = f"sha256={signature}"
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(

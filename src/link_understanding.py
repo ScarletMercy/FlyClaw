@@ -7,17 +7,22 @@ from typing import Optional
 
 logger = logging.getLogger("myclaw.links")
 
-URL_PATTERN = re.compile(r'https?://[^\s<>\)\]\"]+', re.IGNORECASE)
+URL_PATTERN = re.compile(r"https?://[^\s<>\)\]\"]+", re.IGNORECASE)
 
 
 async def _fetch_preview(url: str, max_chars: int = 400) -> Optional[str]:
     """Fetch a brief preview for a URL using the web_fetch tool."""
     try:
-        from src.tools.web_fetch import web_fetch
+        from src.tools.web_tools import web_fetch
 
         # Call the tool directly (it's a LangChain tool, we need to invoke it)
         result = await web_fetch.ainvoke({"url": url, "max_chars": max_chars})
-        if isinstance(result, str) and result and not result.startswith("[error]") and not result.startswith("[web_fetch"):
+        if (
+            isinstance(result, str)
+            and result
+            and not result.startswith("[error]")
+            and not result.startswith("[web_fetch")
+        ):
             # Extract first meaningful line as title
             lines = result.strip().split("\n")
             title = ""

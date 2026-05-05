@@ -38,6 +38,7 @@ class AgentState(TypedDict):
     chat_id: str
     chat_type: str
     message_id: str
+    user_role: str  # "owner" | "admin" | "user" | "guest" | ""
 
 
 def create_agent_state(
@@ -77,20 +78,117 @@ def create_agent_state(
         "chat_id": chat_id,
         "chat_type": chat_type,
         "message_id": message_id or str(uuid.uuid4()),
+        "user_role": "",
     }
 
 
 def _build_runtime_info() -> str:
+    """Legacy helper kept for backward compat; prompt.py has the canonical version."""
     import zoneinfo
+
     try:
         tz = zoneinfo.ZoneInfo("Asia/Shanghai")
     except Exception:
         tz = timezone.utc
     now = datetime.now(tz).strftime("%Y-%m-%d %H:%M %Z")
-    return (
-        f"Runtime: Python {sys.version.split()[0]} on {platform.system()} {platform.release()}\n"
-        f"Current time: {now}"
+    return f"Runtime: Python {sys.version.split()[0]} on {platform.system()} {platform.release()}\nCurrent time: {now}"
+
+
+def _fixup_xml_tool_calls(response: AIMessage, available_tools: list) -> AIMessage:
+    """Detect pseudo-XML tool calls in text content and convert to native tool_calls.
+
+    Handles the LongCat API sporadic failure where the model outputs:
+        <longcat_tool_call>tool_name
+        <longcat_arg_key>key</longcat_arg_key>
+        <longcat_arg_value>value</longcat_arg_value>
+    instead of returning proper OpenAI tool_calls.
+    """
+    if not isinstance(response, AIMessage):
+        return response
+    # Already has native tool_calls — nothing to fix
+    if response.tool_calls:
+        return response
+    content = response.content if isinstance(response.content, str) else ""
+    if "<longcat_tool_call>" not in content:
+        return response
+
+    import json
+    import re
+
+    logger.info("Detected pseudo-XML tool calls in model response, converting to native format")
+
+    tool_map = {t.name: t for t in available_tools}
+    parsed_calls = []
+
+    # Pattern: <longcat_tool_call>tool_name followed by key/value pairs
+    pattern = re.compile(
+        r"<longcat_tool_call>\s*(\w+)"
+        r"(.*?)"
+        r"(?:</longcat_tool_call>|<longcat_tool_call>|$)",
+        re.DOTALL,
     )
+    kv_pattern = re.compile(
+        r"<longcat_arg_key>\s*(.*?)\s*</longcat_arg_key>\s*"
+        r"<longcat_arg_value>\s*(.*?)\s*</longcat_arg_value>",
+        re.DOTALL,
+    )
+
+    for m in pattern.finditer(content):
+        tool_name = m.group(1).strip()
+        args_block = m.group(2)
+        args = {}
+        for km in kv_pattern.finditer(args_block):
+            key = km.group(1).strip()
+            val = km.group(2).strip()
+            args[key] = val
+
+        if tool_name in tool_map:
+            parsed_calls.append({
+                "name": tool_name,
+                "args": args,
+                "id": f"xml_{uuid.uuid4().hex[:12]}",
+                "type": "tool_call",
+            })
+            logger.info("Parsed XML tool call: %s(%s)", tool_name, args)
+        else:
+            logger.warning("Unknown tool in XML call: %s", tool_name)
+
+    if not parsed_calls:
+        return response
+
+    # Extract text before the first XML tag as the content
+    text_part = content.split("<longcat_tool_call>")[0].strip()
+
+    # Build a new AIMessage with proper tool_calls
+    new_response = AIMessage(
+        content=text_part,
+        tool_calls=parsed_calls,
+    )
+    # Copy over additional_kwargs if present
+    if hasattr(response, "additional_kwargs") and response.additional_kwargs:
+        new_response.additional_kwargs = response.additional_kwargs
+    return new_response
+
+
+def _resolve_user_from_state(sender_id: str, config):
+    """Resolve a User object for RBAC from sender_id and config.
+
+    Returns None if RBAC is disabled or not yet initialized.
+    """
+    if not sender_id or not config:
+        return None
+    auth_cfg = getattr(config, "auth", None)
+    if not auth_cfg or not getattr(auth_cfg, "enabled", False):
+        return None
+    try:
+        from src.auth.rbac import get_rbac
+
+        rbac = get_rbac()
+        if rbac is None:
+            return None
+        return rbac.resolve_user(sender_id)
+    except Exception:
+        return None
 
 
 def _estimate_tokens(messages: list[BaseMessage]) -> int:
@@ -236,6 +334,19 @@ def create_agent_graph(
     if skills:
         skills_prompt = build_skills_prompt(skills, budget=skills_budget)
 
+    # Load bootstrap context files from workspace
+    from src.bootstrap import load_bootstrap_files
+
+    context_files = []
+    if config:
+        agents_cfg = getattr(config, "agents", None)
+        if agents_cfg:
+            extra_names = getattr(agents_cfg, "bootstrap_files", None)
+            context_files = load_bootstrap_files(
+                agents_cfg.workspace,
+                extra_names=extra_names if extra_names else None,
+            )
+
     # Pre-filter tools at compilation time if no policy is needed
     # If policy is enabled, we'll filter per-request based on sender_id
     _use_tool_policy = config is not None
@@ -256,21 +367,29 @@ def create_agent_graph(
 
         compacted = _compact_messages(messages, max_tokens=int(context_window_tokens * 0.7))
 
-        sp = state.get("system_prompt", system_prompt) or system_prompt
-        runtime_info = _build_runtime_info()
-        parts = [sp]
-        if skills_prompt:
-            parts.append(skills_prompt)
-        parts.append(f"---\n{runtime_info}")
-        full_system = "\n\n".join(parts)
-
-        all_messages = [SystemMessage(content=full_system)] + list(compacted)
-
+        # Apply tool policy first to get per-request tool set
         active_tools = tools
         if _use_tool_policy:
             from src.tools.policy import apply_tool_policy
 
-            active_tools = apply_tool_policy(tools, state.get("sender_id", ""), config)
+            sender_id = state.get("sender_id", "")
+            user = _resolve_user_from_state(sender_id, config)
+            active_tools = apply_tool_policy(tools, sender_id, config, user=user)
+
+        # Build system prompt with modular prompt builder
+        sp = state.get("system_prompt", system_prompt) or system_prompt
+
+        from src.prompt import build_system_prompt
+
+        full_system = build_system_prompt(
+            config=config,
+            tools=active_tools,
+            skills_prompt=skills_prompt,
+            context_files=context_files,
+            extra_system_prompt=sp,
+        )
+
+        all_messages = [SystemMessage(content=full_system)] + list(compacted)
 
         # Enforce max_tool_rounds: count ToolMessages only in current turn
         # (since the last HumanMessage), not across entire session history
@@ -292,6 +411,11 @@ def create_agent_graph(
                 response = await model_or_chain.ainvoke(all_messages, tools=active_tools)
         else:
             response = await model_or_chain.ainvoke(all_messages)
+
+        # Fallback: parse pseudo-XML tool calls when the API fails to
+        # return native tool_calls (e.g. LongCat sporadic parser bug).
+        response = _fixup_xml_tool_calls(response, all_tools)
+
         return {"messages": [response]}
 
     async def approval_aware_tool_node(state: AgentState) -> dict:
@@ -299,7 +423,8 @@ def create_agent_graph(
         if _use_tool_policy:
             from src.tools.policy import apply_tool_policy
 
-            filtered = apply_tool_policy(tools, sender_id, config)
+            user = _resolve_user_from_state(sender_id, config)
+            filtered = apply_tool_policy(tools, sender_id, config, user=user)
         else:
             filtered = tools
 
@@ -314,6 +439,7 @@ def create_agent_graph(
             if _use_tool_policy and config.tools.exec.audit_log:
                 try:
                     from src.hooks.command_logger import log_tool_call
+
                     last_msg = result_state["messages"][-1] if result_state.get("messages") else None
                     if isinstance(last_msg, ToolMessage):
                         tool_name = getattr(last_msg, "name", "unknown")
@@ -389,11 +515,7 @@ def create_agent_graph(
                         if isinstance(msg, AIMessage) and msg.tool_calls:
                             last_ai = msg
                             break
-                    tool_call_id = (
-                        last_ai.tool_calls[0]["id"]
-                        if last_ai and last_ai.tool_calls
-                        else "approval_denied"
-                    )
+                    tool_call_id = last_ai.tool_calls[0]["id"] if last_ai and last_ai.tool_calls else "approval_denied"
                     denial_msg = ToolMessage(
                         content=f"[Command denied by user: {cmd[:100]}]",
                         tool_call_id=tool_call_id,
@@ -405,9 +527,7 @@ def create_agent_graph(
                     if isinstance(msg, AIMessage) and msg.tool_calls:
                         last_ai = msg
                         break
-                tool_call_id = (
-                    last_ai.tool_calls[0]["id"] if last_ai and last_ai.tool_calls else "tool_error"
-                )
+                tool_call_id = last_ai.tool_calls[0]["id"] if last_ai and last_ai.tool_calls else "tool_error"
                 error_msg = ToolMessage(
                     content=f"[error] {str(e)}",
                     tool_call_id=tool_call_id,
@@ -529,7 +649,7 @@ def _register_builtin_tools(config) -> None:
 
     @registry.register
     def _collect_web_search_tools() -> list[BaseTool]:
-        from src.tools.web_search import web_search
+        from src.tools.web_tools import web_search
 
         if config.tools.web_search.enabled:
             logger.info("Tool registered: web_search")
@@ -538,7 +658,7 @@ def _register_builtin_tools(config) -> None:
 
     @registry.register
     def _collect_web_fetch_tools() -> list[BaseTool]:
-        from src.tools.web_fetch import web_fetch
+        from src.tools.web_tools import web_fetch
 
         if config.tools.web_fetch.enabled:
             logger.info("Tool registered: web_fetch")
@@ -611,60 +731,62 @@ def _register_builtin_tools(config) -> None:
 
         tools_list: list[BaseTool] = []
         if config.channels.feishu.enabled:
-            tools_list.extend([
-                feishu_send_message,
-                feishu_send_card,
-                feishu_create_document,
-                feishu_write_document,
-                feishu_get_doc_content,
-                feishu_get_chat_info,
-                feishu_get_user_info,
-                feishu_get_chat_member_list,
-                feishu_get_message_list,
-                feishu_recall_message,
-                feishu_create_chat,
-                feishu_create_folder,
-                feishu_drive_list,
-                feishu_drive_upload,
-                feishu_create_calendar_event,
-                feishu_list_calendar_events,
-                feishu_create_bitable,
-                feishu_bitable_list_records,
-                feishu_bitable_add_record,
-                feishu_doc_append,
-                feishu_doc_insert,
-                feishu_doc_list_blocks,
-                feishu_doc_get_block,
-                feishu_doc_update_block,
-                feishu_doc_delete_block,
-                feishu_doc_create_table,
-                feishu_doc_insert_table_row,
-                feishu_doc_insert_table_col,
-                feishu_doc_delete_table_rows,
-                feishu_doc_delete_table_cols,
-                feishu_drive_info,
-                feishu_drive_move,
-                feishu_drive_delete,
-                feishu_drive_list_comments,
-                feishu_drive_add_comment,
-                feishu_drive_reply_comment,
-                feishu_bitable_get_meta,
-                feishu_bitable_list_fields,
-                feishu_bitable_get_record,
-                feishu_bitable_update_record,
-                feishu_bitable_create_field,
-                feishu_wiki_list_spaces,
-                feishu_wiki_list_nodes,
-                feishu_wiki_get_node,
-                feishu_wiki_create_node,
-                feishu_wiki_move_node,
-                feishu_wiki_rename_node,
-                feishu_perm_list_members,
-                feishu_perm_add_member,
-                feishu_perm_remove_member,
-                feishu_get_member_info,
-                feishu_doc_upload_image,
-            ])
+            tools_list.extend(
+                [
+                    feishu_send_message,
+                    feishu_send_card,
+                    feishu_create_document,
+                    feishu_write_document,
+                    feishu_get_doc_content,
+                    feishu_get_chat_info,
+                    feishu_get_user_info,
+                    feishu_get_chat_member_list,
+                    feishu_get_message_list,
+                    feishu_recall_message,
+                    feishu_create_chat,
+                    feishu_create_folder,
+                    feishu_drive_list,
+                    feishu_drive_upload,
+                    feishu_create_calendar_event,
+                    feishu_list_calendar_events,
+                    feishu_create_bitable,
+                    feishu_bitable_list_records,
+                    feishu_bitable_add_record,
+                    feishu_doc_append,
+                    feishu_doc_insert,
+                    feishu_doc_list_blocks,
+                    feishu_doc_get_block,
+                    feishu_doc_update_block,
+                    feishu_doc_delete_block,
+                    feishu_doc_create_table,
+                    feishu_doc_insert_table_row,
+                    feishu_doc_insert_table_col,
+                    feishu_doc_delete_table_rows,
+                    feishu_doc_delete_table_cols,
+                    feishu_drive_info,
+                    feishu_drive_move,
+                    feishu_drive_delete,
+                    feishu_drive_list_comments,
+                    feishu_drive_add_comment,
+                    feishu_drive_reply_comment,
+                    feishu_bitable_get_meta,
+                    feishu_bitable_list_fields,
+                    feishu_bitable_get_record,
+                    feishu_bitable_update_record,
+                    feishu_bitable_create_field,
+                    feishu_wiki_list_spaces,
+                    feishu_wiki_list_nodes,
+                    feishu_wiki_get_node,
+                    feishu_wiki_create_node,
+                    feishu_wiki_move_node,
+                    feishu_wiki_rename_node,
+                    feishu_perm_list_members,
+                    feishu_perm_add_member,
+                    feishu_perm_remove_member,
+                    feishu_get_member_info,
+                    feishu_doc_upload_image,
+                ]
+            )
             logger.info("Tool registered: feishu tools (%d)", len(tools_list))
 
             from src.tools.media_tools import send_image_to_chat, send_file_to_chat
@@ -688,15 +810,17 @@ def _register_builtin_tools(config) -> None:
 
         tools_list: list[BaseTool] = []
         if config.channels.qq.enabled:
-            tools_list.extend([
-                qq_list_guilds,
-                qq_list_channels,
-                qq_list_members,
-                qq_get_member,
-                qq_send_text,
-                qq_send_image,
-                qq_send_file,
-            ])
+            tools_list.extend(
+                [
+                    qq_list_guilds,
+                    qq_list_channels,
+                    qq_list_members,
+                    qq_get_member,
+                    qq_send_text,
+                    qq_send_image,
+                    qq_send_file,
+                ]
+            )
             logger.info("Tool registered: QQ tools (%d)", len(tools_list))
         return tools_list
 
@@ -729,7 +853,7 @@ def _register_builtin_tools(config) -> None:
     def _collect_subagent_tools() -> list[BaseTool]:
         if getattr(config.agents, "subagents", None) and config.agents.subagents:
             from src.agents.delegate import delegate_task
-            from src.tools.subagent_tools import subagent_status
+            from src.tools.ai_tools import subagent_status
 
             logger.info("Tool registered: delegate_task, subagent_status")
             return [delegate_task, subagent_status]
@@ -738,7 +862,7 @@ def _register_builtin_tools(config) -> None:
     @registry.register
     def _collect_memory_tools() -> list[BaseTool]:
         if getattr(config, "memory", None) and config.memory.enabled:
-            from src.tools.memory_tools import memory_search
+            from src.tools.ai_tools import memory_search
 
             logger.info("Tool registered: memory_search")
             return [memory_search]

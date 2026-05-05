@@ -1,11 +1,12 @@
 """High-level memory search combining embedding and store."""
+
 from __future__ import annotations
 
 import logging
 from typing import Optional
 
 from src.config import MemoryConfig
-from src.memory.store import MemoryStore
+from src.memory.base import BaseMemoryStore
 from src.memory.embeddings import EmbeddingProvider
 
 logger = logging.getLogger("myclaw.memory.search")
@@ -14,7 +15,7 @@ logger = logging.getLogger("myclaw.memory.search")
 class MemorySearcher:
     """End-to-end memory search: embed query → hybrid search → format results."""
 
-    def __init__(self, store: MemoryStore, embeddings: EmbeddingProvider, config: MemoryConfig):
+    def __init__(self, store: BaseMemoryStore, embeddings: EmbeddingProvider, config: MemoryConfig):
         self.store = store
         self.embeddings = embeddings
         self.config = config
@@ -50,12 +51,14 @@ class MemorySearcher:
         # Format for agent consumption
         formatted = []
         for r in results:
-            formatted.append({
-                "content": r["content"],
-                "path": r["path"],
-                "score": round(r.get("score", 0), 3),
-                "chunk_index": r.get("chunk_index", 0),
-            })
+            formatted.append(
+                {
+                    "content": r["content"],
+                    "path": r["path"],
+                    "score": round(r.get("score", 0), 3),
+                    "chunk_index": r.get("chunk_index", 0),
+                }
+            )
         return formatted
 
     async def index_document(self, path: str, content: str) -> int:
@@ -76,10 +79,11 @@ class MemorySearcher:
         try:
             # Re-chunk to get text for embedding
             from src.memory.chunker import chunk_markdown
+
             chunks = chunk_markdown(content)
-            texts = [c["text"] for c in chunks[:len(chunk_ids)]]
+            texts = [c["text"] for c in chunks[: len(chunk_ids)]]
             embeddings = await self.embeddings.embed_texts(texts)
-            await self.store.add_embeddings(chunk_ids[:len(embeddings)], embeddings)
+            await self.store.add_embeddings(chunk_ids[: len(embeddings)], embeddings)
         except Exception as e:
             logger.warning("Embedding for document %s failed: %s", path, e)
 

@@ -36,17 +36,8 @@ class TypingIndicator:
             if _consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
                 return
         try:
-            body = (
-                CreateMessageReactionRequestBody.builder()
-                .reaction_type({"emoji_type": _TYPING_EMOJI})
-                .build()
-            )
-            req = (
-                CreateMessageReactionRequest.builder()
-                .message_id(message_id)
-                .request_body(body)
-                .build()
-            )
+            body = CreateMessageReactionRequestBody.builder().reaction_type({"emoji_type": _TYPING_EMOJI}).build()
+            req = CreateMessageReactionRequest.builder().message_id(message_id).request_body(body).build()
             resp = await asyncio.to_thread(
                 self._client.im.v1.message_reaction.create,
                 req,
@@ -56,9 +47,7 @@ class TypingIndicator:
                 self._active[message_id] = reaction_id
                 async with _consecutive_failures_lock:
                     _consecutive_failures = 0
-                self._timers[message_id] = asyncio.create_task(
-                    self._auto_stop(message_id, _MAX_DURATION)
-                )
+                self._timers[message_id] = asyncio.create_task(self._auto_stop(message_id, _MAX_DURATION))
             else:
                 code = getattr(resp, "code", 0)
                 if code in _BACKOFF_CODES:
@@ -81,12 +70,7 @@ class TypingIndicator:
         if not reaction_id:
             return
         try:
-            req = (
-                DeleteMessageReactionRequest.builder()
-                .message_id(message_id)
-                .reaction_id(reaction_id)
-                .build()
-            )
+            req = DeleteMessageReactionRequest.builder().message_id(message_id).reaction_id(reaction_id).build()
             await asyncio.to_thread(
                 self._client.im.v1.message_reaction.delete,
                 req,

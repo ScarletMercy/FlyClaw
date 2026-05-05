@@ -4,6 +4,7 @@ Supports image description (chat completions with image_url),
 audio transcription (audio/transcriptions endpoint),
 and any provider that follows the OpenAI API spec.
 """
+
 from __future__ import annotations
 
 import base64
@@ -126,9 +127,7 @@ class MediaProviderClient:
             text = choices[0].get("message", {}).get("content", "")
         return {"text": text, "model": data.get("model", self.model)}
 
-    async def _describe_image_anthropic(
-        self, data_url: str, mime_type: str, prompt: str, max_tokens: int
-    ) -> dict:
+    async def _describe_image_anthropic(self, data_url: str, mime_type: str, prompt: str, max_tokens: int) -> dict:
         _, after_comma = data_url.split(",", 1)
         media_type = mime_type or data_url.split(":")[1].split(";")[0]
 

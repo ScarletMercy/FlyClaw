@@ -29,9 +29,9 @@ def log_tool_call(
     args_summary = _summarize_args(args)
 
     status = "ok" if success else "err"
-    parts = [f"tool={tool_name}", f"sender={sender_id}", f"args=\"{args_summary}\"", f"{status}"]
+    parts = [f"tool={tool_name}", f"sender={sender_id}", f'args="{args_summary}"', f"{status}"]
     if not success and error:
-        parts.append(f"error=\"{error[:100]}\"")
+        parts.append(f'error="{error[:100]}"')
     parts.append(f"dur={duration:.2f}s")
 
     if chat_id:

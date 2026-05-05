@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 
 from src.mcp.transport.base import MCPTransport
-from src.mcp.transport.jsonrpc import JSONRPCProtocol
+from src.mcp.transport.jsonrpc import JSONRPCError, JSONRPCProtocol
 
 logger = logging.getLogger("myclaw.mcp.transport.http")
 

@@ -63,9 +63,7 @@ class JSONRPCProtocol:
             self._pending.pop(request_id, None)
             raise
 
-    async def send_notification(
-        self, send_fn, method: str, params: dict | None = None
-    ) -> None:
+    async def send_notification(self, send_fn, method: str, params: dict | None = None) -> None:
         """Send a JSON-RPC notification (no response expected)."""
         message = {
             "jsonrpc": "2.0",

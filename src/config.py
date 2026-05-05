@@ -76,6 +76,10 @@ class AgentConfig(BaseModel):
     max_tool_rounds: int = 15
     subagents: dict[str, AgentSubconfig] = Field(default_factory=dict)
     subagent_max_depth: int = 2  # Max nesting depth for sub-agent calls
+    timezone: str = "Asia/Shanghai"
+    bootstrap_files: list[str] = Field(
+        default_factory=lambda: ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md"]
+    )
 
 
 class FeishuConfig(BaseModel):
@@ -125,8 +129,12 @@ class ExecToolConfig(BaseModel):
     max_concurrent: int = 3
     audit_log: bool = True
     sandbox_enabled: bool = True
-    sandbox_allowed_dirs: list[str] = Field(default_factory=lambda: ["."])  # Working dirs allowed (relative to workspace)
-    sandbox_env_whitelist: list[str] = Field(default_factory=lambda: ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "LANG", "PYTHONPATH"])  # Env vars allowed to pass through
+    sandbox_allowed_dirs: list[str] = Field(
+        default_factory=lambda: ["."]
+    )  # Working dirs allowed (relative to workspace)
+    sandbox_env_whitelist: list[str] = Field(
+        default_factory=lambda: ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "LANG", "PYTHONPATH"]
+    )  # Env vars allowed to pass through
 
 
 class WebSearchToolConfig(BaseModel):
@@ -145,23 +153,25 @@ class FeishuToolConfig(BaseModel):
 
 class MediaUnderstandingCapabilityConfig(BaseModel):
     """Config for a single media capability (image/audio/video)."""
+
     enabled: bool = True
-    provider: str = ""       # Empty = inherit from parent
-    name: str = ""           # Empty = inherit from parent
-    base_url: str = ""       # Empty = inherit from parent
-    api_key: str = ""        # Empty = inherit from parent
+    provider: str = ""  # Empty = inherit from parent
+    name: str = ""  # Empty = inherit from parent
+    base_url: str = ""  # Empty = inherit from parent
+    api_key: str = ""  # Empty = inherit from parent
 
 
 class MediaUnderstandingConfig(BaseModel):
     """Media understanding (image description, audio transcription, video description)."""
+
     enabled: bool = False
     provider: str = "openai"
-    name: str = ""                    # Empty = auto-detect (gpt-4o-mini for openai)
-    base_url: str = ""                # Empty = use provider default
-    api_key: str = ""                 # Empty = use main model api_key
-    max_image_size: int = 20 * 1024 * 1024   # 20MB
-    max_audio_size: int = 25 * 1024 * 1024   # 25MB
-    max_video_size: int = 50 * 1024 * 1024   # 50MB
+    name: str = ""  # Empty = auto-detect (gpt-4o-mini for openai)
+    base_url: str = ""  # Empty = use provider default
+    api_key: str = ""  # Empty = use main model api_key
+    max_image_size: int = 20 * 1024 * 1024  # 20MB
+    max_audio_size: int = 25 * 1024 * 1024  # 25MB
+    max_video_size: int = 50 * 1024 * 1024  # 50MB
     timeout_seconds: int = 60
     image: MediaUnderstandingCapabilityConfig = Field(default_factory=MediaUnderstandingCapabilityConfig)
     audio: MediaUnderstandingCapabilityConfig = Field(default_factory=MediaUnderstandingCapabilityConfig)
@@ -225,13 +235,15 @@ class TtsConfig(BaseModel):
     voice: str = "alloy"
     auto_mode: Literal["off", "always", "tagged"] = "tagged"
     max_chars: int = 2000
-    api_key: str = ""      # Empty = use main model api_key
-    base_url: str = ""     # Empty = use provider default; for Azure, set to region (e.g. "eastus")
+    api_key: str = ""  # Empty = use main model api_key
+    base_url: str = ""  # Empty = use provider default; for Azure, set to region (e.g. "eastus")
 
 
 class MemoryConfig(BaseModel):
     enabled: bool = False
+    backend: Literal["sqlite", "lancedb"] = "sqlite"
     db_path: str = "data/memory.db"
+    lancedb_uri: str = "data/memory_lancedb"  # LanceDB data directory
     embedding_provider: str = "openai"
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
@@ -248,8 +260,19 @@ class MemoryConfig(BaseModel):
     auto_session_memory: bool = False  # Auto-write Q&A pairs to memory
 
 
+class AuthConfig(BaseModel):
+    """Authentication and access control configuration."""
+
+    enabled: bool = True
+    default_role: Literal["owner", "admin", "user", "guest"] = "guest"
+    pairing_enabled: bool = True
+    pairing_ttl_seconds: int = 300  # Pairing code validity
+    db_path: str = "data/auth.db"
+
+
 class TimeoutsConfig(BaseModel):
     """Global timeout settings for various operations."""
+
     tool_short: int = 30  # Short-lived tool operations (e.g., simple commands)
     tool_long: int = 600  # Long-running tool operations (e.g., complex builds)
     session_idle: int = 3600  # Session idle timeout in seconds
@@ -272,6 +295,7 @@ class AppConfig(BaseModel):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     timeouts: TimeoutsConfig = Field(default_factory=TimeoutsConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
     owner_id: str = ""
 
 

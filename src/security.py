@@ -68,6 +68,16 @@ def run_security_audit(config) -> dict[str, Any]:
     # Check 5: Secret leakage in config.yaml
     _check_secrets(config, results, _check)
 
+    # Check 6: RBAC / Auth
+    if getattr(config, "auth", None) and config.auth.enabled:
+        _check("rbac-enabled", "PASS", "")
+        if not getattr(config, "owner_id", ""):
+            _check("rbac-owner", "WARN", "owner_id not set — no user will have owner role automatically")
+        else:
+            _check("rbac-owner", "PASS", "")
+    else:
+        _check("rbac-enabled", "INFO", "auth/RBAC disabled")
+
     logger.info("[security] Audit complete: %d passed, %d warnings", results["passed"], results["warnings"])
     return results
 
@@ -89,7 +99,7 @@ def _check_secrets(config, results, _check):
     # sk- prefix (API keys), or long alphanumeric strings near sensitive keywords
     secret_patterns = [
         r'(?:api_key|apikey|secret|token|password)\s*[:=]\s*["\']?(sk-[a-zA-Z0-9]+)',
-        r'(?:api_key|apikey|secret|token|password)\s*[:=]\s*["\']?([a-zA-Z0-9_-]{20,})'
+        r'(?:api_key|apikey|secret|token|password)\s*[:=]\s*["\']?([a-zA-Z0-9_-]{20,})',
     ]
 
     found = False

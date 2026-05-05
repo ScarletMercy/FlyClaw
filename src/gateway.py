@@ -10,7 +10,7 @@ import time
 import uuid
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
@@ -244,9 +244,7 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
                     await ws.close(code=4001, reason="expected auth_response")
                     return
                 client_mac = resp.get("mac", "")
-                expected_mac = hmac.new(
-                    auth_token.encode(), nonce.encode(), hashlib.sha256
-                ).hexdigest()
+                expected_mac = hmac.new(auth_token.encode(), nonce.encode(), hashlib.sha256).hexdigest()
                 if not hmac.compare_digest(client_mac, expected_mac):
                     await ws.send_json({"type": "auth_error", "message": "invalid mac"})
                     await ws.close(code=4003, reason="auth failed")
@@ -275,18 +273,14 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
                     try:
                         frame = json.loads(raw)
                     except json.JSONDecodeError:
-                        await ws.send_json(
-                            {"type": "res", "ok": False, "error": {"code": "INVALID_JSON"}}
-                        )
+                        await ws.send_json({"type": "res", "ok": False, "error": {"code": "INVALID_JSON"}})
                         continue
 
                     frame_type = frame.get("type")
                     if frame_type == "req":
                         await _handle_ws_request(ws, frame, app_config, compiled_graph)
                     else:
-                        await ws.send_json(
-                            {"type": "res", "ok": False, "error": {"code": "UNKNOWN_FRAME"}}
-                        )
+                        await ws.send_json({"type": "res", "ok": False, "error": {"code": "UNKNOWN_FRAME"}})
                 except WebSocketDisconnect:
                     raise
                 except Exception as e:
@@ -325,15 +319,11 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
                 if isinstance(msg, AIMessage) and msg.content:
                     assistant_text = msg.content
                     break
-            await ws.send_json(
-                {"type": "res", "id": frame_id, "ok": True, "payload": {"text": assistant_text}}
-            )
+            await ws.send_json({"type": "res", "id": frame_id, "ok": True, "payload": {"text": assistant_text}})
         elif method == "sessions.list":
             await ws.send_json({"type": "res", "id": frame_id, "ok": True, "payload": []})
         elif method == "health":
-            await ws.send_json(
-                {"type": "res", "id": frame_id, "ok": True, "payload": {"status": "ok"}}
-            )
+            await ws.send_json({"type": "res", "id": frame_id, "ok": True, "payload": {"status": "ok"}})
         elif method == "cron.list" and cron_service:
             jobs = cron_service.list_jobs()
             await ws.send_json(
@@ -349,9 +339,7 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
                 from src.cron.types import CronJobCreate
 
                 job = await cron_service.add_job(CronJobCreate(**params))
-                await ws.send_json(
-                    {"type": "res", "id": frame_id, "ok": True, "payload": job.model_dump()}
-                )
+                await ws.send_json({"type": "res", "id": frame_id, "ok": True, "payload": job.model_dump()})
             except Exception as e:
                 await ws.send_json(
                     {"type": "res", "id": frame_id, "ok": False, "error": {"code": "INVALID_PARAMS", "message": str(e)}}
@@ -376,7 +364,10 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
                 }
             )
 
-    async def _verify_api_auth(request: Request):
+    # ── Auth dependencies ─────────────────────────────────────
+
+    async def require_auth(request: Request) -> None:
+        """Dependency: verify Bearer token."""
         if not app_config.gateway.auth_token:
             return
         auth = request.headers.get("Authorization", "")
@@ -384,23 +375,37 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
         if not hmac.compare_digest(token, app_config.gateway.auth_token):
             raise HTTPException(status_code=401, detail="unauthorized")
 
+    async def require_rbac(request: Request):
+        """Dependency: verify auth token + check auth enabled + return RBAC."""
+        await require_auth(request)
+        if not app_config.auth.enabled:
+            raise HTTPException(status_code=400, detail="auth not enabled")
+        from src.auth.rbac import get_rbac
+
+        rbac = get_rbac()
+        if rbac is None:
+            raise HTTPException(status_code=500, detail="RBAC not initialized")
+        return rbac
+
+    # Custom exception handler to keep {"error": ...} response format
+    @app.exception_handler(HTTPException)
+    async def _http_error_handler(request, exc):
+        return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
+
     if cron_service:
         from src.cron.types import CronJobCreate, CronJobPatch
 
         @app.get("/api/cron/status")
-        async def cron_status(request: Request):
-            await _verify_api_auth(request)
+        async def cron_status(request: Request, _auth=Depends(require_auth)):
             return cron_service.status()
 
         @app.get("/api/cron/jobs")
-        async def cron_list_jobs(request: Request):
-            await _verify_api_auth(request)
+        async def cron_list_jobs(request: Request, _auth=Depends(require_auth)):
             jobs = cron_service.list_jobs()
             return [j.model_dump() for j in jobs]
 
         @app.post("/api/cron/jobs")
-        async def cron_add_job(request: Request):
-            await _verify_api_auth(request)
+        async def cron_add_job(request: Request, _auth=Depends(require_auth)):
             try:
                 body = await request.json()
                 job = await cron_service.add_job(CronJobCreate(**body))
@@ -409,16 +414,14 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
                 return JSONResponse({"error": str(e)}, status_code=422)
 
         @app.get("/api/cron/jobs/{job_id}")
-        async def cron_get_job(job_id: str, request: Request):
-            await _verify_api_auth(request)
+        async def cron_get_job(job_id: str, request: Request, _auth=Depends(require_auth)):
             job = cron_service.get_job(job_id)
             if not job:
                 return JSONResponse({"error": "not found"}, status_code=404)
             return job.model_dump()
 
         @app.patch("/api/cron/jobs/{job_id}")
-        async def cron_update_job(job_id: str, request: Request):
-            await _verify_api_auth(request)
+        async def cron_update_job(job_id: str, request: Request, _auth=Depends(require_auth)):
             try:
                 body = await request.json()
                 job = await cron_service.update_job(job_id, CronJobPatch(**body))
@@ -429,25 +432,22 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
             return job.model_dump()
 
         @app.delete("/api/cron/jobs/{job_id}")
-        async def cron_delete_job(job_id: str, request: Request):
-            await _verify_api_auth(request)
+        async def cron_delete_job(job_id: str, request: Request, _auth=Depends(require_auth)):
             removed = await cron_service.remove_job(job_id)
             return {"removed": removed}
 
         @app.post("/api/cron/jobs/{job_id}/run")
-        async def cron_run_job(job_id: str, request: Request):
-            await _verify_api_auth(request)
+        async def cron_run_job(job_id: str, request: Request, _auth=Depends(require_auth)):
             result = await cron_service.run_job_now(job_id)
             if not result:
                 return JSONResponse({"error": "not found"}, status_code=404)
             return result.model_dump()
 
     @app.post("/api/approval/{request_id}/resolve")
-    async def resolve_approval(request_id: str, req: Request):
-        await _verify_api_auth(req)
+    async def resolve_approval(request_id: str, request: Request, _auth=Depends(require_auth)):
         from src.tools.approval import get_approval_manager
 
-        body = await req.json()
+        body = await request.json()
         decision = body.get("decision", "deny")
         mgr = get_approval_manager()
         ok = mgr.resolve(request_id, decision)
@@ -456,16 +456,14 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
         return {"resolved": True, "request_id": request_id, "decision": decision}
 
     @app.get("/api/approval/pending")
-    async def list_pending_approvals(request: Request):
-        await _verify_api_auth(request)
+    async def list_pending_approvals(request: Request, _auth=Depends(require_auth)):
         from src.tools.approval import get_approval_manager
 
         mgr = get_approval_manager()
         return [r.model_dump() for r in mgr.list_pending()]
 
     @app.get("/api/plugins")
-    async def list_plugins(request: Request):
-        await _verify_api_auth(request)
+    async def list_plugins(request: Request, _auth=Depends(require_auth)):
         try:
             from src.plugins.registry import get_plugin_registry
 
@@ -474,8 +472,7 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
             return []
 
     @app.get("/api/commands")
-    async def list_commands(request: Request):
-        await _verify_api_auth(request)
+    async def list_commands(request: Request, _auth=Depends(require_auth)):
         try:
             from src.commands.dispatcher import get_dispatcher
 
@@ -488,20 +485,20 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
 
     # MCP management API
     @app.get("/api/mcp/servers")
-    async def mcp_list_servers(request: Request):
-        await _verify_api_auth(request)
+    async def mcp_list_servers(request: Request, _auth=Depends(require_auth)):
         try:
             from src.mcp.manager import get_mcp_manager
+
             manager = get_mcp_manager()
             return [s.model_dump() for s in await manager.list_servers()]
         except Exception:
             return []
 
     @app.get("/api/mcp/servers/{server_name}")
-    async def mcp_get_server(server_name: str, request: Request):
-        await _verify_api_auth(request)
+    async def mcp_get_server(server_name: str, request: Request, _auth=Depends(require_auth)):
         try:
             from src.mcp.manager import get_mcp_manager
+
             manager = get_mcp_manager()
             client = manager._clients.get(server_name)
             if client is None:
@@ -516,8 +513,7 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.post("/api/mcp/servers")
-    async def mcp_add_server(request: Request):
-        await _verify_api_auth(request)
+    async def mcp_add_server(request: Request, _auth=Depends(require_auth)):
         try:
             from src.mcp.manager import get_mcp_manager
             from src.mcp.config_models import MCPServerConfig
@@ -534,10 +530,10 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
             return JSONResponse({"error": str(e)}, status_code=422)
 
     @app.delete("/api/mcp/servers/{server_name}")
-    async def mcp_remove_server(server_name: str, request: Request):
-        await _verify_api_auth(request)
+    async def mcp_remove_server(server_name: str, request: Request, _auth=Depends(require_auth)):
         try:
             from src.mcp.manager import get_mcp_manager
+
             manager = get_mcp_manager()
             await manager.remove_server(server_name)
             return {"removed": server_name}
@@ -545,10 +541,10 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.post("/api/mcp/servers/{server_name}/tools/{tool_name}/call")
-    async def mcp_call_tool(server_name: str, tool_name: str, request: Request):
-        await _verify_api_auth(request)
+    async def mcp_call_tool(server_name: str, tool_name: str, request: Request, _auth=Depends(require_auth)):
         try:
             from src.mcp.manager import get_mcp_manager
+
             manager = get_mcp_manager()
             client = await manager.ensure_connected(server_name)
             body = await request.json()
@@ -558,9 +554,8 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.post("/api/feishu/card-action")
-    async def feishu_card_action(req: Request):
-        await _verify_api_auth(req)
-        body = await req.json()
+    async def feishu_card_action(request: Request, _auth=Depends(require_auth)):
+        body = await request.json()
         action = body.get("action", {})
         action_value = action.get("value", "")
 
@@ -606,5 +601,89 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
                 return {"success": True}
 
         return {"success": False, "error": "unknown action"}
+
+    # ── Auth / RBAC API ─────────────────────────────────────
+
+    @app.post("/api/pair")
+    async def pair_device(request: Request, rbac=Depends(require_rbac)):
+        """Verify a pairing code and register a trusted device."""
+        try:
+            body = await request.json()
+            code = body.get("code", "")
+            device_id = body.get("device_id", "")
+            platform = body.get("platform", "web")
+            name = body.get("name", "")
+            if not code or not device_id:
+                return JSONResponse({"error": "code and device_id required"}, status_code=400)
+
+            user = rbac.store.verify_pairing(code, device_id, platform=platform, name=name)
+            if user is None:
+                return JSONResponse({"error": "invalid or expired pairing code"}, status_code=404)
+            return {"paired": True, "user_id": user.user_id, "role": user.role.value}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/api/users")
+    async def list_users(rbac=Depends(require_rbac)):
+        """List all registered users (admin only)."""
+        try:
+            users = rbac.store.list_users()
+            return [u.model_dump() for u in users]
+        except Exception:
+            return []
+
+    @app.patch("/api/users/{user_id}")
+    async def update_user(user_id: str, request: Request, rbac=Depends(require_rbac)):
+        """Update user role or tool permissions (admin only)."""
+        try:
+            body = await request.json()
+            from src.auth.models import UserRole
+
+            role_str = body.get("role")
+            if role_str:
+                try:
+                    new_role = UserRole(role_str)
+                    rbac.store.update_user_role(user_id, new_role)
+                except ValueError:
+                    return JSONResponse({"error": f"invalid role: {role_str}"}, status_code=400)
+
+            allowed = body.get("allowed_tools")
+            denied = body.get("denied_tools")
+            if allowed is not None or denied is not None:
+                rbac.store.update_user_tools(user_id, allowed_tools=allowed, denied_tools=denied)
+
+            user = rbac.store.get_user(user_id)
+            if user is None:
+                return JSONResponse({"error": "user not found"}, status_code=404)
+            return user.model_dump()
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.delete("/api/users/{user_id}")
+    async def delete_user(user_id: str, rbac=Depends(require_rbac)):
+        """Delete a user and their devices (admin only)."""
+        try:
+            removed = rbac.store.delete_user(user_id)
+            return {"removed": removed}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/api/users/{user_id}/devices")
+    async def list_user_devices(user_id: str, rbac=Depends(require_rbac)):
+        """List devices for a user."""
+        try:
+            devices = rbac.store.list_user_devices(user_id)
+            return [d.model_dump() for d in devices]
+        except Exception:
+            return []
+
+    @app.delete("/api/devices/{device_id}")
+    async def delete_device(device_id: str, rbac=Depends(require_rbac)):
+        """Revoke a trusted device."""
+        try:
+            removed = rbac.store.delete_device(device_id)
+            return {"removed": removed}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     return app

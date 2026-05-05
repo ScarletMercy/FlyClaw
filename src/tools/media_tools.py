@@ -77,13 +77,7 @@ async def _send_image_message(client, chat_id: str, image_key: str) -> bool:
 
     try:
         content = json.dumps({"image_key": image_key})
-        body = (
-            CreateMessageRequestBody.builder()
-            .receive_id(chat_id)
-            .msg_type("image")
-            .content(content)
-            .build()
-        )
+        body = CreateMessageRequestBody.builder().receive_id(chat_id).msg_type("image").content(content).build()
         req = CreateMessageRequest.builder().receive_id_type("chat_id").request_body(body).build()
         resp = await asyncio.to_thread(client.im.v1.message.create, req)
         return resp.success()
@@ -100,13 +94,7 @@ async def _send_file_message(client, chat_id: str, file_key: str) -> bool:
 
     try:
         content = json.dumps({"file_key": file_key})
-        body = (
-            CreateMessageRequestBody.builder()
-            .receive_id(chat_id)
-            .msg_type("file")
-            .content(content)
-            .build()
-        )
+        body = CreateMessageRequestBody.builder().receive_id(chat_id).msg_type("file").content(content).build()
         req = CreateMessageRequest.builder().receive_id_type("chat_id").request_body(body).build()
         resp = await asyncio.to_thread(client.im.v1.message.create, req)
         return resp.success()

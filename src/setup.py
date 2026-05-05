@@ -249,9 +249,15 @@ def _step_feishu(config: dict) -> None:
         feishu["app_id"] = _ask("  App ID", default=feishu.get("app_id", ""))
         feishu["app_secret"] = _ask("  App Secret", default=feishu.get("app_secret", ""))
         feishu["domain"] = _ask_choice("  Domain", ["feishu", "lark"], default=feishu.get("domain", "feishu"))
-        feishu["dm_policy"] = _ask_choice("  DM policy", ["open", "pairing", "allowlist"], default=feishu.get("dm_policy", "open"))
-        feishu["group_policy"] = _ask_choice("  Group policy", ["allowlist", "open", "disabled"], default=feishu.get("group_policy", "allowlist"))
-        feishu["require_mention"] = _ask_yn("  Require @mention in groups?", default=feishu.get("require_mention", True))
+        feishu["dm_policy"] = _ask_choice(
+            "  DM policy", ["open", "pairing", "allowlist"], default=feishu.get("dm_policy", "open")
+        )
+        feishu["group_policy"] = _ask_choice(
+            "  Group policy", ["allowlist", "open", "disabled"], default=feishu.get("group_policy", "allowlist")
+        )
+        feishu["require_mention"] = _ask_yn(
+            "  Require @mention in groups?", default=feishu.get("require_mention", True)
+        )
 
 
 def _step_qq(config: dict) -> None:
@@ -272,7 +278,9 @@ def _step_qq(config: dict) -> None:
         qq["app_id"] = _ask("  App ID", default=qq.get("app_id", ""))
         qq["client_secret"] = _ask("  Client Secret", default=qq.get("client_secret", ""))
         qq["dm_policy"] = _ask_choice("  DM policy", ["open", "allowlist"], default=qq.get("dm_policy", "open"))
-        qq["group_policy"] = _ask_choice("  Group policy", ["allowlist", "open", "disabled"], default=qq.get("group_policy", "allowlist"))
+        qq["group_policy"] = _ask_choice(
+            "  Group policy", ["allowlist", "open", "disabled"], default=qq.get("group_policy", "allowlist")
+        )
         qq["require_mention"] = _ask_yn("  Require @mention in groups?", default=qq.get("require_mention", True))
         qq["markdown_support"] = _ask_yn("  Enable markdown support?", default=qq.get("markdown_support", False))
 

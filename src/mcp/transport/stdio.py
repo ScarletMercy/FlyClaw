@@ -123,9 +123,7 @@ class StdioTransport(MCPTransport):
         self._protocol.cancel_all()
 
     async def list_tools(self) -> list[dict]:
-        result = await self._protocol.send_request(
-            self.send, "tools/list", timeout=self._timeout
-        )
+        result = await self._protocol.send_request(self.send, "tools/list", timeout=self._timeout)
         return result.get("tools", []) if isinstance(result, dict) else []
 
     async def call_tool(self, name: str, arguments: dict) -> Any:

@@ -31,6 +31,7 @@ async def delegate_task(agent_name: str, task: str) -> str:
     # Depth tracking
     current_depth = get_current_depth()
     from src.config import load_config
+
     config = load_config()
     max_depth = getattr(config.agents, "subagent_max_depth", 2)
     if current_depth >= max_depth:
@@ -52,7 +53,9 @@ async def delegate_task(agent_name: str, task: str) -> str:
         max_rounds = 10
         estimated_tokens_per_round = 1000  # Conservative estimate
         max_total_tokens = getattr(config.model, "max_tokens", 100000)
-        safe_rounds = min(max_rounds, max_total_tokens // estimated_tokens_per_round) if max_total_tokens else max_rounds
+        safe_rounds = (
+            min(max_rounds, max_total_tokens // estimated_tokens_per_round) if max_total_tokens else max_rounds
+        )
 
         if safe_rounds < 1:
             safe_rounds = 1
@@ -105,11 +108,7 @@ async def delegate_task(agent_name: str, task: str) -> str:
                 for tc in response.tool_calls:
                     tool_obj = next((t for t in all_tools if t.name == tc["name"]), None)
                     if tool_obj is None:
-                        messages.append(
-                            ToolMessage(
-                                content=f"Tool not found: {tc['name']}", tool_call_id=tc["id"]
-                            )
-                        )
+                        messages.append(ToolMessage(content=f"Tool not found: {tc['name']}", tool_call_id=tc["id"]))
                         continue
                     try:
                         result = await tool_obj.ainvoke(tc["args"])
