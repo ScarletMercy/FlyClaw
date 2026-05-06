@@ -228,3 +228,49 @@ class MediaProviderClient:
         max_tokens: int = 1024,
     ) -> dict:
         return await self.describe_image(frame_data, mime_type, prompt, max_tokens)
+
+    async def describe_video_native(
+        self,
+        video_data: bytes,
+        mime_type: str = "video/mp4",
+        prompt: str = "Describe this video in detail. What is happening?",
+        max_tokens: int = 2048,
+    ) -> dict:
+        """Send video directly to the model (no frame extraction).
+
+        Uses OpenAI-compatible video_url content type.
+        Falls back gracefully — caller should catch errors and use frame extraction.
+        """
+        if not self.model:
+            return {"text": "", "model": "", "error": "No model name configured."}
+
+        data_url = self._image_to_data_url(video_data, mime_type)
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "video_url", "video_url": {"url": data_url}},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+            "max_tokens": max_tokens,
+        }
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout)) as client:
+            resp = await client.post(
+                f"{self.base_url}/chat/completions",
+                headers=self._headers(),
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        text = ""
+        choices = data.get("choices", [])
+        if choices:
+            text = choices[0].get("message", {}).get("content", "")
+        return {"text": text, "model": data.get("model", self.model)}

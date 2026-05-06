@@ -444,6 +444,7 @@ class QQChannel(Channel):
             return
 
         if event_type == "C2C_MESSAGE_CREATE":
+            logger.debug("QQ C2C raw data: %s", {k: v for k, v in data.items() if k not in ("author",)})
             author = data.get("author", {})
             sender_id = author.get("user_openid", "unknown")
             content = data.get("content", "")
@@ -509,6 +510,8 @@ class QQChannel(Channel):
         # Process attachments
         attachments = data.get("attachments", [])
         image_urls = []
+        video_urls = []
+        has_media = False
         if attachments:
             for att in attachments:
                 ct = att.get("content_type", "")
@@ -517,10 +520,35 @@ class QQChannel(Channel):
                     image_urls.append(url)
                 elif ct.startswith("image"):
                     text += "\n[image]"
+                    has_media = True
+                elif ct.startswith("video") and url:
+                    video_urls.append(url)
+                    has_media = True
                 elif ct.startswith("video"):
                     text += "\n[video]"
+                    has_media = True
                 elif ct.startswith("audio"):
                     text += "\n[audio]"
+                    has_media = True
+
+        # Check file_info / media fields (QQ may use these for video/file messages)
+        file_info = data.get("file_info", "")
+        media_info = data.get("media", "")
+        if file_info or media_info:
+            has_media = True
+            if not text:
+                text = "[收到文件/媒体消息]"
+
+        # Build media context text
+        if video_urls and not text.strip():
+            text = "请描述这个视频"
+            for url in video_urls:
+                text += f"\n[video_url: {url}]"
+        elif video_urls:
+            for url in video_urls:
+                text += f"\n[video_url: {url}]"
+        elif has_media and not text.strip():
+            text = "[收到媒体消息]"
 
         # If only images were sent (no text), build a describe request
         if not text.strip() and image_urls:
@@ -540,6 +568,10 @@ class QQChannel(Channel):
             chat_type,
             text,
         )
+
+        # Inject chat_id for QQ send tools (so they can default to current chat)
+        from src.tools.qq_tools import set_current_qq_chat_id
+        set_current_qq_chat_id(chat_id)
 
         # Start typing indicator for C2C
         typing_task = None

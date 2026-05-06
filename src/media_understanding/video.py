@@ -16,7 +16,7 @@ async def understand_video(
     client: MediaProviderClient,
     video_data: bytes,
     mime_type: str = "video/mp4",
-    prompt: str = "Describe what is happening in this video frame.",
+    prompt: str = "Describe what is happening in this video.",
     max_tokens: int = 1024,
     max_bytes: int = 0,
 ) -> MediaResult:
@@ -24,6 +24,19 @@ async def understand_video(
         if max_bytes > 0 and len(video_data) > max_bytes:
             return _media_error(MediaCapability.VIDEO, client, mime_type, f"Video too large: {len(video_data)} bytes, limit {max_bytes}")
 
+        # Try native video understanding first (models like Qwen-VL support this)
+        try:
+            result = await client.describe_video_native(video_data, mime_type, prompt, max_tokens=max_tokens)
+            if "error" not in result:
+                text = result.get("text", "").strip()
+                if text:
+                    logger.info("Native video understanding succeeded (%d bytes, %s) -> %d chars", len(video_data), client.model, len(text))
+                    return _media_ok(MediaCapability.VIDEO, text, client, mime_type, model=result.get("model", ""))
+            logger.debug("Native video understanding returned empty/error, falling back to frame extraction")
+        except Exception as e:
+            logger.debug("Native video understanding failed (%s), falling back to frame extraction", e)
+
+        # Fallback: extract frames and describe each
         frame_data = await _extract_frame(video_data)
         if frame_data is None:
             return _media_error(MediaCapability.VIDEO, client, mime_type, "Failed to extract video frame. Is ffmpeg installed?")
@@ -47,7 +60,7 @@ async def understand_video(
             return _media_error(MediaCapability.VIDEO, client, mime_type, "Empty response from vision model for all frames")
 
         text = "\n".join(descriptions)
-        logger.info("Video described (%d bytes, %d frames, %s) -> %d chars", len(video_data), len(frames), client.model, len(text))
+        logger.info("Video described via frames (%d bytes, %d frames, %s) -> %d chars", len(video_data), len(frames), client.model, len(text))
         return _media_ok(MediaCapability.VIDEO, text, client, mime_type)
     except Exception as e:
         logger.error("Video understanding failed: %s", e)
