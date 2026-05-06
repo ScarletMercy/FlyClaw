@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import logging
+from contextvars import ContextVar
 from typing import Optional
 
 from langchain_core.tools import tool
 
 logger = logging.getLogger("myclaw.qq_tools")
+
+# Auto-injected by QQ channel before each message callback
+_current_qq_chat_id: ContextVar[str] = ContextVar("_current_qq_chat_id", default="")
+
+
+def set_current_qq_chat_id(chat_id: str):
+    _current_qq_chat_id.set(chat_id)
 
 
 def _get_qq_channel():
@@ -171,14 +179,17 @@ async def qq_get_member(guild_id: str, user_id: str) -> str:
 
 
 @tool
-async def qq_send_text(chat_id: str, text: str, reply_to: Optional[str] = None) -> str:
+async def qq_send_text(chat_id: str = "", text: str = "", reply_to: Optional[str] = None) -> str:
     """Send a text message to a QQ user or group via the bot.
 
     Args:
-        chat_id: Chat ID in format 'c2c:openid', 'group:openid', 'channel:id', or 'dm:id'.
+        chat_id: Chat ID in format 'c2c:openid', 'group:openid', 'channel:id', or 'dm:id'. Leave empty to reply in current chat.
         text: Message text content.
         reply_to: Optional message ID to reply to.
     """
+    chat_id = chat_id or _current_qq_chat_id.get("")
+    if not chat_id:
+        return "[error] No chat_id provided and no current QQ chat context"
     ch = _get_qq_channel()
     if not ch:
         return "[error] QQ channel not initialized"
@@ -189,13 +200,16 @@ async def qq_send_text(chat_id: str, text: str, reply_to: Optional[str] = None) 
 
 
 @tool
-async def qq_send_image(chat_id: str, image_key: str) -> str:
+async def qq_send_image(chat_id: str = "", image_key: str = "") -> str:
     """Send an image to a QQ user or group.
 
     Args:
-        chat_id: Chat ID in format 'c2c:openid', 'group:openid', etc.
+        chat_id: Chat ID in format 'c2c:openid', 'group:openid', etc. Leave empty to reply in current chat.
         image_key: Image URL or local file path.
     """
+    chat_id = chat_id or _current_qq_chat_id.get("")
+    if not chat_id:
+        return "[error] No chat_id provided and no current QQ chat context"
     ch = _get_qq_channel()
     if not ch:
         return "[error] QQ channel not initialized"
@@ -204,13 +218,16 @@ async def qq_send_image(chat_id: str, image_key: str) -> str:
 
 
 @tool
-async def qq_send_file(chat_id: str, file_key: str) -> str:
+async def qq_send_file(chat_id: str = "", file_key: str = "") -> str:
     """Send a file to a QQ user or group (C2C and group only).
 
     Args:
-        chat_id: Chat ID in format 'c2c:openid' or 'group:openid'.
+        chat_id: Chat ID in format 'c2c:openid' or 'group:openid'. Leave empty to reply in current chat.
         file_key: File URL or local file path.
     """
+    chat_id = chat_id or _current_qq_chat_id.get("")
+    if not chat_id:
+        return "[error] No chat_id provided and no current QQ chat context"
     ch = _get_qq_channel()
     if not ch:
         return "[error] QQ channel not initialized"
