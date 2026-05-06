@@ -3,6 +3,8 @@ from __future__ import annotations
 import fnmatch
 import logging
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +13,14 @@ from langchain_core.tools import tool
 logger = logging.getLogger("myclaw.file_tools")
 
 _BASE_DIR = os.path.abspath(os.environ.get("MYCLAW_WORKSPACE", "."))
+_edit_condition = threading.Condition()  # Serialises file I/O; edit waits for write to create file
+
+
+def set_workspace(path: str):
+    """Update the workspace root (called during init from config)."""
+    global _BASE_DIR
+    _BASE_DIR = os.path.abspath(path)
+    logger.info("File tools workspace set to: %s", _BASE_DIR)
 
 
 def _resolve_path(path: str) -> str:
@@ -57,7 +67,7 @@ def read_file(path: str, offset: int = 0, limit: int = 500) -> str:
             header += f"(showing {limit} of {total - offset} remaining lines)\n"
         return header + "\n".join(result)
     except FileNotFoundError:
-        return f"Error: file not found: {path}"
+        return f"Error: file not found: {path} (resolved to: {resolved}, workspace: {_BASE_DIR})"
     except PermissionError:
         return f"Error: permission denied: {path}"
     except Exception as e:
@@ -76,18 +86,22 @@ def write_file(path: str, content: str) -> str:
         resolved = _resolve_path(path)
     except ValueError as e:
         return f"Error: {e}"
-    try:
-        parent = os.path.dirname(resolved)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        with open(resolved, "w", encoding="utf-8") as f:
-            f.write(content)
-        lines = content.count("\n") + (0 if content.endswith("\n") else 1)
-        return f"Written {lines} lines to {path}"
-    except PermissionError:
-        return f"Error: permission denied: {path}"
-    except Exception as e:
-        return f"Error writing {path}: {e}"
+    with _edit_condition:
+        try:
+            parent = os.path.dirname(resolved)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
+            with open(resolved, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+            _edit_condition.notify_all()
+            lines = content.count("\n") + (0 if content.endswith("\n") else 1)
+            return f"Written {lines} lines to {path}"
+        except PermissionError:
+            return f"Error: permission denied: {path}"
+        except Exception as e:
+            return f"Error writing {path}: {e}"
 
 
 @tool
@@ -103,29 +117,33 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
         resolved = _resolve_path(path)
     except ValueError as e:
         return f"Error: {e}"
-    try:
-        with open(resolved, "r", encoding="utf-8") as f:
-            content = f.read()
-    except FileNotFoundError:
-        return f"Error: file not found: {path}"
-    except Exception as e:
-        return f"Error reading {path}: {e}"
+    with _edit_condition:
+        if not _edit_condition.wait_for(lambda: os.path.exists(resolved), timeout=10.0):
+            return f"Error: file not found: {path} (resolved to: {resolved}, workspace: {_BASE_DIR})"
 
-    count = content.count(old_text)
-    if count == 0:
-        return f"Error: text not found in {path}. Make sure old_text matches exactly (including whitespace)."
-    if count > 1:
-        return f"Error: found {count} matches in {path}. Please provide more context to make old_text unique."
+        try:
+            with open(resolved, "r", encoding="utf-8") as f:
+                content = f.read()
+        except FileNotFoundError:
+            return f"Error: file not found: {path} (resolved to: {resolved}, workspace: {_BASE_DIR})"
+        except Exception as e:
+            return f"Error reading {path}: {e}"
 
-    new_content = content.replace(old_text, new_text, 1)
-    try:
-        with open(resolved, "w", encoding="utf-8") as f:
-            f.write(new_content)
-        old_lines = old_text.count("\n") + 1
-        new_lines = new_text.count("\n") + 1
-        return f"Replaced {old_lines} lines with {new_lines} lines in {path}"
-    except Exception as e:
-        return f"Error writing {path}: {e}"
+        count = content.count(old_text)
+        if count == 0:
+            return f"Error: text not found in {path}. Make sure old_text matches exactly (including whitespace)."
+        if count > 1:
+            return f"Error: found {count} matches in {path}. Please provide more context to make old_text unique."
+
+        new_content = content.replace(old_text, new_text, 1)
+        try:
+            with open(resolved, "w", encoding="utf-8") as f:
+                f.write(new_content)
+            old_lines = old_text.count("\n") + 1
+            new_lines = new_text.count("\n") + 1
+            return f"Replaced {old_lines} lines with {new_lines} lines in {path}"
+        except Exception as e:
+            return f"Error writing {path}: {e}"
 
 
 @tool

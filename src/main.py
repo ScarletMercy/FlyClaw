@@ -335,6 +335,11 @@ class Application:
 
             set_cron_service(self.cron_service)
 
+        # Initialize file tools workspace from config
+        from src.tools.file_tools import set_workspace
+
+        set_workspace(self.config.agents.workspace)
+
         # Register message callback
         self.feishu.set_message_callback(self._create_message_callback(session_scope))
 
@@ -535,6 +540,7 @@ class Application:
                 chat_type=chat_type,
                 message_id=message_id,
                 system_prompt=self.config.agents.system_prompt,
+                channel=channel_prefix,
             )
 
             assistant_text = None

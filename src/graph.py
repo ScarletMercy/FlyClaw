@@ -39,6 +39,7 @@ class AgentState(TypedDict):
     chat_type: str
     message_id: str
     user_role: str  # "owner" | "admin" | "user" | "guest" | ""
+    channel: str  # "feishu" | "qq" | "ws" | ""
 
 
 def create_agent_state(
@@ -48,6 +49,7 @@ def create_agent_state(
     chat_type: str = "p2p",
     message_id: str = "",
     system_prompt: str = "",
+    channel: str = "",
 ) -> AgentState:
     """Factory function to create AgentState with validation.
 
@@ -58,6 +60,7 @@ def create_agent_state(
         chat_type: Type of chat ('p2p' or 'group')
         message_id: Optional message ID
         system_prompt: Optional system prompt override
+        channel: Source channel ('feishu', 'qq', 'ws', etc.)
 
     Returns:
         Validated AgentState dictionary
@@ -79,6 +82,7 @@ def create_agent_state(
         "chat_type": chat_type,
         "message_id": message_id or str(uuid.uuid4()),
         "user_role": "",
+        "channel": channel,
     }
 
 
@@ -360,6 +364,21 @@ def create_agent_graph(
 
     all_tools = tools
 
+    # Tools that are feishu-specific but not prefixed with "feishu_"
+    _FEISHU_EXTRA_NAMES = frozenset({"send_image_to_chat", "send_file_to_chat"})
+
+    def _filter_tools_by_channel(tool_list: list[BaseTool], channel: str) -> list[BaseTool]:
+        if not channel:
+            return tool_list
+        if channel == "feishu":
+            return [t for t in tool_list if not t.name.startswith("qq_")]
+        if channel == "qq":
+            return [
+                t for t in tool_list
+                if not t.name.startswith("feishu_") and t.name not in _FEISHU_EXTRA_NAMES
+            ]
+        return tool_list
+
     async def agent_node(state: AgentState) -> dict:
         messages = state["messages"]
         if not messages:
@@ -375,6 +394,8 @@ def create_agent_graph(
             sender_id = state.get("sender_id", "")
             user = _resolve_user_from_state(sender_id, config)
             active_tools = apply_tool_policy(tools, sender_id, config, user=user)
+
+        active_tools = _filter_tools_by_channel(active_tools, state.get("channel", ""))
 
         # Build system prompt with modular prompt builder
         sp = state.get("system_prompt", system_prompt) or system_prompt
@@ -427,6 +448,8 @@ def create_agent_graph(
             filtered = apply_tool_policy(tools, sender_id, config, user=user)
         else:
             filtered = tools
+
+        filtered = _filter_tools_by_channel(filtered, state.get("channel", ""))
 
         local_tool_node = ToolNode(filtered, handle_tool_errors=False)
 

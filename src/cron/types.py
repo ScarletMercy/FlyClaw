@@ -103,7 +103,7 @@ class CronDelivery(BaseModel):
 
 
 class CronJob(BaseModel):
-    id: str = Field(default_factory=lambda: uuid4().hex[:12])
+    id: str = Field(default_factory=lambda: str(uuid4()))
     name: str
     description: str = ""
     enabled: bool = True

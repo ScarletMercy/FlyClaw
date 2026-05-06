@@ -163,6 +163,7 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
             chat_type="p2p",
             message_id=str(uuid.uuid4()),
             system_prompt=app_config.agents.system_prompt,
+            channel="api",
         )
         # Override messages with the full history for this endpoint
         input_state["messages"] = lc_messages
@@ -312,6 +313,7 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
                 chat_type="p2p",
                 message_id=str(uuid.uuid4()),
                 system_prompt=app_config.agents.system_prompt,
+                channel="ws",
             )
             result = await graph.ainvoke(input_state, config)
             assistant_text = ""
