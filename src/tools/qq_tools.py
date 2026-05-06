@@ -27,17 +27,25 @@ def _get_http_and_token():
 async def _qq_get(path: str, description: str = "QQ API"):
     """Authenticated GET to QQ API."""
     import httpx
-    from src.channels.qq import API_BASE, _qq_api_request
+    from src.channels.qq import API_BASE
+    from src.channels.base import api_request_with_retry
 
     http_client, token_mgr = _get_http_and_token()
     if not http_client or not token_mgr:
+        ch = _get_qq_channel()
+        if ch is None:
+            logger.error("%s: QQ channel not initialized (get_qq_channel() returned None)", description)
+        elif ch._token_manager is None:
+            logger.error("%s: QQ channel token_manager is None — start() was never called or failed before auth", description)
+        elif ch._http_client is None:
+            logger.error("%s: QQ channel http_client is None — start() failed after auth (before httpx client created)", description)
         return None
 
     token = await token_mgr.get_token()
     headers = {"Authorization": f"QQBot {token}"}
 
     try:
-        resp = await _qq_api_request(
+        resp = await api_request_with_retry(
             lambda: http_client.get(f"{API_BASE}{path}", headers=headers),
             description=description,
         )
@@ -45,7 +53,7 @@ async def _qq_get(path: str, description: str = "QQ API"):
             token_mgr.clear_cache()
             token = await token_mgr.get_token()
             headers["Authorization"] = f"QQBot {token}"
-            resp = await _qq_api_request(
+            resp = await api_request_with_retry(
                 lambda: http_client.get(f"{API_BASE}{path}", headers=headers),
                 description=description,
             )
@@ -65,8 +73,8 @@ async def qq_list_guilds() -> str:
     Returns guild names and IDs.
     """
     data = await _qq_get("/users/@me/guilds", description="QQ list guilds")
-    if not data:
-        return "[error] Failed to list guilds"
+    if data is None:
+        return "[error] Failed to list guilds — check logs for details (channel not started, auth failed, or API error)"
     if not isinstance(data, list):
         return f"[error] Unexpected response: {data}"
     if not data:

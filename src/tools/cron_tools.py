@@ -28,6 +28,11 @@ def _get_service():
     return _cron_service
 
 
+def _clean_job_id(job_id: str) -> str:
+    """Strip brackets, backticks, and whitespace from a job ID (LLMs often wrap IDs)."""
+    return job_id.strip().strip("[]()`").strip()
+
+
 @tool
 async def cron_list() -> str:
     """List all scheduled cron jobs. Returns job IDs, names, schedules, enabled status, and last run info."""
@@ -49,7 +54,7 @@ async def cron_list() -> str:
         status = "enabled" if j.enabled else "disabled"
         last = f", last: {j.last_run_status}" if j.last_run_status else ""
         dep_str = f", depends_on: {','.join(j.depends_on)}" if j.depends_on else ""
-        lines.append(f"- [{j.id}] {j.name} ({status}, {sched_str}{last}{dep_str})")
+        lines.append(f"- {j.name}  id={j.id}  ({status}, {sched_str}{last}{dep_str})")
     return "\n".join(lines)
 
 
@@ -129,6 +134,7 @@ async def cron_delete(job_id: str) -> str:
     svc = _get_service()
     if not svc:
         return "Cron service is not available."
+    job_id = _clean_job_id(job_id)
     try:
         removed = await svc.remove_job(job_id)
         if removed:
@@ -148,6 +154,7 @@ async def cron_toggle(job_id: str) -> str:
     svc = _get_service()
     if not svc:
         return "Cron service is not available."
+    job_id = _clean_job_id(job_id)
     job = svc.get_job(job_id)
     if not job:
         return f"Job not found: {job_id}"
@@ -171,6 +178,7 @@ async def cron_run(job_id: str) -> str:
     svc = _get_service()
     if not svc:
         return "Cron service is not available."
+    job_id = _clean_job_id(job_id)
     job = svc.get_job(job_id)
     if not job:
         return f"Job not found: {job_id}"
