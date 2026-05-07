@@ -384,10 +384,14 @@ class QQChannel(Channel):
         self._typing_unsupported = False
         # Typing indicator state: {chat_id -> Task}
         self._typing_tasks: dict[str, asyncio.Task] = {}
+        self._mu_runner = None  # Media understanding runner for audio transcription
         _qq_channel = self
 
     def set_message_callback(self, callback: Callable):
         self._on_message_callback = callback
+
+    def set_media_understanding_runner(self, runner):
+        self._mu_runner = runner
 
     async def start(self):
         if not self.config.enabled:
@@ -511,6 +515,7 @@ class QQChannel(Channel):
         attachments = data.get("attachments", [])
         image_urls = []
         video_urls = []
+        audio_urls = []
         has_media = False
         if attachments:
             for att in attachments:
@@ -526,6 +531,9 @@ class QQChannel(Channel):
                     has_media = True
                 elif ct.startswith("video"):
                     text += "\n[video]"
+                    has_media = True
+                elif ct.startswith("audio") and url:
+                    audio_urls.append(url)
                     has_media = True
                 elif ct.startswith("audio"):
                     text += "\n[audio]"
@@ -560,6 +568,27 @@ class QQChannel(Channel):
         elif image_urls:
             for url in image_urls:
                 text += f"\n[image_url: {url}]"
+
+        # Audio transcription
+        if audio_urls and self._mu_runner:
+            for aurl in audio_urls:
+                try:
+                    async with httpx.AsyncClient(timeout=30) as dl:
+                        resp = await dl.get(aurl)
+                        resp.raise_for_status()
+                        audio_data = resp.content
+                    from src.media_understanding.types import MediaCapability
+                    result = await self._mu_runner.understand(audio_data, MediaCapability.AUDIO)
+                    if result.text:
+                        text += f"\n[语音转文字]: {result.text}"
+                    else:
+                        text += "\n[语音消息（转写失败）]"
+                except Exception as e:
+                    logger.warning("QQ audio transcription failed: %s", e)
+                    text += "\n[语音消息（转写失败）]"
+        elif audio_urls:
+            for aurl in audio_urls:
+                text += f"\n[audio_url: {aurl}]"
 
         logger.info(
             "QQ message: chat=%s sender=%s type=%s text=%.100s",

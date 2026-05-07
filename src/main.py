@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import time
 from pathlib import Path
 
 import uvicorn
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from src.config import load_config
 from src.graph import collect_tools, create_agent_graph, create_model
@@ -51,11 +52,13 @@ class Application:
         self.compiled_graph = None
         self.checkpointer = None
         self.graph = None
+        self.model_ref = None
 
         # Components initialized during setup
         self.feishu = None
         self.qq = None
         self.session_tracker = None
+        self.session_registry = None
         self.typing = None
         self.dispatcher = None
         self.cron_service = None
@@ -263,7 +266,7 @@ class Application:
             skills = self._reload_skills()
 
         # Build the agent graph
-        self.graph = create_agent_graph(
+        self.graph, self.model_ref = create_agent_graph(
             model,
             tools,
             self.config.agents.system_prompt,
@@ -292,6 +295,9 @@ class Application:
         self.feishu = FeishuChannel(self.config.channels.feishu)
         session_scope = self.config.session.scope
         self.session_tracker = SessionTracker(idle_reset_minutes=self.config.session.idle_reset_minutes)
+        from src.session import SessionRegistry
+        self.session_registry = SessionRegistry()
+        self.session_registry.init("data/sessions.json")
 
         from src.channels.typing import TypingIndicator
 
@@ -307,7 +313,7 @@ class Application:
         # Register built-in commands
         self._register_builtin_commands(tools, skills)
 
-        # Initialize media understanding runner for Feishu auto-processing
+        # Initialize media understanding runner for channel auto-processing
         if self.config.tools.media_understanding.enabled:
             try:
                 from src.media_understanding.runner import MediaUnderstandingRunner
@@ -321,6 +327,19 @@ class Application:
                 logger.info("Media understanding runner initialized for Feishu channel")
             except Exception as e:
                 logger.warning("Failed to init media understanding: %s", e)
+
+        # Initialize QQ channel (media runner)
+        if self.config.channels.qq.enabled and self.config.tools.media_understanding.enabled:
+            try:
+                from src.media_understanding.runner import MediaUnderstandingRunner
+                qq_runner = MediaUnderstandingRunner(
+                    self.config.tools.media_understanding,
+                    fallback_api_key=self.config.model.api_key or "",
+                )
+                # Will be applied after QQChannel is created
+                self._qq_mu_runner = qq_runner
+            except Exception as e:
+                logger.warning("Failed to init QQ media understanding: %s", e)
 
         # Initialize cron service
         if self.config.cron.enabled:
@@ -340,12 +359,21 @@ class Application:
 
         set_workspace(self.config.agents.workspace)
 
+        # Initialize beads workspace
+        if getattr(self.config, "beads", None) and self.config.beads.enabled:
+            from src.tools.beads_tools import set_beads_workspace
+            beads_ws = self.config.beads.workspace or str(Path(self.config.agents.workspace).resolve())
+            set_beads_workspace(beads_ws)
+
         # Register message callback
         self.feishu.set_message_callback(self._create_message_callback(session_scope))
 
         # Initialize QQ channel
         self.qq = QQChannel(self.config.channels.qq)
         self.qq.set_message_callback(self._create_message_callback(session_scope, channel_prefix="qq"))
+        if hasattr(self, "_qq_mu_runner") and self._qq_mu_runner:
+            self.qq.set_media_understanding_runner(self._qq_mu_runner)
+            logger.info("Media understanding runner initialized for QQ channel")
 
         # Create FastAPI gateway
         from src.gateway import create_gateway
@@ -485,6 +513,99 @@ class Application:
         self.dispatcher.register_builtin("status", cmd_status)
         self.dispatcher.register_builtin("skills", cmd_skills)
 
+        # Session management commands
+        async def cmd_new(args: str, ctx: dict) -> str:
+            user_key = ctx.get("user_key", "")
+            channel_prefix = ctx.get("channel_prefix", "feishu")
+            if not user_key:
+                return "Cannot determine session."
+            # Extract user hash from user_key (e.g. "qq:user:ABC123" -> "ABC123")
+            user_hash = user_key.split(":")[-1] if user_key else "unknown"
+            sid = self.session_registry.new_session(user_key, channel_prefix, user_hash)
+            return f"New session started: {sid}\nSend messages to begin. Use /old to list sessions, /re <id> to switch."
+
+        async def cmd_old(args: str, ctx: dict) -> str:
+            user_key = ctx.get("user_key", "")
+            if not user_key:
+                return "Cannot determine session."
+            from src.session import get_threads_for_user
+            cp_path = self.config.checkpointer.path if self.config.checkpointer else ""
+            reg_sessions = self.session_registry.list_sessions(user_key)
+            db_threads = get_threads_for_user(cp_path, user_key)
+            current_override = self.session_registry.get_current(user_key)
+
+            lines = []
+
+            # Legacy (default) session
+            has_legacy = False
+            for t in db_threads:
+                if t["thread_id"] == user_key:
+                    has_legacy = True
+                    legacy_summary = ""
+                    try:
+                        cfg = {"configurable": {"thread_id": user_key}}
+                        state = await self.compiled_graph.aget_state(cfg)
+                        msgs = state.values.get("messages", [])
+                        for m in msgs:
+                            if isinstance(m, HumanMessage):
+                                legacy_summary = str(m.content)[:50]
+                                break
+                    except Exception:
+                        pass
+                    current_marker = " [current]" if current_override is None else ""
+                    lines.append(f"[default] {legacy_summary or '(empty)'}{current_marker}")
+                    break
+
+            if not has_legacy:
+                current_marker = " [current]" if current_override is None else ""
+                lines.append(f"[default] (no history){current_marker}")
+
+            # Registry sessions
+            for s in reg_sessions:
+                summary = s["summary"]
+                if summary in ("(new)", ""):
+                    try:
+                        cfg = {"configurable": {"thread_id": s["thread_id"]}}
+                        state = await self.compiled_graph.aget_state(cfg)
+                        msgs = state.values.get("messages", [])
+                        for m in msgs:
+                            if isinstance(m, HumanMessage):
+                                summary = str(m.content)[:50]
+                                break
+                        if not summary:
+                            summary = "(new)"
+                    except Exception:
+                        summary = "(new)"
+                    self.session_registry.update_summary(user_key, s["thread_id"], summary)
+                current_marker = " [current]" if s["is_current"] else ""
+                dt = time.strftime("%m-%d %H:%M", time.localtime(s["created_at"]))
+                lines.append(f"[{s['session_id']}] {summary}{current_marker} ({dt})")
+
+            if len(lines) == 1 and not reg_sessions:
+                return "No sessions yet.\n/new - create new session"
+
+            result = "Your sessions:\n" + "\n".join(lines)
+            result += "\n\n/re <id> - switch session (e.g. /re default, /re s1)\n/new - create new session"
+            return result
+
+        async def cmd_re(args: str, ctx: dict) -> str:
+            user_key = ctx.get("user_key", "")
+            session_id = args.strip()
+            if not user_key:
+                return "Cannot determine session."
+            if not session_id:
+                return "Usage: /re <session_id>\nUse /old to list sessions."
+            tid = self.session_registry.switch_to(user_key, session_id)
+            if tid == "default":
+                return "Switched back to default session."
+            if tid:
+                return f"Resumed session: {session_id}\nThread: {tid}"
+            return f"Session not found: {session_id}\nUse /old to list available sessions."
+
+        self.dispatcher.register_builtin("new", cmd_new)
+        self.dispatcher.register_builtin("old", cmd_old)
+        self.dispatcher.register_builtin("re", cmd_re)
+
         # Auth commands
         if self.config.auth.enabled and self._rbac:
             self._register_auth_commands()
@@ -502,7 +623,10 @@ class Application:
             stream_fn,
         ):
             session_key = self._resolve_session_key(sender_id, chat_type, chat_id, session_scope)
-            thread_id = f"{channel_prefix}:{session_key}"
+            legacy_thread_id = f"{channel_prefix}:{session_key}"
+            # Check if user has switched to a multi-session
+            override = self.session_registry.get_current(legacy_thread_id)
+            thread_id = override or legacy_thread_id
             # recursion_limit must be in config dict (LangGraph ignores kwarg form)
             _recursion_limit = (self.config.agents.max_tool_rounds or 50) * 2 + 10
             run_config = {
@@ -519,7 +643,7 @@ class Application:
                 result = await self.dispatcher.dispatch(
                     cmd_name,
                     cmd_args,
-                    context={"thread_id": thread_id, "sender_id": sender_id, "chat_id": chat_id},
+                    context={"thread_id": thread_id, "sender_id": sender_id, "chat_id": chat_id, "user_key": legacy_thread_id, "channel_prefix": channel_prefix},
                 )
                 await reply_fn(result)
                 return
@@ -530,6 +654,8 @@ class Application:
             from src.tools.cron_tools import set_current_chat_id
 
             set_current_chat_id(chat_id)
+            from src.tools.media_tools import set_current_channel
+            set_current_channel(channel_prefix)
 
             from src.graph import create_agent_state
 
@@ -545,12 +671,15 @@ class Application:
 
             assistant_text = None
             try:
+                logger.debug("[flow] graph ainvoke start, state has %d messages",
+                             len(input_state.get("messages", [])))
                 async for event in self.compiled_graph.astream_events(input_state, run_config, version="v2"):
                     kind = event.get("event", "")
                     if kind == "on_chain_error":
                         err = event.get("data", {}).get("error")
                         logger.error("Graph chain error: %s", err)
                         continue
+                logger.debug("[flow] graph ainvoke done")
 
                 # Check for pending interrupts (e.g. approval requests)
                 state = await self.compiled_graph.aget_state(run_config)
@@ -566,10 +695,22 @@ class Application:
                                 )
 
                 state = await self.compiled_graph.aget_state(run_config)
-                for msg in reversed(state.values.get("messages", [])):
+                messages = state.values.get("messages", [])
+                for msg in reversed(messages):
                     if isinstance(msg, AIMessage) and msg.content:
                         assistant_text = msg.content
                         break
+
+                # Detect IDENTITY.md writes for memory notification (deduplicated)
+                identity_written = False
+                for i, msg in enumerate(messages):
+                    if not isinstance(msg, ToolMessage):
+                        continue
+                    tool_out = msg.content if isinstance(msg.content, str) else ""
+                    if "IDENTITY.md" not in tool_out:
+                        continue
+                    identity_written = True
+                    break
             except Exception as e:
                 logger.error("Agent error: %s", e, exc_info=True)
                 assistant_text = f"[error] {type(e).__name__}: {e}"
@@ -592,7 +733,7 @@ class Application:
                 tts_text = ""
                 if getattr(self.config, "tts", None) and self.config.tts.enabled and self.config.tts.auto_mode != "off":
                     try:
-                        await self._handle_tts(assistant_text, chat_id)
+                        await self._handle_tts(assistant_text, chat_id, channel_prefix)
                         if self.config.tts.auto_mode == "tagged":
                             from src.tts.directives import strip_tts_directives
 
@@ -601,14 +742,24 @@ class Application:
                         logger.warning("TTS processing failed: %s", e)
 
                 display_text = tts_text if tts_text else assistant_text
+
                 try:
+                    logger.debug("[flow] sending reply, len=%d", len(display_text))
                     await reply_fn(display_text)
                 finally:
                     if channel_prefix == "feishu":
                         await self.typing.stop(message_id)
                 logger.info("Reply to %s: %.100s", session_key, display_text)
 
-                # Session memory: auto-write Q&A to memory
+                # Memory notifications (sent as separate messages)
+                # 1. IDENTITY.md write
+                if identity_written:
+                    try:
+                        await reply_fn("💾 update memory: 已更新身份记忆")
+                    except Exception:
+                        pass
+
+                # 2. Auto session memory
                 if (
                     getattr(self, "_memory_searcher", None)
                     and self.config.memory.enabled
@@ -619,12 +770,59 @@ class Application:
                             f"session:{session_key}",
                             f"Q: {text}\nA: {display_text}",
                         )
+                        # Silent save — no notification for auto session memory
+                    except Exception:
+                        pass
+
+                # 3. Beads passive memory
+                if getattr(self.config, "beads", None) and self.config.beads.enabled:
+                    try:
+                        from src.tools.beads_tools import auto_extract_memory, save_memory
+                        extracted = auto_extract_memory(text, display_text)
+                        if extracted:
+                            content, category = extracted
+                            await save_memory(content)
+                            # Silent save — no notification for regex-based extraction
+                        elif self.config.beads.memory_judge_model:
+                            asyncio.create_task(self._beads_llm_judge(
+                                text, display_text, reply_fn,
+                            ))
+                    except Exception:
+                        pass
+
+                    # Notify if LLM manually called bd_remember
+                    try:
+                        for msg in messages:
+                            if isinstance(msg, ToolMessage) and getattr(msg, "name", "") == "bd_remember":
+                                await reply_fn("💾 update memory: 已保存到 beads")
+                                break
                     except Exception:
                         pass
 
         return on_message
 
-    async def _handle_tts(self, assistant_text: str, chat_id: str):
+    async def _beads_llm_judge(self, user_input: str, ai_response: str, reply_fn):
+        """Background task: use a small model to judge if conversation is worth remembering."""
+        try:
+            from src.tools.beads_tools import judge_memory_with_llm, save_memory
+
+            model_name = self.config.beads.memory_judge_model
+            base_url = self.config.beads.memory_judge_base_url or self.config.model.base_url
+            api_key = self.config.beads.memory_judge_api_key or self.config.model.api_key
+
+            if not model_name or not base_url or not api_key:
+                return
+
+            content = await judge_memory_with_llm(
+                user_input, ai_response, model_name, base_url, api_key,
+            )
+            if content:
+                await save_memory(content)
+                await reply_fn(f"💾 update memory: {content[:50]}")
+        except Exception:
+            logger.debug("Beads LLM judge failed", exc_info=True)
+
+    async def _handle_tts(self, assistant_text: str, chat_id: str, channel_prefix: str = "feishu"):
         """Process TTS for assistant text based on auto_mode."""
         if not self.config.tts.enabled:
             return
@@ -635,16 +833,22 @@ class Application:
 
         provider = TtsProvider(tts_config, self.config.model)
 
+        async def _send_audio(audio_bytes: bytes):
+            if channel_prefix == "feishu" and self.feishu:
+                await self.feishu.send_audio(chat_id, audio_bytes)
+            elif channel_prefix == "qq" and self.qq:
+                await self.qq.send_audio(chat_id, audio_bytes)
+
         if tts_config.auto_mode == "always":
             audio = await provider.synthesize(assistant_text)
             if audio:
-                await self.feishu.send_audio(chat_id, audio)
+                await _send_audio(audio)
         elif tts_config.auto_mode == "tagged":
             directives = parse_tts_directives(assistant_text)
             for directive in directives:
                 audio = await provider.synthesize(directive.text)
                 if audio:
-                    await self.feishu.send_audio(chat_id, audio)
+                    await _send_audio(audio)
 
     async def _on_startup(self):
         # Run security audit on startup
@@ -731,7 +935,7 @@ class Application:
                     pass
 
     async def run_async(self):
-        """Run the application using the current event loop (non-blocking setup)."""
+        """Run the application."""
         config = uvicorn.Config(
             self.api,
             host=self.config.gateway.host,
@@ -744,6 +948,25 @@ class Application:
 
 def main():
     """Sync entry point for console script (myclaw)."""
+    import os
+
+    # On Windows, Python's signal.signal() doesn't fire inside asyncio's
+    # ProactorEventLoop because the main thread is blocked in a C extension.
+    # Use the native Windows SetConsoleCtrlHandler instead, which runs in its
+    # own thread at the OS level and bypasses Python entirely.
+    if sys.platform == "win32":
+        import ctypes
+
+        _HANDLER = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_uint)
+
+        def _ctrl_handler(ctrl_type):
+            # CTRL_C_EVENT=0, CTRL_CLOSE_EVENT=2, CTRL_LOGOFF_EVENT=5, CTRL_SHUTDOWN_EVENT=6
+            if ctrl_type in (0, 2, 5, 6):
+                os._exit(0)
+            return False
+
+        ctypes.windll.kernel32.SetConsoleCtrlHandler(_HANDLER(_ctrl_handler), True)
+
     app = Application()
 
     async def _run():

@@ -120,6 +120,63 @@ def register_dashboard(app: FastAPI, application):
             for j in _app_ref.cron_service.list_jobs():
                 cron_jobs.append(j.model_dump())
 
+        # Collect MCP servers for SSR
+        mcp_servers = []
+        mcp_enabled = getattr(cfg, "mcp", None) and cfg.mcp.enabled
+        if mcp_enabled:
+            try:
+                from src.mcp.manager import get_mcp_manager
+                mcp_mgr = get_mcp_manager()
+                mcp_servers = [s.model_dump() for s in await mcp_mgr.list_servers()]
+            except Exception:
+                pass
+
+        # Collect plugins for SSR
+        plugins = []
+        try:
+            from src.plugins.registry import get_plugin_registry
+            plugins = get_plugin_registry().list_plugins()
+        except Exception:
+            pass
+
+        # Collect auth users for SSR
+        auth_enabled = getattr(cfg.auth, "enabled", False)
+        auth_users = []
+        if auth_enabled:
+            try:
+                from src.auth.rbac import get_rbac
+                rbac = get_rbac()
+                if rbac:
+                    for u in rbac.store.list_users():
+                        devices = rbac.store.list_user_devices(u.user_id)
+                        auth_users.append({
+                            **u.model_dump(),
+                            "device_count": len(devices),
+                            "trusted_devices": sum(1 for d in devices if d.trusted),
+                        })
+            except Exception:
+                pass
+
+        # Pending approvals count
+        pending_approvals = []
+        try:
+            from src.tools.approval import get_approval_manager
+            pending_approvals = [r.model_dump() for r in get_approval_manager().list_pending()]
+        except Exception:
+            pass
+
+        # Beads config
+        beads_enabled = getattr(cfg, "beads", None) and cfg.beads.enabled
+        beads_judge_model = getattr(cfg, "beads", None) and getattr(cfg.beads, "memory_judge_model", "")
+
+        # Link understanding config
+        link_understanding_enabled = getattr(cfg, "link_understanding", None) and cfg.link_understanding.enabled
+        link_max_previews = getattr(cfg, "link_understanding", None) and getattr(cfg.link_understanding, "max_previews", 3)
+
+        # Security config
+        security_enabled = getattr(cfg, "security", None) and cfg.security.enabled
+        security_audit = getattr(cfg, "security", None) and getattr(cfg.security, "audit_on_startup", False)
+
         html = _jinja_template.render(
             model_provider=cfg.model.provider,
             model_name=cfg.model.name,
@@ -139,6 +196,26 @@ def register_dashboard(app: FastAPI, application):
             tools=tools,
             skills=skills,
             sessions=sessions,
+            # New context data
+            qq_enabled=cfg.channels.qq.enabled,
+            qq_config={
+                "dm_policy": cfg.channels.qq.dm_policy,
+                "group_policy": cfg.channels.qq.group_policy,
+                "require_mention": cfg.channels.qq.require_mention,
+                "markdown_support": cfg.channels.qq.markdown_support,
+            },
+            mcp_enabled=mcp_enabled,
+            mcp_servers=mcp_servers,
+            plugins=plugins,
+            auth_enabled=auth_enabled,
+            auth_users=auth_users,
+            beads_enabled=beads_enabled,
+            beads_judge_model=beads_judge_model or "",
+            link_understanding_enabled=link_understanding_enabled,
+            link_max_previews=link_max_previews or 3,
+            security_enabled=security_enabled,
+            security_audit=security_audit,
+            pending_approvals=pending_approvals,
             config={
                 "model_provider": cfg.model.provider,
                 "model_name": cfg.model.name,
@@ -169,6 +246,25 @@ def register_dashboard(app: FastAPI, application):
                 "tts_enabled": getattr(cfg.tts, "enabled", False),
                 "tts_provider": getattr(cfg.tts, "provider", ""),
                 "checkpointer": cfg.checkpointer.type,
+                # New config entries
+                "qq_enabled": cfg.channels.qq.enabled,
+                "qq_dm": cfg.channels.qq.dm_policy,
+                "qq_group": cfg.channels.qq.group_policy,
+                "qq_mention": cfg.channels.qq.require_mention,
+                "qq_markdown": cfg.channels.qq.markdown_support,
+                "mcp_enabled": mcp_enabled,
+                "mcp_server_count": len(mcp_servers),
+                "mcp_servers": [s.get("name", "") for s in mcp_servers],
+                "plugin_count": len(plugins),
+                "plugin_names": [p.get("name", p.get("id", "")) for p in plugins],
+                "auth_enabled": auth_enabled,
+                "auth_default_role": getattr(cfg.auth, "default_role", "guest"),
+                "beads_enabled": beads_enabled,
+                "beads_judge_model": beads_judge_model or "",
+                "link_understanding_enabled": link_understanding_enabled,
+                "link_max_previews": link_max_previews or 3,
+                "security_enabled": security_enabled,
+                "security_audit": security_audit,
             },
         )
         return HTMLResponse(html)
@@ -217,8 +313,48 @@ def register_dashboard(app: FastAPI, application):
     @router.get("/api/dashboard/sessions")
     async def dashboard_sessions(request: Request):
         _check_auth(request, app)
-        if not _app_ref.session_tracker:
-            return []
+        import re as _re
+        sessions = []
+
+        # Only show chat sessions (channel:user:* or channel:group:* or channel:sN:*)
+        _chat_pattern = _re.compile(r'^(feishu|qq):(user|group|s\d+):')
+
+        # Active sessions from tracker (with idle time)
+        active_ids = set()
+        if _app_ref.session_tracker:
+            for s in _app_ref.session_tracker.get_sessions():
+                tid = s["thread_id"]
+                if _chat_pattern.match(tid):
+                    active_ids.add(tid)
+                    sessions.append({**s, "status": "active"})
+
+        # Historical sessions from checkpointer
+        if _app_ref.checkpointer:
+            try:
+                import sqlite3
+                from pathlib import Path
+                db_path = Path(_app_ref.config.checkpointer.path)
+                if db_path.exists():
+                    conn = sqlite3.connect(str(db_path))
+                    rows = conn.execute("""
+                        SELECT c.thread_id, COUNT(*) as cnt
+                        FROM checkpoints c
+                        GROUP BY c.thread_id
+                        ORDER BY MAX(c.rowid) DESC
+                    """).fetchall()
+                    conn.close()
+                    for tid, cnt in rows:
+                        if tid not in active_ids and _chat_pattern.match(tid):
+                            sessions.append({
+                                "thread_id": tid,
+                                "last_active": None,
+                                "status": "idle",
+                                "checkpoint_count": cnt,
+                            })
+            except Exception:
+                pass
+
+        return sessions
         sessions = _app_ref.session_tracker.get_sessions()
         for s in sessions:
             idle = s["last_active"]
@@ -374,12 +510,12 @@ def register_dashboard(app: FastAPI, application):
             try:
                 # Send buffered logs first
                 for entry in _log_buffer:
-                    yield f"data: {json.dumps(entry, ensure_ascii=False)}\n\n"
+                    yield f"event: log\ndata: {json.dumps(entry, ensure_ascii=False)}\n\n"
                 # Stream new logs
                 while True:
                     try:
                         entry = await asyncio.wait_for(q.get(), timeout=30)
-                        yield f"data: {json.dumps(entry, ensure_ascii=False)}\n\n"
+                        yield f"event: log\ndata: {json.dumps(entry, ensure_ascii=False)}\n\n"
                     except asyncio.TimeoutError:
                         yield ": keepalive\n\n"
             except asyncio.CancelledError:
@@ -397,6 +533,164 @@ def register_dashboard(app: FastAPI, application):
                 "X-Accel-Buffering": "no",
             },
         )
+
+    @router.get("/api/dashboard/state-stream")
+    async def dashboard_state_stream(request: Request):
+        """SSE endpoint pushing periodic state snapshots for real-time UI updates."""
+        _check_auth(request, app)
+        import json
+
+        from starlette.responses import StreamingResponse
+
+        async def state_generator():
+            try:
+                while True:
+                    state = await _build_state_snapshot()
+                    yield f"data: {json.dumps(state, ensure_ascii=False)}\n\n"
+                    await asyncio.sleep(3)
+            except asyncio.CancelledError:
+                pass
+
+        return StreamingResponse(
+            state_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    async def _build_state_snapshot() -> dict:
+        cfg = _app_ref.config
+        uptime = time.monotonic() - _start_time
+        hours, remainder = divmod(int(uptime), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        snapshot = {
+            "uptime": f"{hours}h {minutes}m {seconds}s",
+            "uptime_seconds": int(uptime),
+            "session_count": _app_ref.session_tracker.active_count if _app_ref.session_tracker else 0,
+            "skill_count": len(_app_ref._skills_cache or []),
+        }
+        # Sessions (active + historical from checkpointer, chat only)
+        import re as _re
+        _chat_pattern = _re.compile(r'^(feishu|qq):(user|group|s\d+):')
+        all_sessions = []
+        active_ids = set()
+        if _app_ref.session_tracker:
+            for s in _app_ref.session_tracker.get_sessions():
+                if _chat_pattern.match(s["thread_id"]):
+                    active_ids.add(s["thread_id"])
+                    all_sessions.append({**s, "status": "active"})
+        if _app_ref.checkpointer:
+            try:
+                import sqlite3 as _sq
+                from pathlib import Path as _P
+                db_path = _P(_app_ref.config.checkpointer.path)
+                if db_path.exists():
+                    conn = _sq.connect(str(db_path))
+                    rows = conn.execute("""
+                        SELECT c.thread_id, COUNT(*) as cnt
+                        FROM checkpoints c
+                        GROUP BY c.thread_id
+                        ORDER BY MAX(c.rowid) DESC
+                    """).fetchall()
+                    conn.close()
+                    for tid, cnt in rows:
+                        if tid not in active_ids and _chat_pattern.match(tid):
+                            all_sessions.append({
+                                "thread_id": tid,
+                                "last_active": None,
+                                "status": "idle",
+                                "checkpoint_count": cnt,
+                            })
+            except Exception:
+                pass
+        snapshot["sessions"] = all_sessions
+        snapshot["session_count"] = len(active_ids)
+        # Pending approvals
+        try:
+            from src.tools.approval import get_approval_manager
+            snapshot["pending_approvals"] = [r.model_dump() for r in get_approval_manager().list_pending()]
+        except Exception:
+            snapshot["pending_approvals"] = []
+        # Cron
+        if _app_ref.cron_service:
+            snapshot["cron_jobs"] = [j.model_dump() for j in _app_ref.cron_service.list_jobs()]
+        # MCP
+        try:
+            from src.mcp.manager import get_mcp_manager
+            snapshot["mcp_servers"] = [s.model_dump() for s in await get_mcp_manager().list_servers()]
+        except Exception:
+            snapshot["mcp_servers"] = []
+        # Auth users
+        if getattr(cfg.auth, "enabled", False):
+            try:
+                from src.auth.rbac import get_rbac
+                rbac = get_rbac()
+                if rbac:
+                    snapshot["auth_users"] = [
+                        {**u.model_dump(), "device_count": len(rbac.store.list_user_devices(u.user_id)),
+                         "trusted_devices": sum(1 for d in rbac.store.list_user_devices(u.user_id) if d.trusted)}
+                        for u in rbac.store.list_users()
+                    ]
+            except Exception:
+                snapshot["auth_users"] = []
+        # Beads
+        try:
+            from src.tools.beads_tools import _bd
+            result = await _bd(["memories", "--json"])
+            import json
+            snapshot["beads"] = json.loads(result)
+        except Exception:
+            snapshot["beads"] = {}
+        return snapshot
+
+    # ── Model switching ─────────────────────────────────────
+
+    @router.get("/api/dashboard/models")
+    async def dashboard_list_models(request: Request):
+        _check_auth(request, app)
+        cfg = _app_ref.config
+        current = {"provider": cfg.model.provider, "name": cfg.model.name}
+        available = [{"provider": current["provider"], "name": current["name"], "active": True}]
+        for fb in cfg.model.fallbacks:
+            available.append({"provider": fb.provider, "name": fb.name, "active": False})
+        return {"current": current, "available": available}
+
+    @router.post("/api/dashboard/models/switch")
+    async def dashboard_switch_model(request: Request):
+        _check_auth(request, app)
+        body = await request.json()
+        provider = body.get("provider", "").strip()
+        name = body.get("name", "").strip()
+        if not provider or not name:
+            raise HTTPException(status_code=400, detail="provider and name required")
+        if not _app_ref.model_ref:
+            raise HTTPException(status_code=500, detail="model_ref not initialized")
+        from src.graph import _make_chat_model
+        cfg = _app_ref.config
+        # Look for matching fallback to get its base_url/api_key
+        fb_base_url = None
+        fb_api_key = None
+        for fb in cfg.model.fallbacks:
+            if fb.provider == provider and fb.name == name:
+                fb_base_url = getattr(fb, "base_url", None)
+                fb_api_key = getattr(fb, "api_key", None)
+                break
+        try:
+            new_model = _make_chat_model(
+                provider, name,
+                cfg.model.temperature,
+                base_url=fb_base_url or cfg.model.base_url,
+                api_key=fb_api_key or cfg.model.api_key,
+            )
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to create model: {e}")
+        old_name = f"{cfg.model.provider}/{cfg.model.name}"
+        _app_ref.model_ref.model = new_model
+        logger.info("Model switched from %s to %s/%s", old_name, provider, name)
+        return {"ok": True, "previous": old_name, "current": f"{provider}/{name}"}
 
     # ── Auth dashboard API ──────────────────────────────────
 
@@ -486,6 +780,57 @@ def register_dashboard(app: FastAPI, application):
             return {"ok": removed}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
+
+    # ── Beads memory API ──────────────────────────────────────
+
+    @router.get("/api/dashboard/beads/memories")
+    async def dashboard_beads_memories(request: Request):
+        _check_auth(request, app)
+        try:
+            from src.tools.beads_tools import _bd
+            result = await _bd(["memories", "--json"])
+            import json
+            return json.loads(result)
+        except Exception as e:
+            return {"error": str(e)}
+
+    @router.get("/api/dashboard/beads/recall/{key:path}")
+    async def dashboard_beads_recall(key: str, request: Request):
+        _check_auth(request, app)
+        try:
+            from src.tools.beads_tools import _bd
+            result = await _bd(["recall", key, "--json"])
+            import json
+            return json.loads(result)
+        except Exception as e:
+            return {"error": str(e)}
+
+    @router.delete("/api/dashboard/beads/forget/{key:path}")
+    async def dashboard_beads_forget(key: str, request: Request):
+        _check_auth(request, app)
+        try:
+            from src.tools.beads_tools import _bd
+            result = await _bd(["forget", key])
+            return {"ok": True, "result": result}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @router.post("/api/dashboard/beads/remember")
+    async def dashboard_beads_remember(request: Request):
+        _check_auth(request, app)
+        try:
+            body = await request.json()
+            content = body.get("content", "").strip()
+            key = body.get("key", "").strip()
+            if not content:
+                raise HTTPException(status_code=400, detail="content is required")
+            from src.tools.beads_tools import save_memory
+            result = await save_memory(content, key)
+            return {"ok": True, "result": result}
+        except HTTPException:
+            raise
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     app.include_router(router)
     logger.info("Dashboard registered at /dashboard")

@@ -17,6 +17,9 @@ _log = logging.getLogger("myclaw.config")
 _ENV_VAR_RE = re.compile(r"\$\{([^}]+)\}")
 
 
+_warned_env_vars: set[str] = set()
+
+
 def _env_substitute(value: str) -> str:
     if not isinstance(value, str):
         return value
@@ -24,7 +27,8 @@ def _env_substitute(value: str) -> str:
     def _replace(m):
         env_key = m.group(1)
         result = os.environ.get(env_key, "")
-        if env_key not in os.environ:
+        if env_key not in os.environ and env_key not in _warned_env_vars:
+            _warned_env_vars.add(env_key)
             _log.warning("Environment variable '%s' is not set, using empty string", env_key)
         return result
 
@@ -260,6 +264,16 @@ class MemoryConfig(BaseModel):
     auto_session_memory: bool = False  # Auto-write Q&A pairs to memory
 
 
+class BeadsConfig(BaseModel):
+    """Beads memory/issue tracker configuration."""
+
+    enabled: bool = False
+    workspace: str = ""  # Empty = auto-detect from agents.workspace
+    memory_judge_model: str = ""  # Small model for memory extraction (e.g. "LongCat-Flash-Lite")
+    memory_judge_base_url: str = ""  # Empty = inherit from main model
+    memory_judge_api_key: str = ""  # Empty = inherit from main model
+
+
 class AuthConfig(BaseModel):
     """Authentication and access control configuration."""
 
@@ -296,6 +310,7 @@ class AppConfig(BaseModel):
     timeouts: TimeoutsConfig = Field(default_factory=TimeoutsConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
+    beads: BeadsConfig = Field(default_factory=BeadsConfig)
     owner_id: str = ""
 
 

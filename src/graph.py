@@ -323,6 +323,12 @@ class FallbackModelChain:
         raise RuntimeError("No models available")
 
 
+class ModelRef:
+    """Mutable reference to the active model, allowing hot-swap without recompiling the graph."""
+    def __init__(self, model):
+        self.model = model
+
+
 def create_agent_graph(
     model_or_chain,
     tools: list[BaseTool],
@@ -331,7 +337,7 @@ def create_agent_graph(
     skills_budget: int = 30000,
     context_window_tokens: int = 100000,
     config=None,
-) -> StateGraph:
+) -> tuple[StateGraph, ModelRef]:
     from src.skills.prompt import build_skills_prompt
 
     skills_prompt = ""
@@ -363,6 +369,7 @@ def create_agent_graph(
         _max_tool_rounds = getattr(_max_tool_rounds, "max_tool_rounds", 0) or 0
 
     all_tools = tools
+    _model_ref = ModelRef(model_or_chain)
 
     # Tools that are feishu-specific but not prefixed with "feishu_"
     _FEISHU_EXTRA_NAMES = frozenset({"send_image_to_chat", "send_file_to_chat"})
@@ -426,12 +433,13 @@ def create_agent_graph(
                 active_tools = []
 
         if active_tools:
-            if isinstance(model_or_chain, BaseChatModel):
-                response = await model_or_chain.bind_tools(active_tools).ainvoke(all_messages)
+            m = _model_ref.model
+            if isinstance(m, BaseChatModel):
+                response = await m.bind_tools(active_tools).ainvoke(all_messages)
             else:
-                response = await model_or_chain.ainvoke(all_messages, tools=active_tools)
+                response = await m.ainvoke(all_messages, tools=active_tools)
         else:
-            response = await model_or_chain.ainvoke(all_messages)
+            response = await _model_ref.model.ainvoke(all_messages)
 
         # Fallback: parse pseudo-XML tool calls when the API fails to
         # return native tool_calls (e.g. LongCat sporadic parser bug).
@@ -451,7 +459,7 @@ def create_agent_graph(
 
         filtered = _filter_tools_by_channel(filtered, state.get("channel", ""))
 
-        local_tool_node = ToolNode(filtered, handle_tool_errors=False)
+        local_tool_node = ToolNode(filtered, handle_tool_errors=True)
 
         try:
             start_time = time.monotonic()
@@ -570,7 +578,7 @@ def create_agent_graph(
     )
     graph.add_edge("tools", "agent")
 
-    return graph
+    return graph, _model_ref
 
 
 def _make_chat_model(
@@ -817,7 +825,12 @@ def _register_builtin_tools(config) -> None:
             tools_list.append(send_image_to_chat)
             tools_list.append(send_file_to_chat)
             logger.info("Tool registered: send_image_to_chat, send_file_to_chat")
-        return tools_list
+
+    @registry.register
+    def _collect_voice_tools() -> list[BaseTool]:
+        from src.tools.media_tools import send_voice
+        logger.info("Tool registered: send_voice")
+        return [send_voice]
 
     @registry.register
     def _collect_qq_tools() -> list[BaseTool]:
@@ -904,6 +917,15 @@ def _register_builtin_tools(config) -> None:
                 return plugin_tools
             except Exception as e:
                 logger.warning("Failed to load plugin tools: %s", e)
+        return []
+
+    @registry.register
+    def _collect_beads_tools() -> list[BaseTool]:
+        if getattr(config, "beads", None) and config.beads.enabled:
+            from src.tools.beads_tools import bd_remember, bd_recall, bd_memories, bd_forget
+
+            logger.info("Tool registered: bd_remember, bd_recall, bd_memories, bd_forget")
+            return [bd_remember, bd_recall, bd_memories, bd_forget]
         return []
 
     @registry.register
