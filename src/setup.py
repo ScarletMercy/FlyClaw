@@ -162,6 +162,65 @@ def _section(config: dict, *keys: str) -> dict:
 # ── Wizard steps ──
 
 
+def _configure_fallbacks(model: dict) -> None:
+    """Configure fallback models (can be called independently of main model config)."""
+    existing_fallbacks = model.get("fallbacks", [])
+    print()
+    if existing_fallbacks:
+        print(f"  Fallback models ({len(existing_fallbacks)}):")
+        for i, fb in enumerate(existing_fallbacks):
+            print(f"    {i + 1}. {fb.get('provider', '?')}/{fb.get('name', '?')}")
+    else:
+        print("  No fallback models configured.")
+
+    if not _ask_yn("  Add/edit fallback models?", default=False):
+        return
+
+    fallbacks = list(existing_fallbacks)
+    while True:
+        print()
+        if fallbacks:
+            print(f"  Current fallbacks ({len(fallbacks)}):")
+            for i, fb in enumerate(fallbacks):
+                print(f"    {i + 1}. {fb.get('provider', '?')}/{fb.get('name', '?')}")
+            action = _ask_choice("  Action", ["add", "remove", "done"], default="done")
+        else:
+            action = "add"
+
+        if action == "done":
+            break
+        elif action == "remove":
+            idx = int(_ask(f"  Remove number (1-{len(fallbacks)})", default="1")) - 1
+            if 0 <= idx < len(fallbacks):
+                removed = fallbacks.pop(idx)
+                print(f"  Removed {removed.get('provider')}/{removed.get('name')}")
+            else:
+                print("  Invalid number.")
+        elif action == "add":
+            choice = _ask_choice("  Fallback provider", list(PRESETS.keys()), default="custom")
+            preset = PRESETS[choice]
+            fb = {}
+            if preset:
+                fb["provider"] = preset["provider"]
+                fb["name"] = _ask("  Model name", default=preset["name"])
+                if preset["base_url"]:
+                    fb["base_url"] = _ask("  Base URL", default=preset["base_url"])
+                if preset["env_key"]:
+                    env_name = preset["env_key"]
+                    default_key = f"${{{env_name}}}"
+                    fb["api_key"] = _ask(f"  API key ({env_name})", default=default_key)
+            else:
+                fb["provider"] = "openai"
+                fb["name"] = _ask("  Model name", default="")
+                fb["base_url"] = _ask("  Base URL", default="")
+                env_name = _ask("  API key env var name", default="OPENAI_API_KEY")
+                fb["api_key"] = f"${{{env_name}}}"
+            fallbacks.append(fb)
+            print(f"  Added {fb['provider']}/{fb['name']}")
+
+    model["fallbacks"] = fallbacks
+
+
 def _step_model(config: dict) -> None:
     print("  [1/6] Model Provider")
     print("  ────────────────────")
@@ -169,6 +228,7 @@ def _step_model(config: dict) -> None:
     model = _section(config, "model")
 
     if _ask_skip("Model", model, "provider", "name", "api_key"):
+        _configure_fallbacks(model)
         return
     existing_provider = model.get("provider", "anthropic")
 
@@ -214,6 +274,8 @@ def _step_model(config: dict) -> None:
         model["api_key"] = f"${{{env_name}}}"
 
     model["temperature"] = float(_ask("  Temperature", default=str(model.get("temperature", 0.0))))
+
+    _configure_fallbacks(model)
 
 
 def _step_gateway(config: dict) -> None:
@@ -317,6 +379,11 @@ def _step_summary(config: dict) -> None:
     print(f"  Model:      {model.get('provider', '?')}/{model.get('name', '?')}")
     if model.get("base_url"):
         print(f"  Base URL:   {model['base_url']}")
+    fallbacks = model.get("fallbacks", [])
+    if fallbacks:
+        print(f"  Fallbacks:  {len(fallbacks)}")
+        for fb in fallbacks:
+            print(f"    - {fb.get('provider', '?')}/{fb.get('name', '?')}")
     print(f"  Gateway:    {gw.get('host', '?')}:{gw.get('port', '?')}")
     print(f"  Feishu:     {'enabled' if feishu.get('enabled') else 'disabled'}")
     if feishu.get("enabled"):
