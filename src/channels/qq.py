@@ -828,7 +828,7 @@ class QQChannel(Channel):
         if file_data:
             body["file_data"] = file_data
         if file_name:
-            body["filename"] = file_name
+            body["file_name"] = file_name
 
         result = await self._api_post(path, body, description=f"QQ upload media type={file_type}")
         if result:
