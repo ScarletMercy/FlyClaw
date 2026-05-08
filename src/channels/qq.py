@@ -511,11 +511,21 @@ class QQChannel(Channel):
 
         text = content.strip()
 
+        # Handle file messages (docx, pdf, etc.) — QQ sends these with attachment info
+        attachment = data.get("attachment", {})
+        if attachment and not text:
+            fname = attachment.get("filename", "") or attachment.get("file_name", "")
+            if fname:
+                text = f"[收到文件: {fname}]"
+            else:
+                text = "[收到文件]"
+
         # Process attachments
         attachments = data.get("attachments", [])
         image_urls = []
         video_urls = []
         audio_urls = []
+        file_urls = []
         has_media = False
         if attachments:
             for att in attachments:
@@ -537,6 +547,11 @@ class QQChannel(Channel):
                     has_media = True
                 elif ct.startswith("audio"):
                     text += "\n[audio]"
+                    has_media = True
+                elif ct == "file" and url:
+                    fname = att.get("filename", "")
+                    size = att.get("size", 0)
+                    file_urls.append({"url": url, "filename": fname, "size": size})
                     has_media = True
 
         # Check file_info / media fields (QQ may use these for video/file messages)
@@ -589,6 +604,15 @@ class QQChannel(Channel):
         elif audio_urls:
             for aurl in audio_urls:
                 text += f"\n[audio_url: {aurl}]"
+
+        # File attachments
+        if file_urls:
+            for finfo in file_urls:
+                fname = finfo["filename"]
+                furl = finfo["url"]
+                text += f"\n[收到文件: {fname} (url: {furl})]"
+            if not text.strip():
+                text = f"[收到文件: {file_urls[0]['filename']}]"
 
         logger.info(
             "QQ message: chat=%s sender=%s type=%s text=%.100s",
