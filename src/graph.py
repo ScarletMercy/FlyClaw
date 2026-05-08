@@ -70,7 +70,7 @@ def create_agent_state(
     if not chat_id:
         raise ValueError("chat_id is required")
     if not message_text:
-        raise ValueError("message_text is required")
+        message_text = "[空消息]"
     if chat_type not in ("p2p", "group"):
         raise ValueError(f"chat_type must be 'p2p' or 'group', got '{chat_type}'")
 
