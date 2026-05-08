@@ -743,6 +743,15 @@ class Application:
 
                 display_text = tts_text if tts_text else assistant_text
 
+                # Media tag delivery: <media>path</media> → send file
+                try:
+                    from src.media_delivery import deliver_media
+                    ch = self.qq if channel_prefix == "qq" else self.feishu if channel_prefix == "feishu" else None
+                    if ch:
+                        display_text = await deliver_media(display_text, chat_id, channel_prefix, ch)
+                except Exception as e:
+                    logger.warning("Media delivery failed: %s", e)
+
                 try:
                     logger.debug("[flow] sending reply, len=%d", len(display_text))
                     await reply_fn(display_text)
