@@ -110,8 +110,8 @@ async def _exec_streaming(
                 if chunk:
                     buffer.append(chunk)
                     output_event.set()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Stream read error: %s", e)
         finally:
             readers_remaining -= 1
             if readers_remaining <= 0:
