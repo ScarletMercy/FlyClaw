@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -24,6 +25,7 @@ class MCPManager:
         self._clients: dict[str, MCPClient] = {}
         self._adapter = MCPToolAdapter(self.ensure_connected)
         self._tools: dict[str, BaseTool] = {}  # tool_name -> BaseTool
+        self._connect_locks: dict[str, asyncio.Lock] = {}
 
     def load_config(self, configs: dict[str, MCPServerConfig]) -> None:
         """Load server configurations and eagerly connect to discover tools."""
@@ -37,17 +39,25 @@ class MCPManager:
         if server_name in self._clients and self._clients[server_name].is_connected:
             return self._clients[server_name]
 
-        config = self._configs.get(server_name)
-        if config is None:
-            raise ValueError(f"MCP server '{server_name}' not configured")
+        if server_name not in self._connect_locks:
+            self._connect_locks[server_name] = asyncio.Lock()
 
-        client = MCPClient(server_name, config)
-        await client.connect()
-        self._clients[server_name] = client
+        async with self._connect_locks[server_name]:
+            # Double-check after acquiring lock
+            if server_name in self._clients and self._clients[server_name].is_connected:
+                return self._clients[server_name]
 
-        # Discover and register tools
-        await self._register_tools(client)
-        return client
+            config = self._configs.get(server_name)
+            if config is None:
+                raise ValueError(f"MCP server '{server_name}' not configured")
+
+            client = MCPClient(server_name, config)
+            await client.connect()
+            self._clients[server_name] = client
+
+            # Discover and register tools
+            await self._register_tools(client)
+            return client
 
     async def add_server(self, name: str, config: MCPServerConfig) -> None:
         """Dynamically add a new MCP server at runtime."""

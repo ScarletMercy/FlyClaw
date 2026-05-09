@@ -28,6 +28,7 @@ _feishu_client: Optional[lark.Client] = None
 _feishu_channel: Optional["FeishuChannel"] = None
 _bot_info: Optional[dict] = None
 _token_cache: dict[str, dict] = {}
+_token_cache_lock = asyncio.Lock()
 _mu_runner = None  # Fallback only; prefer _feishu_channel._mu_runner
 
 
@@ -53,27 +54,28 @@ async def feishu_api_request(request_fn, *, description: str = "Feishu API") -> 
 
 async def _get_tenant_token(app_id: str, app_secret: str, domain: str) -> str:
     cache_key = f"{domain}|{app_id}"
-    cached = _token_cache.get(cache_key)
-    if cached and cached["expires_at"] > _time.time() + 60:
-        return cached["token"]
+    async with _token_cache_lock:
+        cached = _token_cache.get(cache_key)
+        if cached and cached["expires_at"] > _time.time() + 60:
+            return cached["token"]
 
-    api_base = _resolve_api_base(domain)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-        resp = await api_request_with_retry(
-            lambda: client.post(
-                f"{api_base}/auth/v3/tenant_access_token/internal",
-                json={"app_id": app_id, "app_secret": app_secret},
-                timeout=10,
-            ),
-            description="Tenant token refresh",
-        )
-    data = resp.json()
-    if data.get("code") != 0 or not data.get("tenant_access_token"):
-        raise RuntimeError(f"Token error: {data.get('msg', 'unknown')}")
-    token = data["tenant_access_token"]
-    expire = data.get("expire", 7200)
-    _token_cache[cache_key] = {"token": token, "expires_at": _time.time() + expire}
-    return token
+        api_base = _resolve_api_base(domain)
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            resp = await api_request_with_retry(
+                lambda: client.post(
+                    f"{api_base}/auth/v3/tenant_access_token/internal",
+                    json={"app_id": app_id, "app_secret": app_secret},
+                    timeout=10,
+                ),
+                description="Tenant token refresh",
+            )
+        data = resp.json()
+        if data.get("code") != 0 or not data.get("tenant_access_token"):
+            raise RuntimeError(f"Token error: {data.get('msg', 'unknown')}")
+        token = data["tenant_access_token"]
+        expire = data.get("expire", 7200)
+        _token_cache[cache_key] = {"token": token, "expires_at": _time.time() + expire}
+        return token
 
 
 def _format_for_card_md(text: str) -> str:
@@ -83,7 +85,11 @@ def _format_for_card_md(text: str) -> str:
     - Lists (- item) are not rendered properly, convert to bullet points with newlines
     - Multiple newlines get collapsed, use double newline for paragraph breaks
     """
+    import html
     import re
+
+    # Escape HTML entities to prevent XSS in card content
+    text = html.escape(text, quote=False)
 
     # Convert markdown list items "- item" to "• item" with explicit newlines
     text = re.sub(r"\n-\s*", "\n• ", text)

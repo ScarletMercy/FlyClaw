@@ -6,6 +6,9 @@ import sys
 import time
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import uvicorn
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage

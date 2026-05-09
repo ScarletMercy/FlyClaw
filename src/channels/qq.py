@@ -870,6 +870,11 @@ class QQChannel(Channel):
         if not p.exists():
             logger.error("File not found: %s", file_path)
             return None
+        size = p.stat().st_size
+        max_size = 25 * 1024 * 1024  # 25 MB
+        if size > max_size:
+            logger.error("File too large for base64 upload (%d MB, max %d MB): %s", size // (1024 * 1024), max_size // (1024 * 1024), file_path)
+            return None
         data = p.read_bytes()
         b64 = base64.b64encode(data).decode()
         return await self._upload_media(
