@@ -38,7 +38,15 @@ class RBAC:
         if self._config:
             owner_id = getattr(self._config, "owner_id", "") or ""
 
+        # Use configured default_role (e.g. "owner") instead of hardcoded guest
         default_role = UserRole.guest
+        if self._config:
+            cfg_default = getattr(self._config.auth, "default_role", "") if hasattr(self._config, "auth") else ""
+            if cfg_default:
+                try:
+                    default_role = UserRole(cfg_default)
+                except ValueError:
+                    pass
         if sender_id == owner_id:
             default_role = UserRole.owner
 
@@ -52,6 +60,19 @@ class RBAC:
         if sender_id == owner_id and user.role != UserRole.owner:
             self._store.update_user_role(sender_id, UserRole.owner)
             user.role = UserRole.owner
+
+        # Upgrade existing user if config default_role is higher than current role
+        from src.auth.models import ROLE_HIERARCHY
+        if user.role != default_role:
+            current_level = ROLE_HIERARCHY.get(user.role, 0)
+            default_level = ROLE_HIERARCHY.get(default_role, 0)
+            if default_level > current_level:
+                logger.info(
+                    "Upgrading user %s from %s to %s (config default_role)",
+                    user.user_id, user.role.value, default_role.value,
+                )
+                self._store.update_user_role(user.user_id, default_role)
+                user.role = default_role
 
         return user
 

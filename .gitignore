@@ -16,3 +16,5 @@ config.yaml
 .dolt/
 *.db
 .beads-credential-key
+.beads/issues.jsonl
+.beads/issues.jsonl
