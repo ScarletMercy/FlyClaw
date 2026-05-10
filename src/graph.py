@@ -432,6 +432,13 @@ def create_agent_graph(
                 logger.info("Max tool rounds (%d) reached in current turn, not binding tools", _max_tool_rounds)
                 active_tools = []
 
+        logger.info(
+            "agent_node: channel=%s sender=%s active_tools=%d names=%s",
+            state.get("channel", ""),
+            state.get("sender_id", ""),
+            len(active_tools),
+            [t.name for t in active_tools[:5]] + (["..."] if len(active_tools) > 5 else []),
+        )
         if active_tools:
             m = _model_ref.model
             if isinstance(m, BaseChatModel):
@@ -439,6 +446,7 @@ def create_agent_graph(
             else:
                 response = await m.ainvoke(all_messages, tools=active_tools)
         else:
+            logger.warning("agent_node: NO tools bound — model will respond without tool access")
             response = await _model_ref.model.ainvoke(all_messages)
 
         # Fallback: parse pseudo-XML tool calls when the API fails to
