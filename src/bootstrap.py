@@ -31,7 +31,7 @@ def load_bootstrap_files(
                 names.append(n)
 
     files: list[dict] = []
-    workspace = Path(workspace_dir).resolve()
+    workspace = Path(workspace_dir).expanduser().resolve()
 
     for name in names:
         path = workspace / name

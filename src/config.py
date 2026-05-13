@@ -57,6 +57,7 @@ class ModelConfig(BaseModel):
     temperature: float = 0.0
     base_url: Optional[str] = None
     api_key: Optional[str] = None
+    context_window: int = 1000000
     fallbacks: list[ModelFallback] = Field(default_factory=list)
 
 
@@ -65,6 +66,7 @@ class ModelFallback(BaseModel):
     name: str
     base_url: Optional[str] = None
     api_key: Optional[str] = None
+    context_window: int = 200000
 
 
 class AgentSubconfig(BaseModel):
@@ -76,7 +78,7 @@ class AgentSubconfig(BaseModel):
 
 class AgentConfig(BaseModel):
     system_prompt: str = "You are a helpful AI assistant."
-    workspace: str = "."
+    workspace: str = "~/.myclaw/workspace"
     max_tool_rounds: int = 15
     subagents: dict[str, AgentSubconfig] = Field(default_factory=dict)
     subagent_max_depth: int = 2  # Max nesting depth for sub-agent calls
@@ -198,6 +200,20 @@ class LinkUnderstandingConfig(BaseModel):
     max_previews: int = 3
 
 
+class BrowserConfig(BaseModel):
+    enabled: bool = False
+    headless: bool = True
+    browser: Literal["chromium", "firefox", "webkit"] = "chromium"
+    viewport_width: int = 1280
+    viewport_height: int = 720
+    timeout_seconds: int = 30
+    max_sessions: int = 3
+    stealth: bool = True
+    cdp_url: str = ""
+    user_data_dir: str = ""
+    block_urls: list[str] = Field(default_factory=list)
+
+
 class ToolsConfig(BaseModel):
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     web_search: WebSearchToolConfig = Field(default_factory=WebSearchToolConfig)
@@ -205,6 +221,7 @@ class ToolsConfig(BaseModel):
     feishu: FeishuToolConfig = Field(default_factory=FeishuToolConfig)
     policy: ToolsPolicyConfig = Field(default_factory=ToolsPolicyConfig)
     media_understanding: MediaUnderstandingConfig = Field(default_factory=MediaUnderstandingConfig)
+    browser: BrowserConfig = Field(default_factory=BrowserConfig)
 
 
 class CheckpointerConfig(BaseModel):
@@ -292,6 +309,28 @@ class TimeoutsConfig(BaseModel):
     session_idle: int = 3600  # Session idle timeout in seconds
 
 
+class SessionSearchConfig(BaseModel):
+    enabled: bool = False
+    index_path: str = "data/session_index.db"
+    auto_sync: bool = True
+    max_results: int = 10
+    tool_content_max_chars: int = 500
+    search_model: str = ""  # Small model for semantic search (e.g. "gpt-4o-mini")
+    search_model_base_url: str = ""  # Empty = inherit from main model
+    search_model_api_key: str = ""  # Empty = inherit from main model
+
+
+class CompressionConfig(BaseModel):
+    """LLM-based context compression configuration."""
+    enabled: bool = True
+    model: str = ""  # Empty = use LongCat-Flash-Lite
+    base_url: str = ""  # Empty = inherit from main model
+    api_key: str = ""  # Empty = inherit from main model
+    threshold_percent: float = 0.7
+    tail_messages: int = 10
+    max_summary_tokens: int = 2000
+
+
 class AppConfig(BaseModel):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     model: ModelConfig = Field(default_factory=ModelConfig)
@@ -311,6 +350,8 @@ class AppConfig(BaseModel):
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     beads: BeadsConfig = Field(default_factory=BeadsConfig)
+    session_search: SessionSearchConfig = Field(default_factory=SessionSearchConfig)
+    compression: CompressionConfig = Field(default_factory=CompressionConfig)
     owner_id: str = ""
 
 
@@ -326,9 +367,10 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         substituted = _substitute_recursive(raw)
         return AppConfig(**substituted)
     except ValidationError as e:
-        _log.error("Config validation failed for %s: %s", path, e)
-        print(f"[config] Validation error in {path}: {e}", file=sys.stderr)
-        return AppConfig()
+        _log.critical("Config validation failed for %s: %s", path, e)
+        print(f"[config] FATAL: Validation error in {path}: {e}", file=sys.stderr)
+        raise SystemExit(1)
     except Exception as e:
-        _log.error("Failed to load config from %s: %s", path, e)
-        return AppConfig()
+        _log.critical("Failed to load config from %s: %s", path, e)
+        print(f"[config] FATAL: Cannot load config from {path}: {e}", file=sys.stderr)
+        raise SystemExit(1)

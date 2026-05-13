@@ -1,0 +1,1153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MyClaw Dashboard</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0c0e14;--bg2:#10131a;--surface:#161a25;--surface2:#1c2130;--surface3:#242a3a;
+  --border:#2a3048;--border2:#353c55;
+  --text:#e4e8f1;--text2:#8892ad;--text3:#5c6478;
+  --accent:#7b93ff;--accent2:#a5b4fc;--accent-bg:rgba(123,147,255,.08);
+  --green:#34d399;--green-bg:rgba(52,211,153,.1);
+  --yellow:#fbbf24;--yellow-bg:rgba(251,191,36,.1);
+  --red:#fb7185;--red-bg:rgba(251,113,133,.1);
+  --blue:#60a5fa;--blue-bg:rgba(96,165,250,.1);
+  --purple:#a78bfa;--purple-bg:rgba(167,139,250,.1);
+  --orange:#fb923c;--orange-bg:rgba(251,146,60,.1);
+  --radius:10px;--radius-lg:14px;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",Roboto,sans-serif;
+  --mono:"Cascadia Code","Fira Code","SF Mono",Consolas,monospace;
+  --shadow:0 1px 3px rgba(0,0,0,.3);
+  --shadow-lg:0 4px 20px rgba(0,0,0,.4);
+}
+body{font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh;overflow-x:hidden}
+::selection{background:var(--accent);color:#fff}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--text3)}
+
+/* Header */
+.header{
+  background:linear-gradient(135deg,var(--surface) 0%,var(--surface2) 100%);
+  border-bottom:1px solid var(--border);
+  padding:0 28px;height:56px;display:flex;align-items:center;justify-content:space-between;
+  position:sticky;top:0;z-index:100;backdrop-filter:blur(12px);
+}
+.header-left{display:flex;align-items:center;gap:14px}
+.logo{
+  width:32px;height:32px;
+  background:linear-gradient(135deg,var(--accent),var(--purple));
+  border-radius:8px;display:flex;align-items:center;justify-content:center;
+  font-size:15px;font-weight:800;color:#fff;
+  box-shadow:0 0 16px rgba(123,147,255,.25);
+}
+.header h1{font-size:16px;font-weight:600;letter-spacing:-.3px}
+.header h1 span{color:var(--text2);font-weight:400}
+.header-right{display:flex;align-items:center;gap:16px;font-size:12px;color:var(--text2)}
+.status-dot{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;
+  box-shadow:0 0 8px var(--green);animation:pulse 2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.model-badge{background:var(--surface3);padding:4px 10px;border-radius:6px;font-size:11px;
+  font-family:var(--mono);color:var(--accent2);border:1px solid var(--border)}
+
+/* Tabs */
+.tabs-wrap{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 28px;display:flex;gap:0;
+  overflow-x:auto;white-space:nowrap}
+.tab{
+  padding:12px 20px;font-size:13px;font-weight:500;color:var(--text3);cursor:pointer;
+  border-bottom:2px solid transparent;transition:all .2s;position:relative;flex-shrink:0;
+}
+.tab:hover{color:var(--text2)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.tab.active::after{content:'';position:absolute;bottom:-1px;left:20px;right:20px;height:2px;
+  background:var(--accent);border-radius:1px;
+  box-shadow:0 0 12px var(--accent),0 0 4px var(--accent)}
+.tab .badge{background:var(--red);color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;margin-left:4px;font-weight:600}
+
+/* Content */
+.content{padding:24px 28px;max-width:1280px;margin:0 auto}
+.tab-panel{display:none;animation:fadeIn .25s ease}.tab-panel.active{display:block}
+@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+/* Stats */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:14px;margin-bottom:28px}
+.stat-card{
+  background:linear-gradient(160deg,var(--surface) 0%,var(--surface2) 100%);
+  border:1px solid var(--border);border-radius:var(--radius-lg);padding:18px 20px;
+  transition:border-color .2s,transform .15s;position:relative;overflow:hidden;
+}
+.stat-card:hover{border-color:var(--border2);transform:translateY(-1px)}
+.stat-card .icon{position:absolute;top:14px;right:16px;font-size:22px;opacity:.12}
+.stat-card .label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px}
+.stat-card .value{font-size:24px;font-weight:700;letter-spacing:-.5px}
+.stat-card .value.sm{font-size:15px;font-weight:600;font-family:var(--mono);letter-spacing:0}
+.c-green{color:var(--green)}.c-yellow{color:var(--yellow)}.c-red{color:var(--red)}
+.c-blue{color:var(--blue)}.c-purple{color:var(--purple)}.c-accent{color:var(--accent)}.c-orange{color:var(--orange)}
+
+/* Cards & Tables */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:16px}
+.card-header{padding:14px 20px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;
+  display:flex;align-items:center;justify-content:space-between;background:var(--bg2)}
+.card-header .count{font-weight:400;color:var(--text3);font-size:12px;margin-left:6px}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:11px 20px;font-size:11px;color:var(--text3);font-weight:600;
+  text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);background:var(--bg2)}
+td{padding:11px 20px;font-size:13px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr{transition:background .1s}tr:hover{background:var(--surface2)}
+
+/* Buttons */
+.btn{
+  padding:5px 14px;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;
+  border:1px solid var(--border);background:var(--surface2);color:var(--text);
+  transition:all .15s;display:inline-flex;align-items:center;gap:4px;
+}
+.btn:hover{background:var(--surface3);border-color:var(--border2)}
+.btn:active{transform:scale(.97)}
+.btn.danger{color:var(--red);border-color:rgba(251,113,133,.3)}
+.btn.danger:hover{background:var(--red-bg);border-color:var(--red)}
+.btn.primary{color:var(--accent);border-color:rgba(123,147,255,.3)}
+.btn.primary:hover{background:var(--accent-bg);border-color:var(--accent)}
+.btn.sm{padding:3px 10px;font-size:11px}
+
+/* Config */
+.config-grid{display:grid;grid-template-columns:150px 1fr;gap:0;font-size:13px}
+.config-grid .key{padding:11px 20px;color:var(--text3);font-weight:500;font-size:12px;
+  background:var(--bg2);border-bottom:1px solid var(--border);letter-spacing:.2px}
+.config-grid .val{padding:11px 20px;border-bottom:1px solid var(--border);word-break:break-all}
+.config-grid .val.mono{font-family:var(--mono);font-size:12px}
+
+/* Tools */
+.tools-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:10px}
+.tool-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:14px 16px;transition:border-color .2s,transform .15s;
+}
+.tool-card:hover{border-color:var(--accent);transform:translateY(-1px)}
+.tool-card .name{font-size:12px;font-weight:600;color:var(--accent);font-family:var(--mono);margin-bottom:3px}
+.tool-card .desc{font-size:12px;color:var(--text2);line-height:1.55}
+.tool-card .meta{font-size:11px;color:var(--text3);margin-top:6px}
+
+/* Section */
+.section-title{font-size:12px;font-weight:600;margin:22px 0 10px;color:var(--text3);
+  text-transform:uppercase;letter-spacing:.8px;display:flex;align-items:center;gap:8px}
+.section-title::after{content:'';flex:1;height:1px;background:var(--border)}
+.empty{text-align:center;padding:48px 24px;color:var(--text3);font-size:13px}
+
+/* Logs */
+.log-controls{display:flex;align-items:center;gap:14px;margin-bottom:10px;font-size:12px}
+.log-controls label{display:flex;align-items:center;gap:6px;color:var(--text2);cursor:pointer;transition:color .15s}
+.log-controls label:hover{color:var(--text)}
+.log-controls input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px}
+.log-container{
+  background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);
+  height:calc(100vh - 210px);overflow-y:auto;
+  font-family:var(--mono);font-size:11.5px;line-height:1.85;
+}
+.log-line{padding:1px 16px;white-space:pre-wrap;word-break:break-all;border-left:2px solid transparent;transition:background .1s}
+.log-line:hover{background:rgba(255,255,255,.02)}
+.log-line.INFO{color:#bcc5d3}.log-line.WARNING{color:var(--yellow);border-left-color:var(--yellow)}
+.log-line.ERROR{color:var(--red);border-left-color:var(--red);background:rgba(251,113,133,.04)}
+.log-line.CRITICAL{color:#fff;background:var(--red);border-left-color:#fff}
+.log-ts{color:#3d4556;margin-right:10px;user-select:none}
+.log-logger{color:var(--blue);margin-right:10px;user-select:none}
+
+/* Tags / Badges */
+.tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;letter-spacing:.3px}
+.tag-green{background:var(--green-bg);color:var(--green)}
+.tag-red{background:var(--red-bg);color:var(--red)}
+.tag-yellow{background:var(--yellow-bg);color:var(--yellow)}
+.tag-blue{background:var(--blue-bg);color:var(--blue)}
+.tag-purple{background:var(--purple-bg);color:var(--purple)}
+.tag-gray{background:var(--surface3);color:var(--text3)}
+.tag-orange{background:var(--orange-bg);color:var(--orange)}
+
+/* MCP Server Cards */
+.mcp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
+.mcp-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
+  padding:18px 20px;transition:border-color .2s;
+}
+.mcp-card:hover{border-color:var(--border2)}
+.mcp-card .mcp-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.mcp-card .mcp-name{font-size:14px;font-weight:600}
+.mcp-card .mcp-tools{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
+.mcp-card .mcp-tool{font-size:11px;font-family:var(--mono);color:var(--accent);padding:3px 0}
+
+/* User cards */
+.role-select{
+  background:var(--bg);border:1px solid var(--border);color:var(--text);padding:3px 8px;
+  border-radius:4px;font-size:11px;cursor:pointer;
+}
+.role-select:focus{border-color:var(--accent);outline:none}
+
+/* Devices expansion */
+.device-row{background:var(--bg2)}
+.device-row td{padding:8px 20px 8px 52px;font-size:12px;color:var(--text2)}
+
+/* Approval card */
+.approval-card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:14px 18px;margin-bottom:8px;display:flex;align-items:center;gap:14px;
+}
+.approval-card .info{flex:1}
+.approval-card .info .tool{font-family:var(--mono);font-size:12px;color:var(--accent);margin-bottom:2px}
+.approval-card .info .preview{font-size:12px;color:var(--text2);white-space:pre-wrap;max-height:60px;overflow:hidden}
+.approval-card .info .meta-line{font-size:11px;color:var(--text3);margin-top:4px}
+.approval-card .actions{display:flex;gap:6px}
+
+/* Beads Memory */
+.memory-search{display:flex;gap:10px;margin-bottom:16px}
+.memory-search input{flex:1;padding:8px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;transition:border-color .2s}
+.memory-search input:focus{border-color:var(--accent)}
+.memory-search input::placeholder{color:var(--text3)}
+.mem-category{margin-bottom:20px}
+.mem-category-header{
+  display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  transition:all .15s;user-select:none;
+}
+.mem-category-header:hover{border-color:var(--border2);background:var(--surface2)}
+.mem-category-header .arrow{font-size:10px;color:var(--text3);transition:transform .2s;width:12px;text-align:center}
+.mem-category-header .arrow.open{transform:rotate(90deg)}
+.mem-category-header .cat-icon{font-size:16px}
+.mem-category-header .cat-label{font-size:13px;font-weight:600;flex:1}
+.mem-category-header .cat-count{font-size:11px;color:var(--text3);font-weight:400}
+.mem-category-items{padding:4px 0 0 0}
+.mem-item{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:12px 18px;margin-top:6px;margin-left:22px;transition:border-color .2s;
+}
+.mem-item:hover{border-color:var(--border2)}
+.mem-item .mem-key{font-family:var(--mono);font-size:11px;color:var(--accent);margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.mem-item .mem-val{font-size:13px;color:var(--text);line-height:1.6;word-break:break-all}
+.mem-item .mem-actions{margin-top:8px;display:flex;gap:6px}
+.memory-add-form{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;margin-bottom:16px}
+.memory-add-form input,.memory-add-form textarea{width:100%;padding:8px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;margin-bottom:10px;transition:border-color .2s;font-family:var(--font)}
+.memory-add-form textarea{min-height:80px;resize:vertical}
+.memory-add-form input:focus,.memory-add-form textarea:focus{border-color:var(--accent)}
+.memory-add-form input::placeholder,.memory-add-form textarea::placeholder{color:var(--text3)}
+/* Responsive */
+@media(max-width:768px){
+  .stats-grid{grid-template-columns:repeat(2,1fr);gap:10px}
+  .content{padding:16px}.tabs-wrap{padding:0 16px}
+  .tab{padding:12px 14px}
+  .header{padding:0 16px}.config-grid{grid-template-columns:120px 1fr}
+  th,td{padding:8px 12px;font-size:12px}
+  .mcp-grid{grid-template-columns:1fr}
+}
+/* Model switcher */
+.model-switcher{position:relative;display:inline-block}
+.model-switcher .model-btn{cursor:pointer}
+.model-switcher .model-dropdown{
+  display:none;position:absolute;right:0;top:100%;margin-top:6px;
+  background:var(--surface2);border:1px solid var(--border2);border-radius:var(--radius);
+  width:max-content;min-width:200px;max-width:90vw;box-shadow:var(--shadow-lg);z-index:200;overflow:hidden;
+}
+.model-switcher.open .model-dropdown{display:block}
+.model-dropdown .md-item{
+  padding:10px 16px;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;
+  transition:background .1s;border-bottom:1px solid var(--border);
+}
+.model-dropdown .md-item:last-child{border-bottom:none}
+.model-dropdown .md-item:hover{background:var(--surface3)}
+.model-dropdown .md-item.active{background:var(--accent-bg);color:var(--accent)}
+.model-dropdown .md-item .md-name{font-family:var(--mono);font-size:12px;flex:1}
+.model-dropdown .md-item .md-tag{font-size:10px}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="logo">M</div>
+    <h1>MyClaw <span>Dashboard</span></h1>
+  </div>
+  <div class="header-right">
+    <div class="model-switcher" id="modelSwitcher">
+      <span class="model-badge model-btn" id="currentModel" onclick="toggleModelDropdown()">{{ model_provider }}/{{ model_name }} &#9662;</span>
+      <div class="model-dropdown" id="modelDropdown">
+        <div id="modelList"></div>
+      </div>
+    </div>
+    <span style="display:flex;align-items:center;gap:6px"><span class="status-dot"></span> Running</span>
+  </div>
+</div>
+
+<div class="tabs-wrap">
+  <div class="tab active" data-tab="overview">Overview</div>
+  <div class="tab" data-tab="sessions">Sessions</div>
+  <div class="tab" data-tab="cron">Cron</div>
+  <div class="tab" data-tab="tools">Tools</div>
+  {% if mcp_enabled %}
+  <div class="tab" data-tab="mcp">MCP</div>
+  {% endif %}
+  {% if auth_enabled %}
+  <div class="tab" data-tab="users">Users</div>
+  {% endif %}
+  {% if beads_enabled %}
+  <div class="tab" data-tab="beads">Beads</div>
+  {% endif %}
+  <div class="tab" data-tab="logs">Logs</div>
+</div>
+
+<div class="content">
+  <!-- ═══════ Overview ═══════ -->
+  <div class="tab-panel active" id="panel-overview">
+    <div class="stats-grid">
+      <div class="stat-card"><div class="icon">&#9200;</div><div class="label">Uptime</div><div class="value sm c-blue">{{ uptime }}</div></div>
+      <div class="stat-card"><div class="icon">&#128101;</div><div class="label">Sessions</div><div class="value c-green">{{ session_count }}</div></div>
+      <div class="stat-card"><div class="icon">&#128295;</div><div class="label">Tools</div><div class="value c-accent">{{ tool_count }}</div></div>
+      <div class="stat-card"><div class="icon">&#9733;</div><div class="label">Skills</div><div class="value c-purple">{{ skill_count }}</div></div>
+      <div class="stat-card"><div class="icon">&#9200;</div><div class="label">Cron Jobs</div><div class="value {% if cron_jobs|length > 0 %}c-green{% else %}sm{% endif %}">{{ cron_jobs|length }}</div></div>
+      <div class="stat-card"><div class="icon">&#9993;</div><div class="label">Feishu</div><div class="value sm {% if feishu_enabled %}c-green{% else %}c-yellow{% endif %}">{% if feishu_enabled %}{{ feishu_domain }}{% else %}OFF{% endif %}</div></div>
+      <div class="stat-card"><div class="icon">&#128172;</div><div class="label">QQ</div><div class="value sm {% if qq_enabled %}c-green{% else %}c-yellow{% endif %}">{% if qq_enabled %}ON{% else %}OFF{% endif %}</div></div>
+      <div class="stat-card"><div class="icon">&#128279;</div><div class="label">MCP</div><div class="value sm {% if mcp_enabled and mcp_servers|length > 0 %}c-green{% elif mcp_enabled %}c-yellow{% else %}c-yellow{% endif %}">{% if mcp_enabled %}{{ mcp_servers|length }} servers{% else %}OFF{% endif %}</div></div>
+      <div class="stat-card"><div class="icon">&#128451;</div><div class="label">Memory</div><div class="value sm {% if memory_enabled %}c-green{% else %}c-yellow{% endif %}">{% if memory_enabled %}ON{% else %}OFF{% endif %}</div></div>
+      <div class="stat-card"><div class="icon">&#128266;</div><div class="label">TTS</div><div class="value sm {% if tts_enabled %}c-green{% else %}c-yellow{% endif %}">{% if tts_enabled %}ON{% else %}OFF{% endif %}</div></div>
+      <div class="stat-card"><div class="icon">&#128230;</div><div class="label">Plugins</div><div class="value {% if plugins|length > 0 %}c-orange{% else %}sm{% endif %}">{{ plugins|length }}</div></div>
+      <div class="stat-card"><div class="icon">&#128274;</div><div class="label">Auth</div><div class="value sm {% if auth_enabled %}c-green{% else %}c-yellow{% endif %}">{% if auth_enabled %}ON{% else %}OFF{% endif %}</div></div>
+    </div>
+
+    {% if pending_approvals|length > 0 %}
+    <div class="section-title">Pending Approvals</div>
+    {% for a in pending_approvals %}
+    <div class="approval-card" id="approval-{{ a.id }}">
+      <div class="info">
+        <div class="tool">{{ a.tool_name }}</div>
+        <div class="preview">{{ (a.args_preview or '')[:200] }}</div>
+        <div class="meta-line">from {{ a.sender_id }} &middot; {{ a.created_at }}</div>
+      </div>
+      <div class="actions">
+        <button class="btn sm primary" onclick="resolveApproval('{{ a.id }}', 'allow_once')">Allow</button>
+        <button class="btn sm danger" onclick="resolveApproval('{{ a.id }}', 'deny')">Deny</button>
+      </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+
+    <div class="section-title">Configuration</div>
+    <div class="card"><div class="config-grid">
+      <div class="key">Model</div><div class="val mono">{{ config.model_provider }}/{{ config.model_name }}{% if config.base_url != 'default' %} <span class="tag tag-blue">{{ config.base_url }}</span>{% endif %}{% if config.fallbacks %} <span class="tag tag-purple">{{ config.fallbacks }} fallbacks</span>{% endif %}</div>
+      <div class="key">Temperature</div><div class="val mono">{{ config.temperature }}</div>
+      <div class="key">Workspace</div><div class="val mono">{{ config.workspace }}</div>
+      <div class="key">Tool Rounds</div><div class="val">{{ config.max_tool_rounds }}</div>
+      <div class="key">Sub-agents</div><div class="val">{% if config.subagents %}{% for a in config.subagents %}<span class="tag tag-purple">{{ a }}</span> {% endfor %}{% else %}-{% endif %}</div>
+      <div class="key">Gateway</div><div class="val mono">{{ config.gateway }}{% if config.gateway.endswith('(auth)') %} <span class="tag tag-green">auth</span>{% endif %}</div>
+      <div class="key">Feishu</div><div class="val">{% if config.feishu_enabled %}<span class="tag tag-green">{{ config.feishu_domain }}</span> dm=<span class="tag tag-blue">{{ config.feishu_dm }}</span> group=<span class="tag tag-blue">{{ config.feishu_group }}</span> mention={{ config.feishu_mention }}{% if config.feishu_streaming %} <span class="tag tag-green">streaming</span>{% endif %}{% else %}<span class="tag tag-gray">disabled</span>{% endif %}</div>
+      <div class="key">QQ</div><div class="val">{% if config.qq_enabled %}<span class="tag tag-green">on</span> dm=<span class="tag tag-blue">{{ config.qq_dm }}</span> group=<span class="tag tag-blue">{{ config.qq_group }}</span>{% if config.qq_mention %} mention{% endif %}{% if config.qq_markdown %} <span class="tag tag-green">markdown</span>{% endif %}{% else %}<span class="tag tag-gray">disabled</span>{% endif %}</div>
+      <div class="key">Session</div><div class="val">{{ config.session_scope }} &middot; idle reset <span class="tag tag-yellow">{{ config.idle_reset_minutes }}m</span></div>
+      <div class="key">Exec</div><div class="val">{% if config.exec_enabled %}<span class="tag tag-blue">{{ config.exec_approval }}</span> <span class="tag {% if config.exec_sandbox %}tag-green{% else %}tag-yellow{% endif %}">sandbox={{ config.exec_sandbox }}</span>{% else %}<span class="tag tag-gray">disabled</span>{% endif %}</div>
+      <div class="key">Web</div><div class="val">search <span class="tag {% if config.web_search %}tag-green{% else %}tag-gray{% endif %}">{{ 'on' if config.web_search else 'off' }}</span> fetch <span class="tag {% if config.web_fetch %}tag-green{% else %}tag-gray{% endif %}">{{ 'on' if config.web_fetch else 'off' }}</span></div>
+      <div class="key">Media</div><div class="val">{% if config.media %}<span class="tag tag-green">on</span>{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
+      <div class="key">MCP</div><div class="val">{% if config.mcp_enabled %}<span class="tag tag-green">on</span> {{ config.mcp_server_count }} server{{ 's' if config.mcp_server_count != 1 else '' }}{% if config.mcp_servers %}{% for s in config.mcp_servers %} <span class="tag tag-purple">{{ s }}</span>{% endfor %}{% endif %}{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
+      <div class="key">Plugins</div><div class="val">{% if config.plugin_count > 0 %}<span class="tag tag-orange">{{ config.plugin_count }}</span>{% for n in config.plugin_names %} <span class="tag tag-blue">{{ n }}</span>{% endfor %}{% else %}<span class="tag tag-gray">none</span>{% endif %}</div>
+      <div class="key">Cron</div><div class="val">{% if config.cron_enabled %}<span class="tag tag-green">on</span> concurrent={{ config.cron_concurrent }}{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
+      <div class="key">Memory/RAG</div><div class="val">{% if config.memory_enabled %}<span class="tag tag-green">on</span>{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
+      <div class="key">Beads</div><div class="val">{% if config.beads_enabled %}<span class="tag tag-green">on</span>{% if config.beads_judge_model %} judge=<span class="tag tag-purple">{{ config.beads_judge_model }}</span>{% endif %}{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
+      <div class="key">TTS</div><div class="val">{% if config.tts_enabled %}<span class="tag tag-green">{{ config.tts_provider }}</span>{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
+      <div class="key">Link Preview</div><div class="val">{% if config.link_understanding_enabled %}<span class="tag tag-green">on</span> max=<span class="tag tag-blue">{{ config.link_max_previews }}</span>{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
+      <div class="key">Auth</div><div class="val">{% if config.auth_enabled %}<span class="tag tag-green">on</span> default_role=<span class="tag tag-blue">{{ config.auth_default_role }}</span>{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
+      <div class="key">Security</div><div class="val">{% if config.security_enabled %}<span class="tag tag-green">on</span>{% if config.security_audit %} <span class="tag tag-blue">audit_on_startup</span>{% endif %}{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
+      <div class="key">Checkpointer</div><div class="val"><span class="tag tag-blue">{{ config.checkpointer }}</span></div>
+    </div></div>
+  </div>
+
+  <!-- ═══════ Sessions ═══════ -->
+  <div class="tab-panel" id="panel-sessions">
+    <div class="card">
+      <div class="card-header">Sessions <span class="count" id="sessionCount">({{ sessions|length }})</span></div>
+      <table><thead><tr><th>Thread ID</th><th>Status</th><th>Idle</th><th style="width:80px"></th></tr></thead><tbody>
+        {% for s in sessions %}
+        <tr data-tid="{{ s.thread_id }}">
+          <td style="font-family:var(--mono);font-size:11px;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.thread_id }}</td>
+          <td>{% if s.status == 'active' %}<span class="tag tag-green">active</span>{% else %}<span class="tag tag-gray">idle</span>{% endif %}</td>
+          <td>{% if s.last_active is not none %}<span class="tag tag-green" data-idle="{{ s.last_active }}"></span>{% else %}-{% endif %}</td>
+          <td><button class="btn sm danger" onclick="resetSession('{{ s.thread_id }}')">Reset</button></td>
+        </tr>
+        {% endfor %}
+      </tbody></table>
+      <div class="empty" id="sessionEmpty" style="{{ 'display:none' if sessions else '' }}">&#128466; No sessions found</div>
+    </div>
+  </div>
+
+  <!-- ═══════ Cron ═══════ -->
+  <div class="tab-panel" id="panel-cron">
+    <div class="card">
+      <div class="card-header">Scheduled Jobs</div>
+      {% if not cron_enabled %}
+      <div class="empty" id="cronEmpty">&#9200; Cron is disabled</div>
+      {% else %}
+      <table><thead><tr><th>Name</th><th>Schedule</th><th>Status</th><th>Last Run</th><th style="width:60px"></th></tr></thead><tbody>
+        {% for j in cron_jobs %}
+        {% set enabled = j.enabled != false %}
+        {% set sched = (j.schedule.expr if j.schedule and j.schedule.expr else (j.schedule.at if j.schedule and j.schedule.at else '-')) %}
+        <tr>
+          <td style="font-weight:500">{{ j.name or j.id }}</td>
+          <td style="font-family:var(--mono);font-size:12px">{{ sched }}</td>
+          <td>{% if enabled %}<span class="tag tag-green">ON</span>{% else %}<span class="tag tag-red">OFF</span>{% endif %}</td>
+          <td style="font-size:12px;color:var(--text2)">{{ '-' }}</td>
+          <td><button class="btn sm primary" onclick="runCron('{{ j.id }}')" title="Run now">&#9654;</button></td>
+        </tr>
+        {% endfor %}
+      </tbody></table>
+      <div class="empty" id="cronEmpty" style="{{ 'display:none' if cron_jobs else '' }}">&#128466; No scheduled jobs</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- ═══════ Tools ═══════ -->
+  <div class="tab-panel" id="panel-tools">
+    <div class="section-title" style="margin-top:0;margin-bottom:10px">Registered Tools &mdash; {{ tool_count }}</div>
+    <div class="tools-grid">
+      {% for t in tools %}
+      <div class="tool-card"><div class="name">{{ t.name }}</div><div class="desc">{{ t.description }}</div></div>
+      {% endfor %}
+    </div>
+
+    <div class="section-title">Skills &mdash; {{ skill_count }}</div>
+    {% if skills %}
+    <div class="tools-grid">
+      {% for s in skills %}
+      <div class="tool-card"><div class="name">{{ s.name }}{% if not s.user_invocable %} <span class="tag tag-gray" style="font-size:9px;margin-left:4px">model</span>{% endif %}</div><div class="desc">{{ s.description }}</div><div class="meta">source: {{ s.source }}</div></div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty">&#128466; No skills loaded</div>
+    {% endif %}
+
+    {% if plugins|length > 0 %}
+    <div class="section-title">Plugins &mdash; {{ plugins|length }}</div>
+    <div class="tools-grid">
+      {% for p in plugins %}
+      <div class="tool-card"><div class="name">{{ p.name or p.id }}{% if p.version %} <span class="tag tag-blue" style="font-size:9px;margin-left:4px">v{{ p.version }}</span>{% endif %}</div><div class="desc">{{ p.tools or 0 }} tools{% if p.hooks %} &middot; {{ p.hooks|length }} hooks{% endif %}</div>{% if p.hooks %}<div class="meta">hooks: {{ p.hooks|join(', ') }}</div>{% endif %}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- ═══════ MCP ═══════ -->
+  {% if mcp_enabled %}
+  <div class="tab-panel" id="panel-mcp">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div class="section-title" style="margin:0">MCP Servers &mdash; {{ mcp_servers|length }}</div>
+      <button class="btn sm" onclick="fetchMcpServers()">Refresh</button>
+    </div>
+    <div class="mcp-grid" id="mcpGrid">
+      {% if mcp_servers %}
+        {% for s in mcp_servers %}
+        <div class="mcp-card" data-server="{{ s.name }}">
+          <div class="mcp-header">
+            <div>
+              <span class="mcp-name">{{ s.name }}</span>
+              <span class="tag tag-blue" style="margin-left:6px">{{ s.transport or 'stdio' }}</span>
+            </div>
+            <span style="display:flex;align-items:center;gap:6px">
+              <span class="status-dot" style="{% if not s.connected %}background:var(--red);box-shadow:0 0 8px var(--red){% endif %}"></span>
+              <span style="font-size:12px;color:{% if s.connected %}var(--green){% else %}var(--red){% endif %}">{{ 'Connected' if s.connected else 'Disconnected' }}</span>
+            </span>
+          </div>
+          <div style="font-size:12px;color:var(--text2)">Tools: <span style="color:var(--accent)">{{ s.tool_count or 0 }}</span></div>
+          {% if s.error %}
+          <div style="font-size:11px;color:var(--red);margin-top:6px">{{ s.error }}</div>
+          {% endif %}
+          <div class="mcp-tools" id="mcp-tools-{{ s.name }}" style="display:none"></div>
+          <div style="margin-top:8px"><button class="btn sm" onclick="toggleMcpTools('{{ s.name }}')">Show Tools</button></div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <div class="empty" style="grid-column:1/-1">&#128466; No MCP servers configured</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ═══════ Users ═══════ -->
+  {% if auth_enabled %}
+  <div class="tab-panel" id="panel-users">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div class="section-title" style="margin:0">Users &mdash; {{ auth_users|length }}</div>
+      <button class="btn sm" onclick="fetchUsers()">Refresh</button>
+    </div>
+    <div class="card">
+      {% if auth_users %}
+      <table><thead><tr><th>User ID</th><th>Display</th><th>Role</th><th>Devices</th><th>Last Seen</th><th style="width:80px"></th></tr></thead><tbody id="usersTbody">
+        {% for u in auth_users %}
+        <tr data-uid="{{ u.user_id }}">
+          <td style="font-family:var(--mono);font-size:11px">{{ u.user_id[:20] }}{% if u.user_id|length > 20 %}...{% endif %}</td>
+          <td>{{ u.display_name or '-' }}</td>
+          <td>
+            <select class="role-select" onchange="updateUserRole('{{ u.user_id }}', this.value)">
+              <option value="owner" {% if u.role == 'owner' %}selected{% endif %}>owner</option>
+              <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option>
+              <option value="user" {% if u.role == 'user' %}selected{% endif %}>user</option>
+              <option value="guest" {% if u.role == 'guest' %}selected{% endif %}>guest</option>
+            </select>
+          </td>
+          <td>
+            <span style="font-size:12px">{{ u.device_count }} devices ({{ u.trusted_devices }} trusted)</span>
+            <button class="btn sm" style="margin-left:6px;font-size:10px" onclick="toggleDevices('{{ u.user_id }}')">Details</button>
+          </td>
+          <td style="font-size:12px;color:var(--text2)">{{ u.last_seen or '-' }}</td>
+          <td><button class="btn sm danger" onclick="deleteUser('{{ u.user_id }}')">Delete</button></td>
+        </tr>
+        <tr class="device-row" id="devices-{{ u.user_id }}" style="display:none">
+          <td colspan="6"><div id="devices-list-{{ u.user_id }}" style="padding:4px 0">Loading...</div></td>
+        </tr>
+        {% endfor %}
+      </tbody></table>
+      {% else %}
+      <div class="empty">&#128466; No users registered</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ═══════ Beads ═══════ -->
+  {% if beads_enabled %}
+  <div class="tab-panel" id="panel-beads">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+      <div class="section-title" style="margin:0">Memories &mdash; <span id="beadCount">...</span></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn sm" onclick="fetchBeads()">Refresh</button>
+        <button class="btn sm primary" onclick="toggleAddMemory()">+ New</button>
+      </div>
+    </div>
+
+    <div id="addMemoryForm" class="memory-add-form" style="display:none">
+      <input type="text" id="memKeyInput" placeholder="Key (optional, auto-generated if empty)">
+      <textarea id="memContentInput" placeholder="Memory content..."></textarea>
+      <div style="display:flex;gap:8px">
+        <button class="btn primary" onclick="saveNewMemory()">Save</button>
+        <button class="btn" onclick="toggleAddMemory()">Cancel</button>
+      </div>
+    </div>
+
+    <div class="memory-search">
+      <input type="text" id="beadSearch" placeholder="Search memories..." oninput="filterBeads(this.value)">
+    </div>
+
+    <div id="beadsContainer"></div>
+    <div class="empty" id="beadsEmpty" style="display:none">&#128466; No memories found</div>
+  </div>
+  {% endif %}
+
+  <!-- ═══════ Logs ═══════ -->
+  <div class="tab-panel" id="panel-logs">
+    <div class="log-controls">
+      <label><input type="checkbox" id="autoScroll" checked> Auto scroll</label>
+      <label><input type="checkbox" id="showAllLogs"> All loggers</label>
+      <button class="btn sm" onclick="clearLogs()">Clear</button>
+      <span style="flex:1"></span>
+      <span id="logCount" style="font-size:11px;color:var(--text3)"></span>
+    </div>
+    <div class="log-container" id="logContainer"></div>
+  </div>
+</div>
+
+<script>
+const myclawLoggers = new Set(['myclaw','myclaw.graph','myclaw.exec','myclaw.config','myclaw.gateway','myclaw.dashboard','myclaw.session','myclaw.skills','myclaw.feishu','myclaw.feishu_tools','myclaw.plugins','myclaw.tts','myclaw.media_understanding','myclaw.cron','myclaw.memory','myclaw.approval','myclaw.beads','myclaw.mcp','myclaw.link_understanding','myclaw.security','myclaw.auth','myclaw.qq']);
+let logContainer, autoScroll, logLineCount = 0;
+
+// ── Idle time updater ──
+function formatIdle(sec) {
+  sec = Math.max(0, sec);
+  if (sec < 60) return Math.round(sec) + 's';
+  if (sec < 3600) return Math.floor(sec/60) + 'm ' + Math.round(sec%60) + 's';
+  const h = Math.floor(sec/3600);
+  return h + 'h ' + Math.floor((sec%3600)/60) + 'm';
+}
+function updateIdleTimes() {
+  document.querySelectorAll('[data-idle]').forEach(el => {
+    const base = parseFloat(el.dataset.idle);
+    el.textContent = formatIdle(base);
+  });
+}
+setInterval(updateIdleTimes, 1000);
+
+// ── Tabs ──
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
+    if (tab.dataset.tab === 'sessions') fetchSessions();
+    {% if mcp_enabled %}if (tab.dataset.tab === 'mcp') fetchMcpServers();{% endif %}
+    {% if auth_enabled %}if (tab.dataset.tab === 'users') fetchUsers();{% endif %}
+    {% if beads_enabled %}if (tab.dataset.tab === 'beads') fetchBeads();{% endif %}
+  });
+});
+
+// ── API ──
+function api(path, opts) {
+  const token = localStorage.getItem('myclaw_token') || '';
+  const headers = token ? { Authorization: 'Bearer ' + token } : {};
+  return fetch(path, { ...opts, headers }).then(r => {
+    if (r.status === 401) { localStorage.removeItem('myclaw_token'); showAuthPrompt(); throw new Error('Unauthorized'); }
+    return r.json();
+  });
+}
+
+// ── Auth ──
+function showAuthPrompt() {
+  if (document.getElementById('authOverlay')) return;
+  const o = document.createElement('div');
+  o.id = 'authOverlay';
+  o.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;z-index:999;animation:fadeIn .2s ease';
+  o.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border2);border-radius:16px;padding:36px;width:380px;text-align:center;box-shadow:var(--shadow-lg)">
+    <div style="width:48px;height:48px;background:var(--surface3);border-radius:12px;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:22px">&#128274;</div>
+    <h2 style="margin-bottom:6px;font-size:17px;font-weight:600">Authentication</h2>
+    <p style="color:var(--text2);font-size:13px;margin-bottom:20px">Enter the gateway auth token to continue</p>
+    <input type="password" id="authInput" placeholder="Gateway auth token" style="width:100%;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin-bottom:14px;outline:none;transition:border-color .2s" onfocus="this.style.borderColor='var(--accent)'">
+    <br><button class="btn primary" onclick="submitAuth()" style="width:100%;padding:8px">Connect</button>
+    <p id="authError" style="color:var(--red);font-size:12px;margin-top:10px;display:none"></p>
+  </div>`;
+  document.body.appendChild(o);
+  document.getElementById('authInput').focus();
+  document.getElementById('authInput').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuth(); });
+}
+function submitAuth() {
+  const t = document.getElementById('authInput').value.trim();
+  if (!t) return;
+  localStorage.setItem('myclaw_token', t);
+  document.getElementById('authOverlay').remove();
+  location.reload();
+}
+
+// ── Dynamic sessions ──
+async function fetchSessions() {
+  try {
+    const sessions = await api('/api/dashboard/sessions');
+    renderSessions(sessions);
+    const el = document.getElementById('sessionCount');
+    if (el) el.textContent = `(${sessions.length})`;
+  } catch(e) {}
+}
+async function resetSession(tid) {
+  if (!confirm('Reset this session?')) return;
+  try { await api('/api/dashboard/sessions/' + encodeURIComponent(tid) + '/reset', { method: 'POST' }); fetchSessions(); } catch(e) {}
+}
+async function runCron(jobId) {
+  try { await api('/api/cron/jobs/' + encodeURIComponent(jobId) + '/run', { method: 'POST' }); } catch(e) {}
+}
+
+// ── Approvals ──
+async function resolveApproval(requestId, decision) {
+  try {
+    await api('/api/approval/' + encodeURIComponent(requestId) + '/resolve', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ decision }),
+    });
+    const el = document.getElementById('approval-' + requestId);
+    if (el) el.remove();
+  } catch(e) {}
+}
+
+// ── MCP ──
+{% if mcp_enabled %}
+async function fetchMcpServers() {
+  try {
+    const servers = await api('/api/mcp/servers');
+    const grid = document.getElementById('mcpGrid');
+    if (!grid || !servers.length) return;
+    grid.innerHTML = servers.map(s => `
+      <div class="mcp-card" data-server="${escHtml(s.name)}">
+        <div class="mcp-header">
+          <div>
+            <span class="mcp-name">${escHtml(s.name)}</span>
+            <span class="tag tag-blue" style="margin-left:6px">${escHtml(s.transport || 'stdio')}</span>
+          </div>
+          <span style="display:flex;align-items:center;gap:6px">
+            <span class="status-dot" style="${s.connected ? '' : 'background:var(--red);box-shadow:0 0 8px var(--red)'}"></span>
+            <span style="font-size:12px;color:${s.connected ? 'var(--green)' : 'var(--red)'}">${s.connected ? 'Connected' : 'Disconnected'}</span>
+          </span>
+        </div>
+        <div style="font-size:12px;color:var(--text2)">Tools: <span style="color:var(--accent)">${s.tool_count || 0}</span></div>
+        ${s.error ? '<div style="font-size:11px;color:var(--red);margin-top:6px">' + escHtml(s.error) + '</div>' : ''}
+        <div class="mcp-tools" id="mcp-tools-${escHtml(s.name)}" style="display:none"></div>
+        <div style="margin-top:8px"><button class="btn sm" onclick="toggleMcpTools('${escHtml(s.name)}')">Show Tools</button></div>
+      </div>
+    `).join('');
+  } catch(e) {}
+}
+
+async function toggleMcpTools(serverName) {
+  const el = document.getElementById('mcp-tools-' + serverName);
+  if (!el) return;
+  if (el.style.display !== 'none') {
+    el.style.display = 'none';
+    return;
+  }
+  if (el.innerHTML) {
+    el.style.display = 'block';
+    return;
+  }
+  try {
+    const data = await api('/api/mcp/servers/' + encodeURIComponent(serverName));
+    const tools = data.tools || [];
+    if (!tools.length) {
+      el.innerHTML = '<div style="font-size:11px;color:var(--text3)">No tools available</div>';
+    } else {
+      el.innerHTML = tools.map(t =>
+        `<div class="mcp-tool">${escHtml(t.name || t)}${t.description ? ' <span style="color:var(--text3)">- ' + escHtml(t.description).slice(0,80) + '</span>' : ''}</div>`
+      ).join('');
+    }
+    el.style.display = 'block';
+  } catch(e) {
+    el.innerHTML = '<div style="font-size:11px;color:var(--red)">Failed to load tools</div>';
+    el.style.display = 'block';
+  }
+}
+{% endif %}
+
+// ── Users ──
+{% if auth_enabled %}
+async function fetchUsers() {
+  try {
+    const data = await api('/api/dashboard/users');
+    if (!data.enabled) return;
+    const users = data.users || [];
+    const tbody = document.getElementById('usersTbody');
+    if (!tbody) return;
+    if (!users.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">No users</td></tr>'; return; }
+    tbody.innerHTML = users.map(u => {
+      const uid = u.user_id || '';
+      const short = uid.length > 20 ? uid.slice(0,20) + '...' : uid;
+      return `<tr data-uid="${escHtml(uid)}">
+        <td style="font-family:var(--mono);font-size:11px">${escHtml(short)}</td>
+        <td>${escHtml(u.display_name || '-')}</td>
+        <td><select class="role-select" onchange="updateUserRole('${escHtml(uid)}', this.value)">
+          <option value="owner" ${u.role==='owner'?'selected':''}>owner</option>
+          <option value="admin" ${u.role==='admin'?'selected':''}>admin</option>
+          <option value="user" ${u.role==='user'?'selected':''}>user</option>
+          <option value="guest" ${u.role==='guest'?'selected':''}>guest</option>
+        </select></td>
+        <td><span style="font-size:12px">${u.device_count||0} devices (${u.trusted_devices||0} trusted)</span>
+          <button class="btn sm" style="margin-left:6px;font-size:10px" onclick="toggleDevices('${escHtml(uid)}')">Details</button></td>
+        <td style="font-size:12px;color:var(--text2)">${u.last_seen || '-'}</td>
+        <td><button class="btn sm danger" onclick="deleteUser('${escHtml(uid)}')">Delete</button></td>
+      </tr>
+      <tr class="device-row" id="devices-${escHtml(uid)}" style="display:none">
+        <td colspan="6"><div id="devices-list-${escHtml(uid)}" style="padding:4px 0">Loading...</div></td>
+      </tr>`;
+    }).join('');
+  } catch(e) {}
+}
+
+async function updateUserRole(userId, role) {
+  try { await api('/api/dashboard/users/' + encodeURIComponent(userId) + '/role', { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ role }) }); } catch(e) {}
+}
+
+async function deleteUser(userId) {
+  if (!confirm('Delete user ' + userId + '?')) return;
+  try { await api('/api/dashboard/users/' + encodeURIComponent(userId), { method: 'DELETE' }); fetchUsers(); } catch(e) {}
+}
+
+async function toggleDevices(userId) {
+  const row = document.getElementById('devices-' + userId);
+  const list = document.getElementById('devices-list-' + userId);
+  if (!row || !list) return;
+  if (row.style.display !== 'none') { row.style.display = 'none'; return; }
+  try {
+    const devices = await api('/api/dashboard/users/' + encodeURIComponent(userId) + '/devices');
+    if (!devices.length) {
+      list.innerHTML = '<span style="color:var(--text3);font-size:12px">No devices</span>';
+    } else {
+      list.innerHTML = devices.map(d => `<div style="padding:4px 0;font-size:12px;border-bottom:1px solid var(--border)">
+        <span style="color:var(--text)">${escHtml(d.name || d.platform || 'device')}</span>
+        <span class="tag ${d.trusted ? 'tag-green' : 'tag-gray'}" style="margin-left:6px">${d.trusted ? 'trusted' : 'untrusted'}</span>
+        <span style="color:var(--text3);margin-left:8px">${escHtml(d.platform||'')}</span>
+        <span style="color:var(--text3);margin-left:8px">${d.paired_at ? 'paired ' + d.paired_at : ''}</span>
+        <button class="btn sm danger" style="margin-left:8px;font-size:10px" onclick="deleteDevice('${escHtml(d.device_id)}')">Revoke</button>
+      </div>`).join('');
+    }
+    row.style.display = 'table-row';
+  } catch(e) {}
+}
+
+async function deleteDevice(deviceId) {
+  if (!confirm('Revoke this device?')) return;
+  try { await api('/api/dashboard/devices/' + encodeURIComponent(deviceId), { method: 'DELETE' }); } catch(e) {}
+}
+{% endif %}
+
+// ── Model Switcher ──
+async function loadModels() {
+  try {
+    const data = await api('/api/dashboard/models');
+    const list = document.getElementById('modelList');
+    const available = data.available || [];
+    list.innerHTML = available.map(m =>
+      `<div class="md-item${m.active ? ' active' : ''}" onclick="switchModel('${escHtml(m.provider)}','${escHtml(m.name)}')">
+        <span class="md-name">${escHtml(m.provider)}/${escHtml(m.name)}</span>
+        ${m.active ? '<span class="tag tag-green md-tag">active</span>' : ''}
+      </div>`
+    ).join('');
+    if (available.length <= 1) {
+      list.innerHTML += '<div style="padding:10px 16px;font-size:11px;color:var(--text3)">No fallback models configured</div>';
+    }
+    document.getElementById('currentModel').textContent = data.current.provider + '/' + data.current.name + ' ▾';
+  } catch(e) {}
+}
+
+function toggleModelDropdown() {
+  const s = document.getElementById('modelSwitcher');
+  s.classList.toggle('open');
+  if (s.classList.contains('open')) loadModels();
+}
+
+document.addEventListener('click', e => {
+  const s = document.getElementById('modelSwitcher');
+  if (s && !s.contains(e.target)) s.classList.remove('open');
+});
+
+async function switchModel(provider, name) {
+  try {
+    const result = await api('/api/dashboard/models/switch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ provider, name }),
+    });
+    document.getElementById('currentModel').textContent = result.current + ' ▾';
+    document.getElementById('modelSwitcher').classList.remove('open');
+  } catch(e) {
+    alert('Switch failed: ' + (e.message || 'unknown error'));
+  }
+}
+
+// ── Logs SSE ──
+function startLogStream() {
+  logContainer = document.getElementById('logContainer');
+  autoScroll = document.getElementById('autoScroll').checked;
+  const token = localStorage.getItem('myclaw_token') || '';
+  const url = '/api/dashboard/stream' + (token ? '?token=' + encodeURIComponent(token) : '');
+  const es = new EventSource(url);
+  es.addEventListener('log', e => {
+    try {
+      const log = JSON.parse(e.data);
+      if (document.getElementById('showAllLogs').checked || myclawLoggers.has(log.logger)) appendLog(log);
+    } catch {}
+  });
+  es.onerror = () => { es.close(); setTimeout(startLogStream, 3000); };
+}
+function appendLog(log) {
+  const d = document.createElement('div');
+  d.className = 'log-line ' + log.level;
+  const ts = new Date(log.ts * 1000).toLocaleTimeString();
+  d.innerHTML = `<span class="log-ts">${ts}</span><span class="log-logger">[${log.logger}]</span>${escHtml(log.message)}`;
+  logContainer.appendChild(d);
+  logLineCount++;
+  while (logContainer.children.length > 600) logContainer.removeChild(logContainer.firstChild);
+  document.getElementById('logCount').textContent = logLineCount + ' lines';
+  if (autoScroll) logContainer.scrollTop = logContainer.scrollHeight;
+}
+function escHtml(t) { return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function clearLogs() { logContainer.innerHTML = ''; logLineCount = 0; document.getElementById('logCount').textContent = ''; }
+
+// ── State SSE (real-time updates for all panels) ──
+let _lastState = null;
+function startStateStream() {
+  const token = localStorage.getItem('myclaw_token') || '';
+  const url = '/api/dashboard/state-stream' + (token ? '?token=' + encodeURIComponent(token) : '');
+  const es = new EventSource(url);
+  es.onmessage = e => {
+    try {
+      const state = JSON.parse(e.data);
+      _lastState = state;
+      applyState(state);
+    } catch {}
+  };
+  es.onerror = () => { es.close(); setTimeout(startStateStream, 5000); };
+}
+function applyState(s) {
+  // Overview stats
+  const uptimeEl = document.querySelector('#panel-overview .stat-card .value.sm.c-blue');
+  if (uptimeEl) uptimeEl.textContent = s.uptime;
+  const sessionEl = document.querySelector('#panel-overview .stat-card .value.c-green');
+  if (sessionEl) sessionEl.textContent = s.session_count;
+  // Update session count badge in header if visible
+  const sessCount = document.getElementById('sessionCount');
+  if (sessCount) sessCount.textContent = `(${(s.sessions || []).length})`;
+
+  // Sessions tab (only if active)
+  if (document.getElementById('panel-sessions').classList.contains('active')) {
+    renderSessions(s.sessions || []);
+  }
+  // Pending approvals
+  renderApprovals(s.pending_approvals || []);
+  // Cron
+  if (document.getElementById('panel-cron').classList.contains('active') && s.cron_jobs) {
+    renderCron(s.cron_jobs);
+  }
+  // MCP
+  {% if mcp_enabled %}
+  if (document.getElementById('panel-mcp') && document.getElementById('panel-mcp').classList.contains('active') && s.mcp_servers) {
+    renderMcp(s.mcp_servers);
+  }
+  {% endif %}
+  // Users
+  {% if auth_enabled %}
+  if (document.getElementById('panel-users') && document.getElementById('panel-users').classList.contains('active') && s.auth_users) {
+    renderUsers(s.auth_users);
+  }
+  {% endif %}
+  // Beads
+  {% if beads_enabled %}
+  if (document.getElementById('panel-beads') && document.getElementById('panel-beads').classList.contains('active') && s.beads) {
+    _allBeads = {};
+    for (const [k, v] of Object.entries(s.beads)) { if (k !== 'schema_version') _allBeads[k] = v; }
+    document.getElementById('beadCount').textContent = Object.keys(_allBeads).length;
+    renderBeads(_allBeads);
+  }
+  {% endif %}
+}
+
+// ── SSE-driven renderers ──
+function renderSessions(sessions) {
+  const tbody = document.querySelector('#panel-sessions tbody');
+  if (!tbody) return;
+  const empty = document.getElementById('sessionEmpty');
+  if (!sessions.length) { tbody.innerHTML = ''; if (empty) empty.style.display = ''; return; }
+  if (empty) empty.style.display = 'none';
+  tbody.innerHTML = sessions.map(s => {
+    const shortId = s.thread_id.length > 50 ? '...' + s.thread_id.slice(-47) : s.thread_id;
+    const isActive = s.status === 'active';
+    const statusTag = isActive ? '<span class="tag tag-green">active</span>' : '<span class="tag tag-gray">idle</span>';
+    const idleCell = s.last_active != null ? `<span class="tag tag-green" data-idle="${s.last_active}">${formatIdle(s.last_active)}</span>` : '-';
+    return `<tr data-tid="${escHtml(s.thread_id)}"><td style="font-family:var(--mono);font-size:11px;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(shortId)}</td><td>${statusTag}</td><td>${idleCell}</td><td><button class="btn sm danger" onclick="resetSession('${escHtml(s.thread_id)}')">Reset</button></td></tr>`;
+  }).join('');
+}
+
+function renderApprovals(approvals) {
+  // Remove old approval cards
+  document.querySelectorAll('.approval-card').forEach(el => {
+    const id = el.id.replace('approval-', '');
+    if (!approvals.find(a => a.id === id)) el.remove();
+  });
+  // Add new ones (insert after the stats grid, before config)
+  const container = document.querySelector('#panel-overview .stats-grid');
+  if (!container) return;
+  let section = document.getElementById('approvalSection');
+  if (!approvals.length) { if (section) section.remove(); return; }
+  if (!section) {
+    section = document.createElement('div');
+    section.id = 'approvalSection';
+    section.innerHTML = '<div class="section-title">Pending Approvals</div><div id="approvalList"></div>';
+    container.after(section);
+  }
+  const list = document.getElementById('approvalList');
+  list.innerHTML = approvals.map(a => `<div class="approval-card" id="approval-${escHtml(a.id)}">
+    <div class="info"><div class="tool">${escHtml(a.tool_name)}</div><div class="preview">${escHtml((a.args_preview || '').slice(0,200))}</div><div class="meta-line">from ${escHtml(a.sender_id)} &middot; ${escHtml(a.created_at || '')}</div></div>
+    <div class="actions"><button class="btn sm primary" onclick="resolveApproval('${escHtml(a.id)}','allow_once')">Allow</button><button class="btn sm danger" onclick="resolveApproval('${escHtml(a.id)}','deny')">Deny</button></div>
+  </div>`).join('');
+}
+
+function renderCron(jobs) {
+  const tbody = document.querySelector('#panel-cron tbody');
+  if (!tbody) return;
+  const empty = document.getElementById('cronEmpty');
+  if (!jobs.length) { tbody.innerHTML = ''; if (empty) empty.style.display = ''; return; }
+  if (empty) empty.style.display = 'none';
+  tbody.innerHTML = jobs.map(j => {
+    const en = j.enabled !== false;
+    const sched = j.schedule ? (j.schedule.expr || (j.schedule.every_seconds ? 'every ' + Math.round(j.schedule.every_seconds / 60) + 'm' : j.schedule.at || '-') ) : '-';
+    const lastRun = j.last_run_at ? new Date(j.last_run_at * 1000).toLocaleString() : '-';
+    return `<tr><td style="font-weight:500">${escHtml(j.name || j.id)}</td><td style="font-family:var(--mono);font-size:12px">${escHtml(sched)}</td><td>${en ? '<span class="tag tag-green">ON</span>' : '<span class="tag tag-red">OFF</span>'}</td><td style="font-size:12px;color:var(--text2)">${escHtml(lastRun)}</td><td><button class="btn sm primary" onclick="runCron('${escHtml(j.id)}')">&#9654;</button></td></tr>`;
+  }).join('');
+}
+
+{% if mcp_enabled %}
+function renderMcp(servers) {
+  const grid = document.getElementById('mcpGrid');
+  if (!grid) return;
+  grid.innerHTML = servers.map(s => `<div class="mcp-card" data-server="${escHtml(s.name)}">
+    <div class="mcp-header"><div><span class="mcp-name">${escHtml(s.name)}</span><span class="tag tag-blue" style="margin-left:6px">${escHtml(s.transport || 'stdio')}</span></div>
+    <span style="display:flex;align-items:center;gap:6px"><span class="status-dot" style="${s.connected ? '' : 'background:var(--red);box-shadow:0 0 8px var(--red)'}"></span><span style="font-size:12px;color:${s.connected ? 'var(--green)' : 'var(--red)'}">${s.connected ? 'Connected' : 'Disconnected'}</span></span></div>
+    <div style="font-size:12px;color:var(--text2)">Tools: <span style="color:var(--accent)">${s.tool_count || 0}</span></div>
+    ${s.error ? '<div style="font-size:11px;color:var(--red);margin-top:6px">' + escHtml(s.error) + '</div>' : ''}
+    <div class="mcp-tools" id="mcp-tools-${escHtml(s.name)}" style="display:none"></div>
+    <div style="margin-top:8px"><button class="btn sm" onclick="toggleMcpTools('${escHtml(s.name)}')">Show Tools</button></div>
+  </div>`).join('');
+}
+{% endif %}
+
+{% if auth_enabled %}
+function renderUsers(users) {
+  const tbody = document.getElementById('usersTbody');
+  if (!tbody) return;
+  tbody.innerHTML = users.map(u => {
+    const uid = u.user_id || '';
+    const short = uid.length > 20 ? uid.slice(0,20) + '...' : uid;
+    return `<tr data-uid="${escHtml(uid)}"><td style="font-family:var(--mono);font-size:11px">${escHtml(short)}</td><td>${escHtml(u.display_name || '-')}</td>
+    <td><select class="role-select" onchange="updateUserRole('${escHtml(uid)}', this.value)"><option value="owner" ${u.role==='owner'?'selected':''}>owner</option><option value="admin" ${u.role==='admin'?'selected':''}>admin</option><option value="user" ${u.role==='user'?'selected':''}>user</option><option value="guest" ${u.role==='guest'?'selected':''}>guest</option></select></td>
+    <td><span style="font-size:12px">${u.device_count||0} devices (${u.trusted_devices||0} trusted)</span><button class="btn sm" style="margin-left:6px;font-size:10px" onclick="toggleDevices('${escHtml(uid)}')">Details</button></td>
+    <td style="font-size:12px;color:var(--text2)">${escHtml(u.last_seen || '-')}</td><td><button class="btn sm danger" onclick="deleteUser('${escHtml(uid)}')">Delete</button></td></tr>
+    <tr class="device-row" id="devices-${escHtml(uid)}" style="display:none"><td colspan="6"><div id="devices-list-${escHtml(uid)}" style="padding:4px 0"></div></td></tr>`;
+  }).join('');
+}
+{% endif %}
+
+// ── Beads Memory ──
+{% if beads_enabled %}
+let _allBeads = {};
+
+const _catMeta = {
+  identity:  { icon: '\u{1F464}', label: 'Identity',  color: 'tag-purple' },
+  preference:{ icon: '\u{1F3AF}', label: 'Preference', color: 'tag-blue'   },
+  contact:   { icon: '\u{1F4E7}', label: 'Contact',   color: 'tag-green'  },
+  project:   { icon: '\u{1F4BB}', label: 'Project',   color: 'tag-orange' },
+  service:   { icon: '\u{1F527}', label: 'Service',   color: 'tag-yellow' },
+  fact:      { icon: '\u{1F4D6}', label: 'Fact',      color: 'tag-gray'   },
+};
+
+function _classify(key, val) {
+  // Value tag: [identity] / [preference] ...
+  const m = val.match(/^\[(identity|preference|contact|project|service|fact)\]/i);
+  if (m) return m[1].toLowerCase();
+  // Key prefix: identity- / preference- / fact- / project- ...
+  const km = key.match(/^(identity|preference|contact|project|service|fact)[-\s_]/i);
+  if (km) return km[1].toLowerCase();
+  // Key exact match
+  if (_catMeta[key.toLowerCase()]) return key.toLowerCase();
+  return 'other';
+}
+
+function _groupMemories(memories) {
+  const groups = {};
+  for (const [k, v] of Object.entries(memories)) {
+    const cat = _classify(k, v);
+    if (!groups[cat]) groups[cat] = [];
+    groups[cat].push([k, v]);
+  }
+  // Sort each group by key
+  for (const cat of Object.keys(groups)) {
+    groups[cat].sort((a, b) => a[0].localeCompare(b[0]));
+  }
+  return groups;
+}
+
+function _catOrder(cat) {
+  const order = ['identity','preference','contact','project','service','fact','other'];
+  return order.indexOf(cat);
+}
+
+async function fetchBeads() {
+  try {
+    const data = await api('/api/dashboard/beads/memories');
+    if (data.error) { document.getElementById('beadsContainer').innerHTML = '<div class="empty">Error: ' + escHtml(data.error) + '</div>'; return; }
+    const memories = {};
+    for (const [k, v] of Object.entries(data)) {
+      if (k === 'schema_version') continue;
+      memories[k] = v;
+    }
+    _allBeads = memories;
+    document.getElementById('beadCount').textContent = Object.keys(memories).length;
+    renderBeads(memories);
+  } catch(e) {}
+}
+
+function renderBeads(memories) {
+  const container = document.getElementById('beadsContainer');
+  const emptyEl = document.getElementById('beadsEmpty');
+  const keys = Object.keys(memories);
+  if (!keys.length) { container.innerHTML = ''; emptyEl.style.display = 'block'; return; }
+  emptyEl.style.display = 'none';
+  const groups = _groupMemories(memories);
+  const sortedCats = Object.keys(groups).sort((a, b) => _catOrder(a) - _catOrder(b));
+  let html = '';
+  for (const cat of sortedCats) {
+    const items = groups[cat];
+    const meta = _catMeta[cat] || { icon: '\u{1F4CC}', label: 'Other', color: 'tag-gray' };
+    const catId = 'cat-' + cat;
+    html += `<div class="mem-category">
+      <div class="mem-category-header" onclick="toggleCat('${catId}')">
+        <span class="arrow open" id="arrow-${catId}">&#9654;</span>
+        <span class="cat-icon">${meta.icon}</span>
+        <span class="cat-label">${meta.label}</span>
+        <span class="tag ${meta.color}">${items.length}</span>
+      </div>
+      <div class="mem-category-items" id="${catId}">`;
+    for (const [k, v] of items) {
+      html += `<div class="mem-item">
+        <div class="mem-key"><span>${escHtml(k)}</span></div>
+        <div class="mem-val">${escHtml(v)}</div>
+        <div class="mem-actions">
+          <button class="btn sm danger" onclick="forgetMemory('${escHtml(k)}')">Delete</button>
+        </div>
+      </div>`;
+    }
+    html += `</div></div>`;
+  }
+  container.innerHTML = html;
+}
+
+function toggleCat(catId) {
+  const el = document.getElementById(catId);
+  const arrow = document.getElementById('arrow-' + catId);
+  if (!el) return;
+  if (el.style.display === 'none') {
+    el.style.display = 'block';
+    arrow.classList.add('open');
+  } else {
+    el.style.display = 'none';
+    arrow.classList.remove('open');
+  }
+}
+
+function filterBeads(query) {
+  query = query.toLowerCase().trim();
+  if (!query) { renderBeads(_allBeads); return; }
+  const filtered = {};
+  for (const [k, v] of Object.entries(_allBeads)) {
+    if (k.toLowerCase().includes(query) || v.toLowerCase().includes(query)) {
+      filtered[k] = v;
+    }
+  }
+  renderBeads(filtered);
+}
+
+async function forgetMemory(key) {
+  if (!confirm('Delete memory "' + key + '"?')) return;
+  try {
+    await api('/api/dashboard/beads/forget/' + encodeURIComponent(key), { method: 'DELETE' });
+    delete _allBeads[key];
+    document.getElementById('beadCount').textContent = Object.keys(_allBeads).length;
+    renderBeads(_allBeads);
+  } catch(e) {}
+}
+
+function toggleAddMemory() {
+  const f = document.getElementById('addMemoryForm');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+  if (f.style.display === 'block') document.getElementById('memContentInput').focus();
+}
+
+async function saveNewMemory() {
+  const content = document.getElementById('memContentInput').value.trim();
+  const key = document.getElementById('memKeyInput').value.trim();
+  if (!content) return;
+  try {
+    await api('/api/dashboard/beads/remember', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ content, key }),
+    });
+    document.getElementById('memContentInput').value = '';
+    document.getElementById('memKeyInput').value = '';
+    document.getElementById('addMemoryForm').style.display = 'none';
+    fetchBeads();
+  } catch(e) {}
+}
+{% endif %}
+
+startLogStream();
+startStateStream();
+</script>
+</body>
+</html>

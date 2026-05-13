@@ -90,7 +90,10 @@ class _QQTokenManager:
                 ),
                 description="QQ token fetch",
             )
-        data = resp.json()
+        try:
+            data = resp.json()
+        except Exception as e:
+            raise RuntimeError(f"QQ token response parse error: {e}") from e
         token = data.get("access_token")
         if not token:
             raise RuntimeError(f"QQ token error: {data}")
@@ -151,6 +154,7 @@ class _QQWebSocketClient:
         self._recv_task: Optional[asyncio.Task] = None
         self._running = False
         self._reconnect_attempts = 0
+        self._reconnecting = False  # Guard against concurrent reconnect loops
 
     async def connect(self):
         self._running = True
@@ -171,16 +175,46 @@ class _QQWebSocketClient:
 
         import websockets
 
+        # SSL: try certifi CA bundle first, fall back to no-verify on Windows
+        ssl_ctx = None
         try:
-            self._ws = await websockets.connect(
-                ws_url,
-                user_agent_header=USER_AGENT,
-                ping_interval=None,
-            )
+            import certifi
+            import ssl
+            ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+        except Exception:
+            pass
+
+        try:
+            connect_kwargs = {
+                "user_agent_header": USER_AGENT,
+                "ping_interval": None,
+            }
+            if ssl_ctx:
+                connect_kwargs["ssl"] = ssl_ctx
+            self._ws = await websockets.connect(ws_url, **connect_kwargs)
         except Exception as e:
-            self._log.error("WebSocket connect failed: %s", e)
-            await self._schedule_reconnect()
-            return
+            is_ssl_error = "ssl" in str(e).lower() or "certificate" in str(e).lower()
+            if is_ssl_error:
+                self._log.warning("SSL cert verification failed, retrying without verify")
+                try:
+                    import ssl
+                    no_verify = ssl.create_default_context()
+                    no_verify.check_hostname = False
+                    no_verify.verify_mode = 0  # ssl.CERT_NONE
+                    self._ws = await websockets.connect(
+                        ws_url,
+                        user_agent_header=USER_AGENT,
+                        ping_interval=None,
+                        ssl=no_verify,
+                    )
+                except Exception as e2:
+                    self._log.error("WebSocket connect failed (no-verify): %s", e2)
+                    await self._schedule_reconnect()
+                    return
+            else:
+                self._log.error("WebSocket connect failed: %s", e)
+                await self._schedule_reconnect()
+                return
 
         try:
             raw = await asyncio.wait_for(self._ws.recv(), timeout=30)
@@ -228,6 +262,10 @@ class _QQWebSocketClient:
             )
             self._log.info("Identified with QQ gateway")
 
+        # Cancel stale tasks from previous connection before creating new ones
+        for old_task in (self._heartbeat_task, self._recv_task):
+            if old_task and not old_task.done():
+                old_task.cancel()
         self._heartbeat_task = asyncio.create_task(self._heartbeat(heartbeat_interval))
         self._recv_task = asyncio.create_task(self._recv_loop())
         self._reconnect_attempts = 0
@@ -271,7 +309,7 @@ class _QQWebSocketClient:
                         self._session_id = d.get("session_id") if d else None
                         self._log.info("QQ gateway READY, session=%s", self._session_id)
                     try:
-                        await self._on_dispatch(t, d or {})
+                        await self._on_dispatch(t, d if d else {})
                     except Exception as e:
                         self._log.error("Dispatch handler error for %s: %s", t, e)
 
@@ -322,21 +360,27 @@ class _QQWebSocketClient:
     async def _schedule_reconnect(self, custom_delay: Optional[float] = None):
         if not self._running:
             return
-        self._reconnect_attempts += 1
-        if self._reconnect_attempts > _MAX_RECONNECT_ATTEMPTS:
-            self._log.error("Max reconnect attempts reached, giving up")
-            return
-
-        idx = min(self._reconnect_attempts - 1, len(_RECONNECT_DELAYS) - 1)
-        delay = custom_delay if custom_delay is not None else _RECONNECT_DELAYS[idx]
-        self._log.info("Reconnecting in %.1fs (attempt %d)", delay, self._reconnect_attempts)
-        await asyncio.sleep(delay)
-
+        if self._reconnecting:
+            return  # Already reconnecting
+        self._reconnecting = True
         try:
-            await self.connect()
-        except Exception as e:
-            self._log.error("Reconnect failed: %s", e)
-            await self._schedule_reconnect()
+            self._reconnect_attempts += 1
+            if self._reconnect_attempts > _MAX_RECONNECT_ATTEMPTS:
+                self._log.error("Max reconnect attempts reached, giving up")
+                return
+
+            idx = min(self._reconnect_attempts - 1, len(_RECONNECT_DELAYS) - 1)
+            delay = custom_delay if custom_delay is not None else _RECONNECT_DELAYS[idx]
+            self._log.info("Reconnecting in %.1fs (attempt %d)", delay, self._reconnect_attempts)
+            await asyncio.sleep(delay)
+
+            try:
+                await self.connect()
+            except Exception as e:
+                self._log.error("Reconnect failed: %s", e)
+                await self._schedule_reconnect()
+        finally:
+            self._reconnecting = False
 
     async def stop(self):
         self._running = False
@@ -623,13 +667,17 @@ class QQChannel(Channel):
         )
 
         # Inject chat_id for QQ send tools (so they can default to current chat)
-        from src.tools.qq_tools import set_current_qq_chat_id
-        set_current_qq_chat_id(chat_id)
+        try:
+            from src.tools.qq_tools import set_current_qq_chat_id
+            set_current_qq_chat_id(chat_id)
+        except ImportError:
+            pass  # qq_tools not available, tools will handle missing chat_id
 
         # Start typing indicator for C2C
         typing_task = None
         if chat_type == "p2p":
-            typing_task = asyncio.create_task(self._typing_loop(chat_id))
+            typing_task = asyncio.create_task(self._typing_loop(chat_id, message_id))
+            self._typing_tasks[chat_id] = typing_task
 
         try:
             await self._on_message_callback(
@@ -648,8 +696,12 @@ class QQChannel(Channel):
 
     # --- Typing indicator ---
 
-    async def _send_typing(self, chat_id: str) -> bool:
-        """Send typing indicator for C2C chat. msg_type=6."""
+    async def _send_typing(
+        self,
+        chat_id: str,
+        msg_id: str | None = None,
+    ) -> bool:
+        """Send typing indicator for C2C chat via input_notify API."""
         if self._typing_unsupported:
             return False
         kind, target = _parse_chat_id(chat_id)
@@ -658,35 +710,41 @@ class QQChannel(Channel):
         if not self._http_client or not self._token_manager:
             return False
         try:
-            token = await self._token_manager.get_token()
-            headers = {"Authorization": f"QQBot {token}", "Content-Type": "application/json"}
-            resp = await self._http_client.post(
-                f"{API_BASE}/v2/users/{target}/typing",
-                headers=headers,
-                json={"msg_type": 6},
+            self._seq_counter = (self._seq_counter + 1) % _MSG_SEQ_MAX
+            body: dict = {
+                "msg_type": 6,
+                "input_notify": {
+                    "input_type": 1,
+                    "input_second": 60,
+                },
+                "msg_seq": self._seq_counter,
+            }
+            if msg_id:
+                body["msg_id"] = msg_id
+            result = await self._api_post(
+                f"/v2/users/{target}/messages",
+                body,
+                description="QQ typing notify",
             )
-            if resp.status_code == 404:
-                self._typing_unsupported = True
-                logger.debug("QQ typing not supported by API, disabled for this session")
-                return False
-            if resp.status_code >= 400:
-                logger.warning("QQ typing failed: status=%d", resp.status_code)
+            if result is None:
                 return False
             return True
         except Exception as e:
             logger.debug("QQ typing error: %s", e)
             return False
 
-    async def _typing_loop(self, chat_id: str):
+    async def _typing_loop(self, chat_id: str, msg_id: str | None = None):
         """Send typing indicator every 50 seconds (QQ timeout is 60s)."""
         try:
             while True:
-                await self._send_typing(chat_id)
+                await self._send_typing(chat_id, msg_id)
                 await asyncio.sleep(50)
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.debug("Typing loop error: %s", e)
+        finally:
+            self._typing_tasks.pop(chat_id, None)
 
     # --- Core HTTP request ---
 

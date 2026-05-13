@@ -122,7 +122,7 @@ class MediaProviderClient:
             data = resp.json()
 
         text = ""
-        choices = data.get("choices", [])
+        choices = data.get("choices") or []
         if choices:
             text = choices[0].get("message", {}).get("content", "")
         return {"text": text, "model": data.get("model", self.model)}
@@ -212,13 +212,75 @@ class MediaProviderClient:
             resp = await client.post(
                 f"{self.base_url}/audio/transcriptions",
                 headers=headers,
-                data=form_data,
+                files=form_data,
             )
+            if resp.status_code == 404:
+                logger.info("audio/transcriptions not supported, falling back to chat completions")
+                return await self._transcribe_audio_via_chat(client, audio_data, mime_type)
+            if resp.status_code == 413:
+                return {"text": "", "model": self.model, "error": "Audio file too large for transcription API."}
             resp.raise_for_status()
             data = resp.json()
 
         text = data.get("text", "")
         return {"text": text, "model": data.get("model", self.model)}
+
+    async def _transcribe_audio_via_chat(self, client, audio_data: bytes, mime_type: str) -> dict:
+        """Fallback: send audio as base64 to chat completions for transcription."""
+        # Audio too large for base64 chat payload (>5MB raw ≈ >7MB base64)
+        if len(audio_data) > 5 * 1024 * 1024:
+            return {"text": "", "model": self.model, "error": "Audio too large for chat-based transcription (>5MB). Use a smaller file or a provider with /audio/transcriptions support."}
+
+        b64 = base64.b64encode(audio_data).decode("ascii")
+        fmt = mime_type.split("/")[-1] if "/" in mime_type else "wav"
+
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Please transcribe the following audio. Output only the transcribed text, nothing else."},
+                    {"type": "input_audio", "input_audio": {"data": b64, "format": fmt}},
+                ],
+            }
+        ]
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": 4096,
+        }
+
+        try:
+            resp = await client.post(
+                f"{self.base_url}/chat/completions",
+                headers=self._headers(),
+                json=payload,
+            )
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            logger.error("Audio chat transcription failed: %s %s", e.response.status_code, e.response.text[:200])
+            return {"text": "", "model": self.model, "error": f"Audio transcription via chat failed: {e.response.status_code}. The model may not support audio input."}
+
+        data = resp.json()
+        text = ""
+        for choice in data.get("choices") or []:
+            msg = choice.get("message") or {}
+            msg_content = msg.get("content")
+            if msg_content is None:
+                continue
+            if isinstance(msg_content, str):
+                text += msg_content
+            elif isinstance(msg_content, list):
+                for block in msg_content:
+                    if isinstance(block, str):
+                        text += block
+                    elif isinstance(block, dict) and block.get("type") == "text":
+                        text += block.get("text", "")
+
+        if not text.strip():
+            return {"text": "", "model": self.model, "error": "Audio transcription returned empty result. The model may not support audio input."}
+
+        return {"text": text.strip(), "model": data.get("model", self.model)}
 
     async def describe_video(
         self,
@@ -270,7 +332,7 @@ class MediaProviderClient:
             data = resp.json()
 
         text = ""
-        choices = data.get("choices", [])
+        choices = data.get("choices") or []
         if choices:
             text = choices[0].get("message", {}).get("content", "")
         return {"text": text, "model": data.get("model", self.model)}

@@ -283,11 +283,32 @@ class FallbackModelChain:
         self.fallbacks = fallbacks or []
         self._all = [primary] + self.fallbacks
         self._cooldowns: dict[int, float] = {}  # keyed by id(model)
+        self._active_idx = 0  # Index into _all; 0 = primary
+        # Metadata for each model (parallel to _all): {"provider": ..., "name": ...}
+        self._model_meta: list[dict] = []
+
+    def set_meta(self, meta: list[dict]):
+        """Set provider/name metadata for all models."""
+        self._model_meta = meta
+
+    @property
+    def active(self) -> BaseChatModel:
+        return self._all[self._active_idx]
+
+    def switch_to(self, idx: int):
+        """Switch active model to the given index."""
+        if 0 <= idx < len(self._all):
+            self._active_idx = idx
+            # Clear cooldowns on the newly active model
+            self._cooldowns.pop(id(self._all[idx]), None)
 
     async def ainvoke(self, messages, tools=None, **kwargs):
         now = time.time()
         errors = []
-        for i, model in enumerate(self._all):
+        # Try active model first, then the rest
+        order = [self._active_idx] + [i for i in range(len(self._all)) if i != self._active_idx]
+        for i in order:
+            model = self._all[i]
             cooldown_until = self._cooldowns.get(id(model), 0)
             if now < cooldown_until:
                 continue
@@ -298,6 +319,7 @@ class FallbackModelChain:
             except Exception as e:
                 errors.append((i, e))
                 error_str = str(e).lower()
+                logger.warning("Model %d (%s) error: %s", i, type(model).__name__, e)
                 cooldown = 0
                 if "rate" in error_str or "429" in error_str:
                     cooldown = 30
@@ -327,6 +349,7 @@ class ModelRef:
     """Mutable reference to the active model, allowing hot-swap without recompiling the graph."""
     def __init__(self, model):
         self.model = model
+        self.ctx_window: dict | None = None  # Set by create_agent_graph
 
 
 def create_agent_graph(
@@ -370,6 +393,14 @@ def create_agent_graph(
 
     all_tools = tools
     _model_ref = ModelRef(model_or_chain)
+    _ctx_window = {"tokens": context_window_tokens}  # Mutable so model switch can update it
+    _model_ref.ctx_window = _ctx_window
+
+    # Initialize context compressor
+    _compressor = None
+    if config:
+        from src.compressor.compressor import ContextCompressor
+        _compressor = ContextCompressor(config.compression, main_config=config)
 
     # Tools that are feishu-specific but not prefixed with "feishu_"
     _FEISHU_EXTRA_NAMES = frozenset({"send_image_to_chat", "send_file_to_chat"})
@@ -391,7 +422,10 @@ def create_agent_graph(
         if not messages:
             return {"messages": []}
 
-        compacted = _compact_messages(messages, max_tokens=int(context_window_tokens * 0.7))
+        if _compressor:
+            compacted = await _compressor.compress(messages, _ctx_window["tokens"])
+        else:
+            compacted = _compact_messages(messages, max_tokens=int(_ctx_window["tokens"] * 0.7))
 
         # Apply tool policy first to get per-request tool set
         active_tools = tools
@@ -453,6 +487,11 @@ def create_agent_graph(
         # return native tool_calls (e.g. LongCat sporadic parser bug).
         response = _fixup_xml_tool_calls(response, all_tools)
 
+        # Redact credentials from AI response
+        if isinstance(response.content, str) and response.content:
+            from src.security.redact import redact
+            response.content = redact(response.content)
+
         return {"messages": [response]}
 
     async def approval_aware_tool_node(state: AgentState) -> dict:
@@ -502,6 +541,12 @@ def create_agent_graph(
                         )
                 except Exception:
                     pass
+
+            # Redact credentials from tool outputs
+            from src.security.redact import redact
+            for msg in result_state.get("messages", []):
+                if isinstance(msg, ToolMessage) and isinstance(msg.content, str):
+                    msg.content = redact(msg.content)
 
             return result_state
         except Exception as e:
@@ -644,6 +689,7 @@ def create_model_chain(config) -> FallbackModelChain:
         api_key=config.model.api_key,
     )
     fallbacks = []
+    meta = [{"provider": config.model.provider, "name": config.model.name, "context_window": config.model.context_window}]
     for fb in config.model.fallbacks:
         try:
             m = _make_chat_model(
@@ -654,11 +700,14 @@ def create_model_chain(config) -> FallbackModelChain:
                 api_key=getattr(fb, "api_key", None),
             )
             fallbacks.append(m)
+            meta.append({"provider": fb.provider, "name": fb.name, "context_window": getattr(fb, "context_window", 200000)})
             logger.info("Fallback model: %s/%s", fb.provider, fb.name)
         except Exception as e:
             logger.warning("Failed to init fallback %s/%s: %s", fb.provider, fb.name, e)
 
-    return FallbackModelChain(primary, fallbacks)
+    chain = FallbackModelChain(primary, fallbacks)
+    chain.set_meta(meta)
+    return chain
 
 
 def collect_tools(config) -> list[BaseTool]:
@@ -834,6 +883,8 @@ def _register_builtin_tools(config) -> None:
             tools_list.append(send_file_to_chat)
             logger.info("Tool registered: send_image_to_chat, send_file_to_chat")
 
+        return tools_list
+
     @registry.register
     def _collect_voice_tools() -> list[BaseTool]:
         from src.tools.media_tools import send_voice
@@ -946,4 +997,44 @@ def _register_builtin_tools(config) -> None:
             if tools_list:
                 logger.info("MCP tools registered: %d", len(tools_list))
             return tools_list
+        return []
+
+    @registry.register
+    def _collect_session_search_tools() -> list[BaseTool]:
+        if config.session_search.enabled:
+            from src.tools.session_search_tools import session_search
+            logger.info("Tool registered: session_search")
+            return [session_search]
+        return []
+
+    @registry.register
+    def _collect_browser_tools() -> list[BaseTool]:
+        if config.tools.browser.enabled:
+            from src.tools.browser.tools import (
+                browser_navigate,
+                browser_snapshot,
+                browser_click,
+                browser_type,
+                browser_scroll,
+                browser_back,
+                browser_press,
+                browser_screenshot,
+                browser_console,
+                browser_close,
+            )
+            tools = [
+                browser_navigate,
+                browser_snapshot,
+                browser_click,
+                browser_type,
+                browser_scroll,
+                browser_back,
+                browser_press,
+                browser_screenshot,
+                browser_console,
+                browser_close,
+            ]
+            for t in tools:
+                logger.info("Tool registered: %s", t.name)
+            return tools
         return []

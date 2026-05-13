@@ -74,6 +74,11 @@ _SHELL_BYPASS_PATTERNS = [
     ("sh -c", "sh -c"),
     ("bash -c", "bash -c"),
     ("zsh -c", "zsh -c"),
+    ("python -c", "python -c"),
+    ("python3 -c", "python3 -c"),
+    ("perl -e", "perl -e"),
+    ("ruby -e", "ruby -e"),
+    ("node -e", "node -e"),
     ("/bin/sh", "/bin/sh"),
     ("/bin/bash", "/bin/bash"),
     ("| sh", "| sh"),
@@ -238,12 +243,13 @@ def _get_semaphore(max_concurrent: int) -> asyncio.Semaphore:
 
 
 def _is_denylisted(command: str, deny_patterns: list[str]) -> tuple[bool, str]:
-    cmd_lower = command.strip().lower()
+    import re
+    cmd_normalized = re.sub(r'\s+', ' ', command.strip()).lower()
     for pattern in deny_patterns:
         pattern_lower = pattern.lower()
-        if fnmatch.fnmatch(cmd_lower, pattern_lower):
+        if fnmatch.fnmatch(cmd_normalized, pattern_lower):
             return True, pattern
-        if pattern_lower in cmd_lower:
+        if pattern_lower in cmd_normalized:
             return True, pattern
     return False, ""
 
@@ -295,7 +301,7 @@ async def exec_command(
     if sandbox_enabled:
         from pathlib import Path
 
-        workspace = Path(cfg.agents.workspace).resolve()
+        workspace = Path(cfg.agents.workspace).expanduser().resolve()
         if workdir:
             wd = Path(workdir).resolve()
         else:
