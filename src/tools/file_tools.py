@@ -24,20 +24,21 @@ def set_workspace(path: str):
 
 
 def _resolve_path(path: str) -> str:
-    """Resolve path relative to workspace and prevent escape."""
+    """Resolve path relative to workspace and prevent escape (including symlinks)."""
     p = Path(path)
     if not p.is_absolute():
         p = Path(_BASE_DIR) / p
+    base = Path(_BASE_DIR).resolve()
+    # Check the pre-resolve path isn't a symlink pointing outside workspace
     try:
-        p = p.resolve()
+        real = p.resolve(strict=False)
     except Exception:
         raise ValueError(f"Path '{path}' could not be resolved")
-    base = Path(_BASE_DIR)
     try:
-        p.relative_to(base)
+        real.relative_to(base)
     except ValueError:
         raise ValueError(f"Path '{path}' is outside the workspace")
-    return str(p)
+    return str(real)
 
 
 @tool
@@ -105,13 +106,13 @@ def write_file(path: str, content: str) -> str:
 
 
 @tool
-def edit_file(path: str, old_text: str, new_text: str) -> str:
+def edit_file(path: str, old_string: str, new_string: str) -> str:
     """Replace a specific text segment in a file with new text.
 
     Args:
         path: File path (relative to workspace)
-        old_text: Exact text to find and replace
-        new_text: Text to replace it with
+        old_string: Exact text to find and replace
+        new_string: Text to replace it with
     """
     try:
         resolved = _resolve_path(path)
@@ -129,18 +130,18 @@ def edit_file(path: str, old_text: str, new_text: str) -> str:
         except Exception as e:
             return f"Error reading {path}: {e}"
 
-        count = content.count(old_text)
+        count = content.count(old_string)
         if count == 0:
-            return f"Error: text not found in {path}. Make sure old_text matches exactly (including whitespace)."
+            return f"Error: text not found in {path}. Make sure old_string matches exactly (including whitespace)."
         if count > 1:
-            return f"Error: found {count} matches in {path}. Please provide more context to make old_text unique."
+            return f"Error: found {count} matches in {path}. Please provide more context to make old_string unique."
 
-        new_content = content.replace(old_text, new_text, 1)
+        new_content = content.replace(old_string, new_string, 1)
         try:
             with open(resolved, "w", encoding="utf-8") as f:
                 f.write(new_content)
-            old_lines = old_text.count("\n") + 1
-            new_lines = new_text.count("\n") + 1
+            old_lines = old_string.count("\n") + 1
+            new_lines = new_string.count("\n") + 1
             return f"Replaced {old_lines} lines with {new_lines} lines in {path}"
         except Exception as e:
             return f"Error writing {path}: {e}"

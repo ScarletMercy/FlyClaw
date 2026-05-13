@@ -61,15 +61,21 @@ async def _get_tenant_token(app_id: str, app_secret: str, domain: str) -> str:
 
         api_base = _resolve_api_base(domain)
         async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-            resp = await api_request_with_retry(
-                lambda: client.post(
-                    f"{api_base}/auth/v3/tenant_access_token/internal",
-                    json={"app_id": app_id, "app_secret": app_secret},
-                    timeout=10,
-                ),
-                description="Tenant token refresh",
-            )
-        data = resp.json()
+            try:
+                resp = await api_request_with_retry(
+                    lambda: client.post(
+                        f"{api_base}/auth/v3/tenant_access_token/internal",
+                        json={"app_id": app_id, "app_secret": app_secret},
+                        timeout=10,
+                    ),
+                    description="Tenant token refresh",
+                )
+            except Exception as e:
+                raise RuntimeError(f"Token refresh request failed: {e}") from e
+        try:
+            data = resp.json()
+        except Exception as e:
+            raise RuntimeError(f"Token response parse error: {e}") from e
         if data.get("code") != 0 or not data.get("tenant_access_token"):
             raise RuntimeError(f"Token error: {data.get('msg', 'unknown')}")
         token = data["tenant_access_token"]
@@ -128,7 +134,7 @@ class StreamingCardSession:
         self._current_text: str = ""
         self._pending_text: Optional[str] = None
         self._closed: bool = False
-        self._last_update: float = 0
+        self._last_update: float = float("-inf")
         self._throttle_ms: int = 100
         self._token: Optional[str] = None
         self._token_expires: float = 0
@@ -141,7 +147,8 @@ class StreamingCardSession:
         reply_to: Optional[str] = None,
     ) -> Optional[str]:
         api_base = _resolve_api_base(self._domain)
-        self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+        if not self._http_client:
+            self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
         token = await _get_tenant_token(self._app_id, self._app_secret, self._domain)
         if token:
             self._token = token
@@ -942,7 +949,7 @@ class FeishuChannel(Channel):
     async def send_audio(self, chat_id: str, audio_bytes: bytes, file_name: str = "speech.mp3") -> bool:
         """Upload audio bytes and send as audio message to chat.
 
-        Uploads via Feishu API, then sends the file_key as an 'audio' message type.
+        Uses native HTTP calls to Feishu IM file API to avoid lark SDK blocking issues.
         """
         api_base = _resolve_api_base(self.config.domain)
         token = await _get_tenant_token(self.config.app_id, self.config.app_secret, self.config.domain)
@@ -952,45 +959,38 @@ class FeishuChannel(Channel):
 
         headers = {"Authorization": f"Bearer {token}"}
 
-        # Step 1: Create upload request
+        # Step 1: Upload file via IM file API (native HTTP, no lark SDK)
         import io
-        from lark_oapi.api.drive.v1 import UploadFileRequest
 
-        upload_req = (
-            UploadFileRequest.builder()
-            .file_name(file_name)
-            .file_size(str(len(audio_bytes)))
-            .file_type("stream")
-            .build()
-        )
-        resp = await asyncio.to_thread(self.client.drive.v1.file.create, upload_req)
-        if not resp.success():
-            logger.error("send_audio: create upload failed: %s %s", resp.code, resp.msg)
+        form_data = {
+            "file_type": (None, "stream"),
+            "file_name": (None, file_name),
+            "file": (file_name, io.BytesIO(audio_bytes), "application/octet-stream"),
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as hc:
+                upload_resp = await feishu_api_request(
+                    lambda: hc.post(f"{api_base}/im/v1/files", headers=headers, files=form_data),
+                    description="Audio file upload",
+                )
+        except Exception as e:
+            logger.error("send_audio: upload failed: %s", e)
             return False
 
-        upload_data = resp.data
-        if not upload_data or not upload_data.upload_url:
-            logger.error("send_audio: no upload URL in response")
-            return False
-
-        # Step 2: Upload file bytes
-        async with httpx.AsyncClient(timeout=60) as hc:
-            upload_resp = await feishu_api_request(
-                lambda: hc.put(upload_data.upload_url, headers=headers, content=audio_bytes),
-                description="TTS audio upload",
-            )
         if upload_resp is None or upload_resp.status_code >= 400:
-            logger.error("send_audio: upload failed: %s", upload_resp.status_code if upload_resp else "no response")
+            logger.error("send_audio: upload HTTP %s", upload_resp.status_code if upload_resp else "no response")
             return False
 
-        file_token = upload_data.file_token
-        if not file_token:
-            logger.error("send_audio: no file_token in upload response")
+        data = upload_resp.json()
+        file_key = data.get("data", {}).get("file_key", "")
+        if not file_key:
+            logger.error("send_audio: no file_key in response: %s", data.get("msg", ""))
             return False
 
-        # Step 3: Send audio message using file_key
-        content = json.dumps({"file_key": file_token})
-        result = await self._do_send(chat_id, content, msg_type="audio")
+        # Step 2: Send as file message (stream uploads can only be sent as "file" type, not "audio")
+        content = json.dumps({"file_key": file_key})
+        result = await self._do_send(chat_id, content, msg_type="file")
         return result is not None
 
     async def send_card(

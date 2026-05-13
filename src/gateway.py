@@ -688,4 +688,44 @@ def create_gateway(app_config, compiled_graph, feishu_channel=None, cron_service
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    # --- Session search endpoints ---
+    @app.get("/api/sessions/search")
+    async def session_search_api(request: Request, _auth=Depends(require_auth)):
+        from src.session_index.store import get_session_index
+
+        store = get_session_index()
+        if not store:
+            return JSONResponse({"error": "session search not enabled"}, status_code=503)
+        q = request.query_params.get("q", "")
+        limit = int(request.query_params.get("limit", "10"))
+        results = store.search(q, limit=limit)
+        return JSONResponse(results)
+
+    @app.get("/api/sessions")
+    async def session_list_api(request: Request, _auth=Depends(require_auth)):
+        from src.session_index.store import get_session_index
+
+        store = get_session_index()
+        if not store:
+            return JSONResponse({"error": "session search not enabled"}, status_code=503)
+        limit = int(request.query_params.get("limit", "50"))
+        results = store.search("", limit=limit)
+        return JSONResponse(results)
+
+    @app.get("/api/sessions/{thread_id}/messages")
+    async def session_messages_api(thread_id: str, request: Request, _auth=Depends(require_auth)):
+        from src.session_index.store import get_session_index
+
+        store = get_session_index()
+        if not store:
+            return JSONResponse({"error": "session search not enabled"}, status_code=503)
+        limit = int(request.query_params.get("limit", "100"))
+        rows = store._db.execute(
+            "SELECT message_id, role, content, tool_name, timestamp FROM messages "
+            "WHERE thread_id = ? ORDER BY timestamp ASC LIMIT ?",
+            (thread_id, limit),
+        ).fetchall()
+        messages = [dict(r) for r in rows]
+        return JSONResponse({"thread_id": thread_id, "messages": messages})
+
     return app

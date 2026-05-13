@@ -3,7 +3,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import sqlite3
+import tempfile
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -65,6 +68,15 @@ class SessionTracker:
                         if state and state.values:
                             await compiled_graph.aupdate_state(config, {"messages": []})
                             logger.info("Session reset (idle): %s", tid)
+                            # Mark session as inactive in search index
+                            try:
+                                from src.session_index.store import get_session_index
+
+                                idx = get_session_index()
+                                if idx:
+                                    idx.mark_inactive(tid)
+                            except Exception:
+                                pass
                         self.remove(tid)
                     except Exception as e:
                         logger.debug("Session reset failed for %s: %s", tid, e)
@@ -117,6 +129,7 @@ class SessionRegistry:
     def __init__(self):
         self._users: dict[str, UserSessions] = {}
         self._store_path: Optional[str] = None
+        self._lock = threading.Lock()
 
     def init(self, store_path: str) -> None:
         self._store_path = store_path
@@ -151,11 +164,20 @@ class SessionRegistry:
                 "current_id": us.current_id,
                 "_next_id": us._next_id,
             }
-        try:
-            with open(self._store_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logger.warning("Failed to save session registry: %s", e)
+        with self._lock:
+            try:
+                fd, tmp_path = tempfile.mkstemp(
+                    dir=os.path.dirname(self._store_path), suffix=".tmp",
+                )
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                    os.replace(tmp_path, self._store_path)
+                except Exception:
+                    os.unlink(tmp_path)
+                    raise
+            except Exception as e:
+                logger.warning("Failed to save session registry: %s", e)
 
     def _get_user(self, user_key: str) -> UserSessions:
         if user_key not in self._users:
@@ -240,11 +262,11 @@ def get_session_summaries(checkpointer_path: str, thread_ids: list[str]) -> dict
     if not checkpointer_path or not Path(checkpointer_path).exists():
         return {}
     results = {}
+    conn = None
     try:
         conn = sqlite3.connect(checkpointer_path)
         for tid in thread_ids:
             try:
-                # Get checkpoint count as a basic indicator
                 cnt = conn.execute(
                     "SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?",
                     (tid,),
@@ -252,9 +274,11 @@ def get_session_summaries(checkpointer_path: str, thread_ids: list[str]) -> dict
                 results[tid] = f"({cnt} messages)"
             except Exception:
                 results[tid] = "(unknown)"
-        conn.close()
     except Exception as e:
         logger.debug("Failed to read session summaries: %s", e)
+    finally:
+        if conn:
+            conn.close()
     return results
 
 
@@ -265,6 +289,7 @@ def get_threads_for_user(checkpointer_path: str, user_key: str) -> list[dict]:
     """
     if not checkpointer_path or not Path(checkpointer_path).exists():
         return []
+    conn = None
     try:
         conn = sqlite3.connect(checkpointer_path)
         # Match legacy thread_id exactly and multi-session threads by pattern
@@ -272,7 +297,6 @@ def get_threads_for_user(checkpointer_path: str, user_key: str) -> list[dict]:
             "SELECT thread_id, COUNT(*) as cnt, MAX(rowid) as last_rowid "
             "FROM checkpoints GROUP BY thread_id ORDER BY last_rowid DESC",
         ).fetchall()
-        conn.close()
 
         # Extract user hash from user_key (e.g. "qq:user:ABC123" -> "ABC123")
         parts = user_key.split(":")
@@ -288,3 +312,6 @@ def get_threads_for_user(checkpointer_path: str, user_key: str) -> list[dict]:
     except Exception as e:
         logger.debug("Failed to list threads for user: %s", e)
         return []
+    finally:
+        if conn:
+            conn.close()

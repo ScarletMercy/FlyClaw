@@ -17,4 +17,14 @@ config.yaml
 *.db
 .beads-credential-key
 .beads/issues.jsonl
-.beads/issues.jsonl
+
+# Skills (pluggable extensions)
+skills/
+
+# Docs
+docs/
+
+# Reports and notes
+我的出生日志.md
+飞书工具功能测试报告*.md
+package.json

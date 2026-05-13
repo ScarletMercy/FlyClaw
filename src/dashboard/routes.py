@@ -652,10 +652,18 @@ def register_dashboard(app: FastAPI, application):
     async def dashboard_list_models(request: Request):
         _check_auth(request, app)
         cfg = _app_ref.config
-        current = {"provider": cfg.model.provider, "name": cfg.model.name}
-        available = [{"provider": current["provider"], "name": current["name"], "active": True}]
-        for fb in cfg.model.fallbacks:
-            available.append({"provider": fb.provider, "name": fb.name, "active": False})
+        active_model = _app_ref.model_ref.model if _app_ref.model_ref else None
+        from src.graph import FallbackModelChain
+        if isinstance(active_model, FallbackModelChain):
+            meta = active_model._model_meta
+            idx = active_model._active_idx
+            available = []
+            for i, m in enumerate(meta):
+                available.append({"provider": m["provider"], "name": m["name"], "active": i == idx})
+            current = meta[idx] if idx < len(meta) else meta[0]
+        else:
+            current = {"provider": cfg.model.provider, "name": cfg.model.name}
+            available = [{"provider": current["provider"], "name": current["name"], "active": True}]
         return {"current": current, "available": available}
 
     @router.post("/api/dashboard/models/switch")
@@ -668,29 +676,53 @@ def register_dashboard(app: FastAPI, application):
             raise HTTPException(status_code=400, detail="provider and name required")
         if not _app_ref.model_ref:
             raise HTTPException(status_code=500, detail="model_ref not initialized")
-        from src.graph import _make_chat_model
-        cfg = _app_ref.config
-        # Look for matching fallback to get its base_url/api_key
-        fb_base_url = None
-        fb_api_key = None
-        for fb in cfg.model.fallbacks:
-            if fb.provider == provider and fb.name == name:
-                fb_base_url = getattr(fb, "base_url", None)
-                fb_api_key = getattr(fb, "api_key", None)
-                break
-        try:
-            new_model = _make_chat_model(
-                provider, name,
-                cfg.model.temperature,
-                base_url=fb_base_url or cfg.model.base_url,
-                api_key=fb_api_key or cfg.model.api_key,
-            )
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to create model: {e}")
-        old_name = f"{cfg.model.provider}/{cfg.model.name}"
-        _app_ref.model_ref.model = new_model
-        logger.info("Model switched from %s to %s/%s", old_name, provider, name)
-        return {"ok": True, "previous": old_name, "current": f"{provider}/{name}"}
+
+        active_model = _app_ref.model_ref.model
+        from src.graph import FallbackModelChain
+        if isinstance(active_model, FallbackModelChain):
+            meta = active_model._model_meta
+            old_idx = active_model._active_idx
+            old_name = f"{meta[old_idx]['provider']}/{meta[old_idx]['name']}"
+            # Find target index
+            target_idx = None
+            for i, m in enumerate(meta):
+                if m["provider"] == provider and m["name"] == name:
+                    target_idx = i
+                    break
+            if target_idx is None:
+                raise HTTPException(status_code=404, detail=f"Model {provider}/{name} not found in chain")
+            active_model.switch_to(target_idx)
+            # Update context window to match the new model
+            target_meta = meta[target_idx]
+            if _app_ref.model_ref.ctx_window and "context_window" in target_meta:
+                _app_ref.model_ref.ctx_window["tokens"] = target_meta["context_window"]
+                logger.info("Context window updated to %d for %s/%s", target_meta["context_window"], provider, name)
+            logger.info("Model switched from %s to %s/%s", old_name, provider, name)
+            return {"ok": True, "previous": old_name, "current": f"{provider}/{name}"}
+        else:
+            # Single model (no chain) — create new model for switch
+            from src.graph import _make_chat_model
+            cfg = _app_ref.config
+            fb_base_url = None
+            fb_api_key = None
+            for fb in cfg.model.fallbacks:
+                if fb.provider == provider and fb.name == name:
+                    fb_base_url = getattr(fb, "base_url", None)
+                    fb_api_key = getattr(fb, "api_key", None)
+                    break
+            try:
+                new_model = _make_chat_model(
+                    provider, name,
+                    cfg.model.temperature,
+                    base_url=fb_base_url or cfg.model.base_url,
+                    api_key=fb_api_key or cfg.model.api_key,
+                )
+            except Exception as e:
+                raise HTTPException(status_code=400, detail=f"Failed to create model: {e}")
+            old_name = f"{cfg.model.provider}/{cfg.model.name}"
+            _app_ref.model_ref.model = new_model
+            logger.info("Model switched from %s to %s/%s", old_name, provider, name)
+            return {"ok": True, "previous": old_name, "current": f"{provider}/{name}"}
 
     # ── Auth dashboard API ──────────────────────────────────
 

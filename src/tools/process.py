@@ -96,7 +96,7 @@ class ProcessSupervisor:
 
             # Truncate output
             if len(output.encode("utf-8", errors="replace")) > max_output:
-                output = output[: max_output // 2] + f"\n... [truncated at {max_output} bytes] ...\n"
+                output = output[:max_output] + f"\n... [truncated at {max_output} bytes] ...\n"
 
             if exit_code != 0 and not timed_out:
                 output += f"\n[exit code: {exit_code}]"

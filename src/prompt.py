@@ -81,6 +81,24 @@ def _build_skills_section(skills_prompt: str) -> list[str]:
     ]
 
 
+def _build_beads_section(config) -> list[str]:
+    """Beads memory tool guidance — complements AGENTS.md bootstrap context."""
+    if not config:
+        return []
+    beads_cfg = getattr(config, "beads", None)
+    if not beads_cfg or not getattr(beads_cfg, "enabled", False):
+        return []
+    return [
+        "## Beads Memory Tools",
+        "Use dedicated tools for memory operations — do NOT use exec_command to run bd:",
+        "- bd_remember: Save a memory (auto-dedup by key). Use when user shares preferences, identity, contacts, project info, or important decisions.",
+        "- bd_recall: Retrieve a specific memory by key.",
+        "- bd_memories: List or search all memories.",
+        "- bd_forget: Delete a memory.",
+        "",
+    ]
+
+
 def _build_memory_section(config) -> list[str]:
     if not config:
         return []
@@ -95,24 +113,6 @@ def _build_memory_section(config) -> list[str]:
         "",
     ]
 
-
-def _build_beads_section(config) -> list[str]:
-    if not config:
-        return []
-    beads_cfg = getattr(config, "beads", None)
-    if not beads_cfg or not getattr(beads_cfg, "enabled", False):
-        return []
-    return [
-        "## Beads Memory",
-        "You have persistent memory tools powered by Beads (bd):",
-        "- bd_remember: Save a memory (auto-dedup by key). Use when user shares preferences, identity, contacts, project info, or important decisions.",
-        "- bd_recall: Retrieve a specific memory by key.",
-        "- bd_memories: List or search all memories.",
-        "- bd_forget: Delete a memory.",
-        "Memories persist across sessions. Proactively save important user info with bd_remember.",
-        "Do NOT use exec_command to run bd — use the dedicated bd_* tools directly, they are already installed and working.",
-        "",
-    ]
 
 
 def _build_workspace(workspace_dir: str) -> list[str]:
@@ -208,7 +208,9 @@ def build_system_prompt(
         agents_cfg = getattr(config, "agents", None)
         if agents_cfg:
             tz_name = getattr(agents_cfg, "timezone", "") or ""
-            workspace_dir = getattr(agents_cfg, "workspace", ".") or "."
+            raw_ws = getattr(agents_cfg, "workspace", ".") or "."
+            from pathlib import Path
+            workspace_dir = str(Path(raw_ws).expanduser().resolve())
 
     has_custom_prompt = bool(extra_system_prompt.strip())
 

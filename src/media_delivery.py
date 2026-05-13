@@ -77,7 +77,14 @@ async def deliver_media(text: str, chat_id: str, channel_prefix: str, channel) -
         return text
 
     for tag, file_path, ext in media_list:
-        p = Path(file_path)
+        p = Path(file_path).resolve()
+        # Path traversal protection: reject paths outside workspace
+        from src.tools.file_tools import _resolve_path, _BASE_DIR
+        try:
+            _resolve_path(file_path)
+        except ValueError:
+            logger.warning("Media path outside workspace rejected: %s", file_path)
+            continue
         if not p.exists() or not p.is_file():
             logger.warning("Media file not found: %s", file_path)
             continue
