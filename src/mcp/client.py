@@ -56,6 +56,7 @@ class MCPClient:
                 url=self.config.url,
                 headers=self.config.headers,
                 timeout=timeout,
+                max_retries=self.config.max_retries,
             )
         else:
             raise ValueError(f"Unknown transport: {self.config.transport}")

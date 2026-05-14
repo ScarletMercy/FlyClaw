@@ -6,6 +6,8 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, Callable, Optional
 
+import httpx
+
 logger = logging.getLogger("myclaw.channels.base")
 
 _MAX_API_RETRIES = 3
@@ -96,26 +98,50 @@ async def api_request_with_retry(
     *,
     description: str = "API request",
     max_retries: int = _MAX_API_RETRIES,
+    retry_on_server_error: bool = True,
 ) -> Any:
-    """Execute an HTTP request with 429 rate-limit retry logic."""
+    """Execute an HTTP request with retry for 429, 5xx, and network errors."""
     import random as _random
 
+    last_exc: Exception | None = None
     for attempt in range(max_retries + 1):
-        resp = await request_fn()
-        if getattr(resp, "status_code", 0) != 429:
-            return resp
-        if attempt >= max_retries:
-            logger.warning("%s: 429 rate limit persisted after %d retries", description, max_retries)
-            return resp
-        retry_after = getattr(resp, "headers", {}).get("Retry-After")
-        if retry_after:
-            try:
-                wait = float(retry_after)
-            except ValueError:
-                wait = 1.0
-        else:
-            wait = min(1.0 * (2**attempt), 8.0)
-            wait += _random.uniform(0, wait * 0.1)
-        logger.warning("%s: 429 rate limited, retry %d/%d in %.1fs", description, attempt + 1, max_retries, wait)
-        await asyncio.sleep(wait)
-    return resp
+        try:
+            resp = await request_fn()
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            last_exc = e
+            if attempt >= max_retries:
+                logger.warning("%s: network error persisted after %d retries: %s", description, max_retries, e)
+                raise
+            wait = min(1.0 * (2 ** attempt), 8.0) + _random.uniform(0, 0.5)
+            logger.warning("%s: network error, retry %d/%d in %.1fs: %s", description, attempt + 1, max_retries, wait, e)
+            await asyncio.sleep(wait)
+            continue
+
+        if getattr(resp, "status_code", 0) == 429:
+            if attempt >= max_retries:
+                logger.warning("%s: 429 rate limit persisted after %d retries", description, max_retries)
+                return resp
+            retry_after = getattr(resp, "headers", {}).get("Retry-After")
+            if retry_after:
+                try:
+                    wait = float(retry_after)
+                except ValueError:
+                    wait = 1.0
+            else:
+                wait = min(1.0 * (2**attempt), 8.0)
+                wait += _random.uniform(0, wait * 0.1)
+            logger.warning("%s: 429 rate limited, retry %d/%d in %.1fs", description, attempt + 1, max_retries, wait)
+            await asyncio.sleep(wait)
+            continue
+
+        if retry_on_server_error and getattr(resp, "status_code", 0) >= 500:
+            if attempt >= max_retries:
+                logger.warning("%s: server error %d persisted after %d retries", description, resp.status_code, max_retries)
+                return resp
+            wait = min(1.0 * (2 ** attempt), 8.0) + _random.uniform(0, 0.5)
+            logger.warning("%s: server error %d, retry %d/%d in %.1fs", description, resp.status_code, attempt + 1, max_retries, wait)
+            await asyncio.sleep(wait)
+            continue
+
+        return resp
+    return await request_fn()

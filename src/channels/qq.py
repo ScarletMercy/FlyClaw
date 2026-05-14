@@ -443,11 +443,17 @@ class QQChannel(Channel):
             return
 
         self._token_manager = _QQTokenManager(self.config.app_id, self.config.client_secret)
-        try:
-            await self._token_manager.get_token()
-        except Exception as e:
-            logger.error("QQ Bot auth failed: %s", e)
-            return
+        for _attempt in range(3):
+            try:
+                await self._token_manager.get_token()
+                break
+            except Exception as e:
+                if _attempt >= 2:
+                    logger.error("QQ Bot auth failed after 3 attempts: %s", e)
+                    return
+                wait = 2 ** _attempt
+                logger.warning("QQ Bot auth attempt %d failed, retry in %ds: %s", _attempt + 1, wait, e)
+                await asyncio.sleep(wait)
 
         self._token_manager.start_background_refresh()
         self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))

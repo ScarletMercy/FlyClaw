@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from typing import Any
 
 import httpx
@@ -22,10 +23,12 @@ class StreamableHTTPTransport(MCPTransport):
         url: str,
         headers: dict[str, str] | None = None,
         timeout: float = 30.0,
+        max_retries: int = 3,
     ):
         self._url = url
         self._headers = headers or {}
         self._timeout = timeout
+        self._max_retries = max_retries
         self._session_id: str | None = None
         self._protocol = JSONRPCProtocol()
         self._connected = False
@@ -74,24 +77,44 @@ class StreamableHTTPTransport(MCPTransport):
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
 
-        response = await self._client.post(self._url, json=message, headers=headers)
-        response.raise_for_status()
+        last_exc: Exception | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                response = await self._client.post(self._url, json=message, headers=headers)
+                response.raise_for_status()
 
-        # Capture session id
-        sid = response.headers.get("Mcp-Session-Id")
-        if sid:
-            self._session_id = sid
+                # Capture session id
+                sid = response.headers.get("Mcp-Session-Id")
+                if sid:
+                    self._session_id = sid
 
-        body = response.json()
+                body = response.json()
 
-        if "error" in body:
-            error = body["error"]
-            raise JSONRPCError(
-                error.get("code", -32000),
-                error.get("message", "Unknown error"),
-            )
+                if "error" in body:
+                    error = body["error"]
+                    raise JSONRPCError(
+                        error.get("code", -32000),
+                        error.get("message", "Unknown error"),
+                    )
 
-        return body.get("result")
+                return body.get("result")
+
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code < 500:
+                    raise
+                last_exc = e
+            except (httpx.TimeoutException, httpx.ConnectError) as e:
+                last_exc = e
+
+            if attempt < self._max_retries:
+                wait = min(0.5 * (2 ** attempt), 10.0) + random.uniform(0, 0.5)
+                logger.warning(
+                    "MCP HTTP %s retry %d/%d in %.1fs: %s",
+                    method, attempt + 1, self._max_retries, wait, last_exc,
+                )
+                await asyncio.sleep(wait)
+
+        raise last_exc  # type: ignore[misc]
 
     async def _send_notification_raw(self, method: str, params: dict | None = None) -> None:
         """Send a JSON-RPC notification."""

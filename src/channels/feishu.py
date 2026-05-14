@@ -618,6 +618,9 @@ class FeishuChannel(Channel):
         self._bot_info: Optional[dict] = None
         self._mu_runner = None
         self._ws_client: Optional[WsClient] = None
+        self._ws_handler = None
+        self._ws_domain_url = None
+        self._main_loop = None
 
     def set_message_callback(self, callback: Callable):
         self._on_message_callback = callback
@@ -628,11 +631,11 @@ class FeishuChannel(Channel):
             return
 
         # Wrap async callback for sync SDK
-        main_loop = asyncio.get_running_loop()
+        self._main_loop = asyncio.get_running_loop()
 
         def _sync_on_message(data):
             try:
-                future = asyncio.run_coroutine_threadsafe(self._on_message(data), main_loop)
+                future = asyncio.run_coroutine_threadsafe(self._on_message(data), self._main_loop)
 
                 def _done(fut):
                     try:
@@ -652,13 +655,19 @@ class FeishuChannel(Channel):
         handler = EventDispatcherHandlerBuilder("", "").register_p2_im_message_receive_v1(_sync_on_message).build()
 
         domain_url = lark.FEISHU_DOMAIN if self.config.domain != "lark" else lark.LARK_DOMAIN
-        self._ws_client = WsClient(
-            self.config.app_id,
-            self.config.app_secret,
-            event_handler=handler,
-            domain=domain_url,
-            log_level=lark.LogLevel.WARNING,
-        )
+        self._ws_handler = handler
+        self._ws_domain_url = domain_url
+
+        def _create_ws_client():
+            return WsClient(
+                self.config.app_id,
+                self.config.app_secret,
+                event_handler=self._ws_handler,
+                domain=self._ws_domain_url,
+                log_level=lark.LogLevel.WARNING,
+            )
+
+        self._ws_client = _create_ws_client()
         # Log unhandled event types, suppress noise
         _lark_logger = logging.getLogger("Lark")
         _lark_logger.handlers.clear()
@@ -695,13 +704,24 @@ class FeishuChannel(Channel):
         _lark_logger.setLevel(logging.WARNING)
         self._running = True
 
+        _WS_BACKOFF = [1, 2, 5, 10, 30, 60, 120]
+
         def _start_ws():
-            try:
-                self._ws_client.start()
-            except Exception as e:
-                if self._running:
-                    logger.error("WebSocket client failed: %s", e, exc_info=True)
-                self._running = False
+            backoff_idx = 0
+            while self._running:
+                try:
+                    self._ws_client = _create_ws_client()
+                    self._ws_client.start()
+                    backoff_idx = 0
+                except Exception as e:
+                    if not self._running:
+                        break
+                    delay = _WS_BACKOFF[min(backoff_idx, len(_WS_BACKOFF) - 1)]
+                    logger.warning("Feishu WS disconnected, reconnect in %ds: %s", delay, e)
+                    import time
+                    time.sleep(delay)
+                    backoff_idx += 1
+            self._running = False
 
         import threading
 
@@ -822,6 +842,8 @@ class FeishuChannel(Channel):
         msg_type: str = "text",
         reply_to: Optional[str] = None,
     ):
+        from src.tools.feishu_tools import _lark_call_with_retry
+
         if msg_type == "text":
             content = json.dumps({"text": text}, ensure_ascii=False)
         else:
@@ -831,18 +853,18 @@ class FeishuChannel(Channel):
             if reply_to:
                 body = CreateMessageRequestBody.builder().msg_type(msg_type).content(content).build()
                 req = ReplyMessageRequest.builder().message_id(reply_to).request_body(body).build()
-                resp = await asyncio.to_thread(
-                    self.client.im.v1.message.reply,
-                    req,
+                resp = await _lark_call_with_retry(
+                    lambda req=req: self.client.im.v1.message.reply(req),
+                    description="Feishu reply message",
                 )
             else:
                 body = (
                     CreateMessageRequestBody.builder().receive_id(chat_id).msg_type(msg_type).content(content).build()
                 )
                 req = CreateMessageRequest.builder().receive_id_type("chat_id").request_body(body).build()
-                resp = await asyncio.to_thread(
-                    self.client.im.v1.message.create,
-                    req,
+                resp = await _lark_call_with_retry(
+                    lambda req=req: self.client.im.v1.message.create(req),
+                    description="Feishu send message",
                 )
             if not resp.success():
                 logger.error("Send message failed: %s %s", resp.code, resp.msg)
@@ -858,13 +880,15 @@ class FeishuChannel(Channel):
         text: str,
         message_id: str,
     ):
+        from src.tools.feishu_tools import _lark_call_with_retry
+
         try:
             content = json.dumps({"text": text}, ensure_ascii=False)
             body = CreateMessageRequestBody.builder().msg_type("text").content(content).build()
             req = ReplyMessageRequest.builder().message_id(message_id).request_body(body).build()
-            resp = await asyncio.to_thread(
-                self.client.im.v1.message.reply,
-                req,
+            resp = await _lark_call_with_retry(
+                lambda req=req: self.client.im.v1.message.reply(req),
+                description="Feishu reply message",
             )
             if resp.success():
                 return resp.data
@@ -1082,7 +1106,5 @@ class FeishuChannel(Channel):
 
     async def stop(self):
         self._running = False
-        if self._ws_client:
-            # WsClient only has start(), no stop() — clear reference to allow GC
-            self._ws_client = None
+        self._ws_client = None
         logger.info("Feishu channel stopped")

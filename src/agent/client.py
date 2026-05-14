@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from openai import AsyncOpenAI
+import httpx
 
 logger = logging.getLogger("myclaw.agent.client")
 
@@ -26,7 +27,12 @@ class ChatClient:
         model: str,
         temperature: float = 0.0,
     ):
-        self._client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+        self._client = AsyncOpenAI(
+            base_url=base_url,
+            api_key=api_key,
+            timeout=httpx.Timeout(connect=10.0, read=120.0, write=30.0, pool=10.0),
+            max_retries=2,
+        )
         self.model = model
         self.temperature = temperature
         self.base_url = base_url
