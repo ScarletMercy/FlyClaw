@@ -176,7 +176,6 @@ class AgentLoop:
                     "tool_call_id": tc.id,
                     "content": tool_result,
                 })
-                # Checkpoint: save after each tool execution
                 await self._store.save(thread_id, state)
 
         return state
@@ -188,35 +187,96 @@ class AgentLoop:
             raise RuntimeError(f"No saved state for thread {thread_id}")
 
         pending = state.pending_approval or {}
-        tool_call_id = pending.get("tool_call_id", "")
+        pending_tc_id = pending.get("tool_call_id", "")
 
+        # Find the assistant message that contains the pending tool_call
+        # and collect ALL tool_call ids from it
+        assistant_msg_idx = None
+        all_tc_ids: list[str] = []
+        for i in range(len(state.messages) - 1, -1, -1):
+            msg = state.messages[i]
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                assistant_msg_idx = i
+                for tc in msg["tool_calls"]:
+                    tc_id = tc.get("id", "")
+                    if tc_id:
+                        all_tc_ids.append(tc_id)
+                break
+
+        # Determine which tool_calls already have results
+        existing_results: set[str] = set()
+        if assistant_msg_idx is not None:
+            for msg in state.messages[assistant_msg_idx + 1:]:
+                if msg.get("role") == "tool":
+                    existing_results.add(msg.get("tool_call_id", ""))
+
+        # Handle the pending tool call
         if decision in ("allow_once", "allow_always"):
-            if tool_call_id:
-                for msg in reversed(state.messages):
-                    if msg.get("role") == "assistant" and msg.get("tool_calls"):
-                        for tc in msg["tool_calls"]:
-                            if tc.get("id") == tool_call_id:
-                                result = await self._execute_tool(tc, state, thread_id)
-                                state.append_message({
-                                    "role": "tool",
-                                    "tool_call_id": tc["id"],
-                                    "content": result,
-                                })
-                                break
+            if pending_tc_id and assistant_msg_idx is not None:
+                assistant_msg = state.messages[assistant_msg_idx]
+                for tc in assistant_msg["tool_calls"]:
+                    if tc.get("id") == pending_tc_id:
+                        result = await self._execute_tool(tc, state, thread_id)
+                        state.append_message({
+                            "role": "tool",
+                            "tool_call_id": tc["id"],
+                            "content": result,
+                        })
                         break
+                existing_results.add(pending_tc_id)
+
+                # Execute any other tool_calls from the same message that lack results
+                for tc in assistant_msg["tool_calls"]:
+                    tc_id = tc.get("id", "")
+                    if tc_id and tc_id not in existing_results:
+                        try:
+                            result = await self._execute_tool(tc, state, thread_id)
+                        except ApprovalPending:
+                            state.append_message({
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "content": "[pending approval]",
+                            })
+                            state.pending_approval = {
+                                "request_id": pending.get("request_id", ""),
+                                "tool_name": "exec_command",
+                                "command_preview": pending.get("command_preview", ""),
+                                "tool_call_id": tc_id,
+                            }
+                            await self._store.save(thread_id, state)
+                            raise
+                        state.append_message({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": result,
+                        })
+                        existing_results.add(tc_id)
         else:
-            if tool_call_id:
+            if pending_tc_id:
                 state.append_message({
                     "role": "tool",
-                    "tool_call_id": tool_call_id,
+                    "tool_call_id": pending_tc_id,
                     "content": "[denied] Command execution was denied by user.",
                 })
+                existing_results.add(pending_tc_id)
+
+            # Deny remaining unexecuted tool calls too
+            if assistant_msg_idx is not None:
+                assistant_msg = state.messages[assistant_msg_idx]
+                for tc in assistant_msg["tool_calls"]:
+                    tc_id = tc.get("id", "")
+                    if tc_id and tc_id not in existing_results:
+                        state.append_message({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": "[denied] Skipped due to associated denial.",
+                        })
+                        existing_results.add(tc_id)
 
         state.pending_approval = None
         await self._store.save(thread_id, state)
 
-        max_rounds = self._get_max_tool_rounds()
-        return await self._run_inner(state, thread_id, max_rounds=max_rounds)
+        return await self._run_inner(state, thread_id, max_rounds=self._get_max_tool_rounds())
 
     def _get_max_tool_rounds(self) -> int:
         if not self._config:

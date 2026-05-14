@@ -142,7 +142,7 @@ class TestStateStore:
             messages=[{"role": "user", "content": "hello"}],
             sender_id="u1", channel="qq",
         )
-        asyncio.get_event_loop().run_until_complete(store.save("t1", state))
+        asyncio.run(store.save("t1", state))
         loaded = store.load("t1")
         assert loaded is not None
         assert loaded.messages[0]["content"] == "hello"
@@ -159,14 +159,14 @@ class TestStateStore:
             {"role": "user", "content": "a"},
             {"role": "assistant", "content": "b"},
         ])
-        asyncio.get_event_loop().run_until_complete(store.save("t1", state))
+        asyncio.run(store.save("t1", state))
         msgs = store.load_messages("t1")
         assert len(msgs) == 2
 
     def test_delete(self, tmp_path):
         store = StateStore(str(tmp_path / "test.db"))
         state = AgentState(messages=[{"role": "user", "content": "x"}])
-        asyncio.get_event_loop().run_until_complete(store.save("t1", state))
+        asyncio.run(store.save("t1", state))
         assert store.delete("t1") is True
         assert store.load("t1") is None
 
@@ -174,7 +174,7 @@ class TestStateStore:
         store = StateStore(str(tmp_path / "test.db"))
         for i in range(3):
             state = AgentState(messages=[{"role": "user", "content": str(i)}])
-            asyncio.get_event_loop().run_until_complete(store.save(f"t{i}", state))
+            asyncio.run(store.save(f"t{i}", state))
         threads = store.list_threads()
         assert len(threads) == 3
 
@@ -205,7 +205,7 @@ class TestMemoryStateStore:
     def test_memory_store_works(self):
         store = MemoryStateStore()
         state = AgentState(messages=[{"role": "user", "content": "test"}])
-        asyncio.get_event_loop().run_until_complete(store.save("t1", state))
+        asyncio.run(store.save("t1", state))
         loaded = store.load("t1")
         assert loaded is not None
         assert loaded.messages[0]["content"] == "test"
@@ -223,21 +223,29 @@ class TestMemoryStateStore:
 class TestConcurrencyLocks:
     def test_acquire_thread_returns_lock(self, tmp_path):
         store = StateStore(str(tmp_path / "test.db"))
-        lock = asyncio.get_event_loop().run_until_complete(store.acquire_thread("t1"))
+        lock = asyncio.run(store.acquire_thread("t1"))
         assert isinstance(lock, asyncio.Lock)
 
     def test_same_thread_returns_same_lock(self, tmp_path):
         store = StateStore(str(tmp_path / "test.db"))
-        loop = asyncio.get_event_loop()
-        lock1 = loop.run_until_complete(store.acquire_thread("t1"))
-        lock2 = loop.run_until_complete(store.acquire_thread("t1"))
+
+        async def _get_two():
+            l1 = await store.acquire_thread("t1")
+            l2 = await store.acquire_thread("t1")
+            return l1, l2
+
+        lock1, lock2 = asyncio.run(_get_two())
         assert lock1 is lock2
 
     def test_different_threads_different_locks(self, tmp_path):
         store = StateStore(str(tmp_path / "test.db"))
-        loop = asyncio.get_event_loop()
-        lock1 = loop.run_until_complete(store.acquire_thread("t1"))
-        lock2 = loop.run_until_complete(store.acquire_thread("t2"))
+
+        async def _get_two():
+            l1 = await store.acquire_thread("t1")
+            l2 = await store.acquire_thread("t2")
+            return l1, l2
+
+        lock1, lock2 = asyncio.run(_get_two())
         assert lock1 is not lock2
 
     def test_same_thread_serialized(self):
@@ -255,6 +263,6 @@ class TestConcurrencyLocks:
         async def run():
             await asyncio.gather(task("A", "t1", 0.05), task("B", "t1", 0.05))
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
         # A and B must not overlap
         assert order == ["A-start", "A-end", "B-start", "B-end"] or order == ["B-start", "B-end", "A-start", "A-end"]

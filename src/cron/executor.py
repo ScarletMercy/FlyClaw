@@ -134,11 +134,10 @@ async def execute_cron_job(
             chat_type="p2p",
             message_id=f"cron:{job.id}:{started_at}",
         )
-        if job.session_target == "main":
-            store = agent_loop.get_store()
-            existing = store.load(thread_id)
-            if existing:
-                input_state.messages = existing.messages + [new_msg]
+        store = agent_loop.get_store()
+        existing = store.load(thread_id)
+        if existing:
+            input_state.messages = existing.messages + [new_msg]
     else:
         return CronRunResult(
             job_id=job.id,

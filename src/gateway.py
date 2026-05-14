@@ -24,33 +24,32 @@ class TokenBucketRateLimiter:
         self._buckets: dict[str, dict] = {}
         self._lock = asyncio.Lock()
 
-    async def _get_tokens(self, key: str) -> float:
+    async def acquire(self, key: str) -> bool:
         async with self._lock:
             now = time.time()
             if key not in self._buckets:
                 self._buckets[key] = {"tokens": self.capacity - 1.0, "last_update": now}
-                return self.capacity - 1.0
+                return True
             bucket = self._buckets[key]
             elapsed = now - bucket["last_update"]
             bucket["tokens"] = min(self.capacity, bucket["tokens"] + elapsed * self.rate)
             bucket["last_update"] = now
             if bucket["tokens"] < 1.0:
-                return bucket["tokens"]
+                return False
             bucket["tokens"] -= 1.0
-            return bucket["tokens"]
-
-    async def acquire(self, key: str) -> bool:
-        tokens = await self._get_tokens(key)
-        return tokens >= 0.0
+            return True
 
     async def wait_time(self, key: str) -> float:
         async with self._lock:
             if key not in self._buckets:
                 return 0.0
             bucket = self._buckets[key]
-            if bucket["tokens"] >= 1.0:
+            now = time.time()
+            elapsed = now - bucket["last_update"]
+            available = min(self.capacity, bucket["tokens"] + elapsed * self.rate)
+            if available >= 1.0:
                 return 0.0
-            return (1.0 - bucket["tokens"]) / self.rate
+            return (1.0 - available) / self.rate
 
 
 _rate_limiter: Optional[TokenBucketRateLimiter] = None
@@ -118,7 +117,7 @@ def create_gateway(app_config, agent_loop, feishu_channel=None, cron_service=Non
         yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'myclaw', 'choices': [{'index': 0, 'delta': {'role': 'assistant'}, 'finish_reason': None}]})}\n\n"
         try:
             result_state = await loop.run(input_state, thread_id)
-            for msg in result_state.messages:
+            for msg in reversed(result_state.messages):
                 if msg.get("role") == "assistant" and msg.get("content"):
                     yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'myclaw', 'choices': [{'index': 0, 'delta': {'content': msg['content']}, 'finish_reason': None}]})}\n\n"
                     break

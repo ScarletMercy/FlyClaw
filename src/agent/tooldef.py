@@ -29,6 +29,14 @@ class ToolDef:
     description: str
     parameters: dict[str, Any]
     fn: Callable
+    _valid_params: frozenset = field(default_factory=frozenset)
+
+    def __post_init__(self):
+        if not self._valid_params:
+            sig = inspect.signature(self.fn)
+            self.__dict__['_valid_params'] = frozenset(
+                p for p in sig.parameters if p not in ("self", "cls")
+            )
 
     def to_openai_tool(self) -> dict:
         return {
@@ -41,9 +49,9 @@ class ToolDef:
         }
 
     async def execute(self, args: dict) -> str:
-        import asyncio
         import inspect as _inspect
-        result = self.fn(**args)
+        filtered = {k: v for k, v in args.items() if k in self._valid_params}
+        result = self.fn(**filtered)
         if _inspect.isawaitable(result):
             result = await result
         return str(result) if result is not None else ""
@@ -139,6 +147,8 @@ def _resolve_type(py_type: Any) -> dict[str, Any]:
         args = getattr(py_type, "__args__", ())
         non_none = [a for a in args if a is not type(None)]
         if len(non_none) == 1:
+            return _resolve_type(non_none[0])
+        if len(non_none) > 1:
             return _resolve_type(non_none[0])
 
     if py_type in _TYPE_MAP:

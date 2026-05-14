@@ -500,7 +500,7 @@ class Application:
                     state = self.state_store.load(thread_id)
                     if state:
                         state.messages = []
-                        self.state_store.save(thread_id, state)
+                        await self.state_store.save(thread_id, state)
                     return "Session reset."
                 except Exception as e:
                     return f"Reset failed: {e}"
@@ -718,6 +718,11 @@ class Application:
             # Load existing state messages (history) and prepend them
             existing = self.state_store.load(thread_id)
             if existing:
+                if existing.pending_approval:
+                    await reply_fn("⏳ 有待审批的操作，请先回复审批后再发新消息。")
+                    if channel_prefix == "feishu":
+                        await self.typing.stop(message_id)
+                    return
                 input_state.messages = existing.messages + input_state.messages
 
             assistant_text = None
@@ -851,10 +856,19 @@ class Application:
                         pass
 
                     try:
+                        call_id_to_name = {}
+                        for m in messages:
+                            if m.get("role") == "assistant" and m.get("tool_calls"):
+                                for tc in m["tool_calls"]:
+                                    fn_info = tc.get("function", {})
+                                    if isinstance(fn_info, dict) and tc.get("id"):
+                                        call_id_to_name[tc["id"]] = fn_info.get("name", "")
                         for msg in messages[pre_msg_count:]:
-                            if msg.get("role") == "tool" and "bd_remember" in str(msg.get("name", "")):
-                                await reply_fn("\U0001f4be update memory: 已保存到 beads")
-                                break
+                            if msg.get("role") == "tool":
+                                tc_name = call_id_to_name.get(msg.get("tool_call_id", ""), "")
+                                if "bd_remember" in tc_name:
+                                    await reply_fn("\U0001f4be update memory: 已保存到 beads")
+                                    break
                     except Exception:
                         pass
 

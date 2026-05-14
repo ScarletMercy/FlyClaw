@@ -84,6 +84,9 @@ class AgentState(BaseModel):
         )
 
 
+_MAX_LOCKS = 4096
+
+
 class StateStore:
     def __init__(self, db_path: str):
         self._db_path = db_path
@@ -95,8 +98,9 @@ class StateStore:
         self._init_db()
 
     def _init_db(self) -> None:
-        self._db = sqlite3.connect(self._db_path)
+        self._db = sqlite3.connect(self._db_path, timeout=30, check_same_thread=False)
         self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA busy_timeout=5000")
         self._db.execute("""
             CREATE TABLE IF NOT EXISTS sessions (
                 thread_id TEXT PRIMARY KEY,
@@ -111,22 +115,29 @@ class StateStore:
     async def acquire_thread(self, thread_id: str) -> asyncio.Lock:
         async with self._locks_lock:
             if thread_id not in self._locks:
+                if len(self._locks) > _MAX_LOCKS:
+                    self._locks.clear()
                 self._locks[thread_id] = asyncio.Lock()
             return self._locks[thread_id]
 
     async def save(self, thread_id: str, state: AgentState) -> None:
         assert self._db is not None
-        self._db.execute(
-            """INSERT OR REPLACE INTO sessions (thread_id, messages, metadata, updated_at)
-               VALUES (?, ?, ?, ?)""",
-            (
-                thread_id,
-                json.dumps(state.messages, ensure_ascii=False),
-                json.dumps(state.meta_dict(), ensure_ascii=False),
-                time.time(),
-            ),
+        data = (
+            thread_id,
+            json.dumps(state.messages, ensure_ascii=False),
+            json.dumps(state.meta_dict(), ensure_ascii=False),
+            time.time(),
         )
-        self._db.commit()
+
+        def _do_save():
+            self._db.execute(
+                """INSERT OR REPLACE INTO sessions (thread_id, messages, metadata, updated_at)
+                   VALUES (?, ?, ?, ?)""",
+                data,
+            )
+            self._db.commit()
+
+        await asyncio.to_thread(_do_save)
 
     def load(self, thread_id: str) -> AgentState | None:
         assert self._db is not None
@@ -142,7 +153,7 @@ class StateStore:
         return AgentState.model_validate(meta)
 
     async def aload(self, thread_id: str) -> AgentState | None:
-        return self.load(thread_id)
+        return await asyncio.to_thread(self.load, thread_id)
 
     def load_messages(self, thread_id: str) -> list[dict]:
         assert self._db is not None

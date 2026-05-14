@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import sys
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -367,10 +366,8 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         substituted = _substitute_recursive(raw)
         return AppConfig(**substituted)
     except ValidationError as e:
-        _log.critical("Config validation failed for %s: %s", path, e)
-        print(f"[config] FATAL: Validation error in {path}: {e}", file=sys.stderr)
-        raise SystemExit(1)
+        _log.warning("Config validation failed for %s, using defaults: %s", path, e)
+        return AppConfig()
     except Exception as e:
-        _log.critical("Failed to load config from %s: %s", path, e)
-        print(f"[config] FATAL: Cannot load config from {path}: {e}", file=sys.stderr)
-        raise SystemExit(1)
+        _log.warning("Failed to load config from %s, using defaults: %s", path, e)
+        return AppConfig()

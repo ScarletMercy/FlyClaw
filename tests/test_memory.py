@@ -15,14 +15,14 @@ def store(tmp_path):
     from src.memory.store import MemoryStore
 
     s = MemoryStore(db_path=str(tmp_path / "memory.db"))
-    asyncio.get_event_loop().run_until_complete(s.initialize())
+    asyncio.run(s.initialize())
     yield s
-    asyncio.get_event_loop().run_until_complete(s.close())
+    asyncio.run(s.close())
 
 
 def _run(coro):
     """Run an async coroutine synchronously for testing."""
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 class TestMemoryStore:
