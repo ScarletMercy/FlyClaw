@@ -23,7 +23,7 @@ from src.cron.service import CronService
 from src.cron.executor import execute_cron_job
 from src.skills.loader import discover_skills
 from src.skills.types import Skill
-from src.skills.prompt import build_skill_commands
+from src.skills.prompt import build_skills_prompt
 from src.session import SessionTracker
 from src.commands.dispatcher import CommandDispatcher, build_builtin_help
 from src.auth.store import AuthStore
@@ -303,7 +303,7 @@ class Application:
 
         skills_prompt = ""
         if skills:
-            skills_prompt = build_skill_commands(skills)
+            skills_prompt = build_skills_prompt(skills)
 
         # Create state store
         cp_path = Path(self.config.checkpointer.path)
