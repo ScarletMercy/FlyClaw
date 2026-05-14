@@ -364,21 +364,23 @@ class _QQWebSocketClient:
             return  # Already reconnecting
         self._reconnecting = True
         try:
-            self._reconnect_attempts += 1
-            if self._reconnect_attempts > _MAX_RECONNECT_ATTEMPTS:
-                self._log.error("Max reconnect attempts reached, giving up")
-                return
+            while self._running:
+                self._reconnect_attempts += 1
+                if self._reconnect_attempts > _MAX_RECONNECT_ATTEMPTS:
+                    self._log.error("Max reconnect attempts reached, giving up")
+                    return
 
-            idx = min(self._reconnect_attempts - 1, len(_RECONNECT_DELAYS) - 1)
-            delay = custom_delay if custom_delay is not None else _RECONNECT_DELAYS[idx]
-            self._log.info("Reconnecting in %.1fs (attempt %d)", delay, self._reconnect_attempts)
-            await asyncio.sleep(delay)
+                idx = min(self._reconnect_attempts - 1, len(_RECONNECT_DELAYS) - 1)
+                delay = custom_delay if custom_delay is not None else _RECONNECT_DELAYS[idx]
+                custom_delay = None
+                self._log.info("Reconnecting in %.1fs (attempt %d)", delay, self._reconnect_attempts)
+                await asyncio.sleep(delay)
 
-            try:
-                await self.connect()
-            except Exception as e:
-                self._log.error("Reconnect failed: %s", e)
-                await self._schedule_reconnect()
+                try:
+                    await self.connect()
+                    return
+                except Exception as e:
+                    self._log.error("Reconnect failed: %s", e)
         finally:
             self._reconnecting = False
 

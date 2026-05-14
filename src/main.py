@@ -156,22 +156,35 @@ class Application:
     ):
         from src.tools.approval import get_approval_manager
 
-        mgr = get_approval_manager()
+        try:
+            mgr = get_approval_manager()
 
-        if chat_id.startswith(("c2c:", "group:", "channel:", "dm:")):
-            mgr.request_approval(
-                "exec_command",
-                exc.command_preview,
-                chat_id=chat_id,
-                timeout_seconds=120,
-            )
-            warn = "DANGEROUS" if exc.denylisted else "requires approval"
-            await self.qq.send_text(
-                chat_id,
-                f"**Approval Required** ({warn})\n```\n{exc.command_preview}\n```\n"
-                f"Reply 'yes' to allow or 'no' to deny. (request: {exc.request_id})",
-            )
-            decision = await mgr.await_approval(exc.request_id, timeout=120)
+            if chat_id.startswith(("c2c:", "group:", "channel:", "dm:")):
+                warn = "DANGEROUS" if exc.denylisted else "requires approval"
+                await self.qq.send_text(
+                    chat_id,
+                    f"**Approval Required** ({warn})\n```\n{exc.command_preview}\n```\n"
+                    f"Reply 'yes' to allow or 'no' to deny. (request: {exc.request_id})",
+                )
+                decision = await mgr.await_approval(exc.request_id, timeout=120)
+                result_state = await self.agent_loop.resume(exc.thread_id, decision)
+                assistant_text = ""
+                for msg in reversed(result_state.messages):
+                    if msg.get("role") == "assistant" and msg.get("content"):
+                        assistant_text = msg["content"]
+                        break
+                if assistant_text:
+                    await self.qq.send_text(chat_id, assistant_text)
+                return
+            else:
+                await self.feishu.send_approval_card(
+                    chat_id,
+                    exc.request_id,
+                    exc.command_preview,
+                    denylisted=exc.denylisted,
+                )
+
+            decision = await mgr.await_approval(exc.request_id)
             result_state = await self.agent_loop.resume(exc.thread_id, decision)
             assistant_text = ""
             for msg in reversed(result_state.messages):
@@ -179,25 +192,9 @@ class Application:
                     assistant_text = msg["content"]
                     break
             if assistant_text:
-                await self.qq.send_text(chat_id, assistant_text)
-            return
-        else:
-            await self.feishu.send_approval_card(
-                chat_id,
-                exc.request_id,
-                exc.command_preview,
-                denylisted=exc.denylisted,
-            )
-
-        decision = await mgr.await_approval(exc.request_id)
-        result_state = await self.agent_loop.resume(exc.thread_id, decision)
-        assistant_text = ""
-        for msg in reversed(result_state.messages):
-            if msg.get("role") == "assistant" and msg.get("content"):
-                assistant_text = msg["content"]
-                break
-        if assistant_text:
-            await self.feishu.send_text(chat_id, assistant_text)
+                await self.feishu.send_text(chat_id, assistant_text)
+        except Exception:
+            logger.exception("Error in _handle_approval_pending for request %s", exc.request_id)
 
     async def setup(self):
         logger.info("MyClaw 0.1.0 starting...")
@@ -497,7 +494,7 @@ class Application:
             thread_id = ctx.get("thread_id", "")
             if thread_id:
                 try:
-                    state = self.state_store.load(thread_id)
+                    state = await self.state_store.aload(thread_id)
                     if state:
                         state.messages = []
                         await self.state_store.save(thread_id, state)
@@ -590,7 +587,7 @@ class Application:
             lines = []
 
             # Default session
-            default_state = self.state_store.load(user_key)
+            default_state = await self.state_store.aload(user_key)
             has_default = default_state is not None
             default_summary = ""
             if has_default:
@@ -608,7 +605,7 @@ class Application:
                 summary = s["summary"]
                 if summary in ("(new)", ""):
                     try:
-                        st = self.state_store.load(s["thread_id"])
+                        st = await self.state_store.aload(s["thread_id"])
                         if st:
                             for m in st.messages:
                                 if m.get("role") == "user":
@@ -716,7 +713,7 @@ class Application:
             )
 
             # Load existing state messages (history) and prepend them
-            existing = self.state_store.load(thread_id)
+            existing = await self.state_store.aload(thread_id)
             if existing:
                 if existing.pending_approval:
                     await reply_fn("⏳ 有待审批的操作，请先回复审批后再发新消息。")
@@ -735,7 +732,7 @@ class Application:
                     result_state = await self.agent_loop.run(input_state, thread_id)
                 except ApprovalPending as exc:
                     asyncio.create_task(self._handle_approval_pending(exc, chat_id))
-                    result_state = self.state_store.load(thread_id) or input_state
+                    result_state = await self.state_store.aload(thread_id) or input_state
 
                 logger.debug("[flow] agent_loop run done")
 

@@ -62,13 +62,11 @@ class SessionTracker:
                     continue
                 for tid in expired:
                     try:
-                        state = state_store.load(tid)
+                        state = await state_store.aload(tid)
                         if state and state.messages:
                             empty_state = state.copy()
                             empty_state.messages = []
-                            await asyncio.get_event_loop().run_in_executor(
-                                None, state_store.save, tid, empty_state
-                            )
+                            await state_store.save(tid, empty_state)
                             logger.info("Session reset (idle): %s", tid)
                             try:
                                 from src.session_index.store import get_session_index

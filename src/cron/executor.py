@@ -69,7 +69,7 @@ async def _is_safe_webhook_url(url: str) -> tuple[bool, str]:
         # hostname is a domain — resolve DNS to check for private IPs (prevent DNS rebinding)
         try:
             port = parsed.port or (443 if parsed.scheme == "https" else 80)
-            addrs = await asyncio.get_event_loop().run_in_executor(
+            addrs = await asyncio.get_running_loop().run_in_executor(
                 None, socket.getaddrinfo, hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM
             )
             for _family, _type, _proto, _canonname, sockaddr in addrs:
@@ -121,7 +121,7 @@ async def execute_cron_job(
             message_id=f"cron:{job.id}:{started_at}",
         )
         store = agent_loop.get_store()
-        existing = store.load(thread_id)
+        existing = await store.aload(thread_id)
         if existing:
             input_state.messages = existing.messages + [new_msg]
     elif job.payload.kind == "system_event":
@@ -135,7 +135,7 @@ async def execute_cron_job(
             message_id=f"cron:{job.id}:{started_at}",
         )
         store = agent_loop.get_store()
-        existing = store.load(thread_id)
+        existing = await store.aload(thread_id)
         if existing:
             input_state.messages = existing.messages + [new_msg]
     else:

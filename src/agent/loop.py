@@ -422,8 +422,8 @@ class AgentLoop:
             rbac = get_rbac()
             if rbac:
                 return rbac.resolve_user(sender_id)
-        except Exception:
-            pass
+            except Exception as exc:
+                logger.debug("redact failed: %s", exc)
         return None
 
     def _build_system_prompt(self, state: AgentState, active_tools: list[ToolDef]) -> str:

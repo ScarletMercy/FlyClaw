@@ -331,7 +331,7 @@ def register_dashboard(app: FastAPI, application):
             try:
                 for tid in _app_ref.state_store.list_threads():
                     if tid not in active_ids and _chat_pattern.match(tid):
-                        state = _app_ref.state_store.load(tid)
+                        state = await _app_ref.state_store.aload(tid)
                         msg_count = len(state.messages) if state else 0
                         sessions.append({
                             "thread_id": tid,
@@ -342,18 +342,6 @@ def register_dashboard(app: FastAPI, application):
             except Exception:
                 pass
 
-        return sessions
-        sessions = _app_ref.session_tracker.get_sessions()
-        for s in sessions:
-            idle = s["last_active"]
-            if idle < 60:
-                s["idle_text"] = f"{int(idle)}s"
-            elif idle < 3600:
-                s["idle_text"] = f"{int(idle // 60)}m {int(idle % 60)}s"
-            else:
-                h, m = divmod(int(idle), 3600)
-                m2, _ = divmod(m, 60)
-                s["idle_text"] = f"{h}h {m2}m"
         return sessions
 
     @router.post("/api/dashboard/sessions/{thread_id}/reset")
@@ -573,7 +561,7 @@ def register_dashboard(app: FastAPI, application):
             try:
                 for tid in _app_ref.state_store.list_threads():
                     if tid not in active_ids and _chat_pattern.match(tid):
-                        state = _app_ref.state_store.load(tid)
+                        state = await _app_ref.state_store.aload(tid)
                         msg_count = len(state.messages) if state else 0
                         all_sessions.append({
                             "thread_id": tid,
