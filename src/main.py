@@ -172,7 +172,14 @@ class Application:
                 f"Reply 'yes' to allow or 'no' to deny. (request: {exc.request_id})",
             )
             decision = await mgr.await_approval(exc.request_id, timeout=120)
-            await self.agent_loop.resume(exc.thread_id, decision)
+            result_state = await self.agent_loop.resume(exc.thread_id, decision)
+            assistant_text = ""
+            for msg in reversed(result_state.messages):
+                if msg.get("role") == "assistant" and msg.get("content"):
+                    assistant_text = msg["content"]
+                    break
+            if assistant_text:
+                await self.qq.send_text(chat_id, assistant_text)
             return
         else:
             await self.feishu.send_approval_card(
@@ -183,7 +190,14 @@ class Application:
             )
 
         decision = await mgr.await_approval(exc.request_id)
-        await self.agent_loop.resume(exc.thread_id, decision)
+        result_state = await self.agent_loop.resume(exc.thread_id, decision)
+        assistant_text = ""
+        for msg in reversed(result_state.messages):
+            if msg.get("role") == "assistant" and msg.get("content"):
+                assistant_text = msg["content"]
+                break
+        if assistant_text:
+            await self.feishu.send_text(chat_id, assistant_text)
 
     async def setup(self):
         logger.info("MyClaw 0.1.0 starting...")
@@ -900,8 +914,7 @@ class Application:
 
             await startup_sync(
                 store,
-                self.agent_loop,
-                self.config.checkpointer.path,
+                self.state_store,
                 tool_max_chars=self.config.session_search.tool_content_max_chars,
             )
         except Exception as e:

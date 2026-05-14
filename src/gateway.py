@@ -195,6 +195,10 @@ def create_gateway(app_config, agent_loop, feishu_channel=None, cron_service=Non
             text = params.get("text", "")
             thread_id = params.get("thread_id", "ws-default")
             input_state = AgentState(messages=[{"role": "user", "content": text}], system_prompt=app_config.agents.system_prompt, sender_id="ws", chat_id="ws", chat_type="p2p", message_id=str(uuid.uuid4()), channel="ws")
+            store = loop.get_store()
+            existing = store.load(thread_id)
+            if existing:
+                input_state.messages = existing.messages + input_state.messages
             result_state = await loop.run(input_state, thread_id)
             assistant_text = ""
             for msg in reversed(result_state.messages):

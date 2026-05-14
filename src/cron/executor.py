@@ -103,7 +103,6 @@ async def execute_cron_job(
     if job.session_target == "main":
         thread_id = "main"
 
-    run_config = {"configurable": {"thread_id": thread_id}}
     system_prompt = config.agents.system_prompt
 
     timeout = job.payload.timeout_seconds or _DEFAULT_TIMEOUT
@@ -112,23 +111,34 @@ async def execute_cron_job(
 
     input_state = None
     if job.payload.kind == "agent_turn":
+        new_msg = {"role": "user", "content": job.payload.message or ""}
         input_state = AgentState(
-            messages=[{"role": "user", "content": job.payload.message or ""}],
+            messages=[new_msg],
             system_prompt=system_prompt,
             sender_id=f"cron:{job.id}",
             chat_id=thread_id,
             chat_type="p2p",
             message_id=f"cron:{job.id}:{started_at}",
         )
+        store = agent_loop.get_store()
+        existing = store.load(thread_id)
+        if existing:
+            input_state.messages = existing.messages + [new_msg]
     elif job.payload.kind == "system_event":
+        new_msg = {"role": "system", "content": f"[Scheduled Event] {job.payload.text or ''}"}
         input_state = AgentState(
-            messages=[{"role": "system", "content": f"[Scheduled Event] {job.payload.text or ''}"}],
+            messages=[new_msg],
             system_prompt=system_prompt,
             sender_id="system",
             chat_id=thread_id,
             chat_type="p2p",
             message_id=f"cron:{job.id}:{started_at}",
         )
+        if job.session_target == "main":
+            store = agent_loop.get_store()
+            existing = store.load(thread_id)
+            if existing:
+                input_state.messages = existing.messages + [new_msg]
     else:
         return CronRunResult(
             job_id=job.id,

@@ -12,23 +12,7 @@ logger = logging.getLogger("myclaw.agents.delegate")
 def _register_builtin_tools(config) -> list[ToolDef]:
     from src.tools.registry import get_tool_registry
 
-    result = []
-    for bt in get_tool_registry().collect():
-        schema = {}
-        if hasattr(bt, "args_schema") and bt.args_schema:
-            schema = bt.args_schema.schema()
-            schema.pop("title", None)
-            for key in ("definitions", "$defs"):
-                schema.pop(key, None)
-        result.append(
-            ToolDef(
-                name=bt.name,
-                description=bt.description or "",
-                parameters=schema,
-                fn=bt._run if hasattr(bt, "_run") else (bt.func if hasattr(bt, "func") else lambda **kw: ""),
-            )
-        )
-    return result
+    return list(get_tool_registry().collect())
 
 
 async def delegate_task(agent_name: str, task: str) -> str:
