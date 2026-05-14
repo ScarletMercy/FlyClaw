@@ -10,7 +10,7 @@ import re
 import shutil
 from typing import Optional
 
-from langchain_core.tools import tool
+from src.agent.tooldef import ToolDef
 
 logger = logging.getLogger("myclaw.beads_tools")
 
@@ -56,6 +56,10 @@ def set_beads_workspace(workspace: str) -> None:
     global _BEADS_WORKSPACE
     _BEADS_WORKSPACE = workspace
     logger.info("Beads workspace set to: %s", workspace)
+    # Set BEADS_DIR so bd CLI can find the workspace
+    beads_dir = os.path.join(workspace, ".beads")
+    os.environ["BEADS_DIR"] = beads_dir
+    logger.info("BEADS_DIR set to: %s", beads_dir)
     # Ensure bd is in PATH so exec_command can also find it
     bd_dir = os.path.dirname(_find_bd())
     if bd_dir and bd_dir not in os.environ.get("PATH", ""):
@@ -164,22 +168,22 @@ async def judge_memory_with_llm(
     api_key: str,
 ) -> Optional[str]:
     """Use a small LLM to judge. Returns content string or None."""
-    from langchain_openai import ChatOpenAI
-    from langchain_core.messages import HumanMessage
+    from src.agent.client import ChatClient
 
-    model = ChatOpenAI(
-        model=model_name,
-        temperature=0.0,
+    model = ChatClient(
         base_url=base_url,
         api_key=api_key,
-        max_tokens=200,
+        model=model_name,
+        temperature=0.0,
     )
     prompt = _JUDGE_PROMPT.format(
         user=user_input[:200],
         ai=ai_response[:200],
     )
     try:
-        resp = await model.ainvoke([HumanMessage(content=prompt)])
+        resp = await model.chat([
+            {"role": "user", "content": prompt},
+        ])
         text = resp.content.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
@@ -212,7 +216,6 @@ async def save_memory(content: str, key: str = "") -> str:
 # LangChain tools exposed to the LLM
 # ---------------------------------------------------------------------------
 
-@tool
 async def bd_remember(content: str, key: str = "") -> str:
     """Save a persistent memory that survives across sessions.
 
@@ -226,7 +229,6 @@ async def bd_remember(content: str, key: str = "") -> str:
     return await save_memory(content, key)
 
 
-@tool
 async def bd_recall(key: str) -> str:
     """Retrieve a specific memory by its key.
 
@@ -237,7 +239,6 @@ async def bd_recall(key: str) -> str:
     return result
 
 
-@tool
 async def bd_memories(query: str = "") -> str:
     """List all memories, or search by keyword.
 
@@ -250,7 +251,6 @@ async def bd_memories(query: str = "") -> str:
     return await _bd(args)
 
 
-@tool
 async def bd_forget(key: str) -> str:
     """Delete a memory by its key.
 
@@ -258,3 +258,12 @@ async def bd_forget(key: str) -> str:
         key: The memory key to delete.
     """
     return await _bd(["forget", key])
+
+
+def get_tools() -> list[ToolDef]:
+    return [
+        ToolDef.from_function(bd_remember),
+        ToolDef.from_function(bd_recall),
+        ToolDef.from_function(bd_memories),
+        ToolDef.from_function(bd_forget),
+    ]
