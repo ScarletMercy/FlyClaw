@@ -15,8 +15,9 @@ async def _fetch_preview(url: str, max_chars: int = 400) -> Optional[str]:
     try:
         from src.tools.web_tools import web_fetch
 
-        # Call the tool directly (it's a LangChain tool, we need to invoke it)
-        result = await web_fetch.ainvoke({"url": url, "max_chars": max_chars})
+        result = await web_fetch(url)
+        if isinstance(result, str) and len(result) > max_chars:
+            result = result[:max_chars]
         if (
             isinstance(result, str)
             and result

@@ -31,8 +31,8 @@ pip install -e .
 
 | 依赖 | 用途 |
 |------|------|
-| `langgraph` + `langchain-core` | Agent 图引擎 |
-| `langchain-anthropic` / `langchain-openai` | LLM 提供商 SDK |
+| `openai` | OpenAI API client (LLM calls) |
+| `httpx` | HTTP client (channels, tools, MCP) |
 | `lark-oapi` | 飞书 SDK |
 | `fastapi` + `uvicorn` | HTTP Gateway |
 | `aiosqlite` | SQLite 异步驱动（会话持久化） |
@@ -385,12 +385,14 @@ plugins/my-plugin/
 
 ```python
 # tools.py
-from langchain_core.tools import tool
+from src.agent.tooldef import ToolDef
 
-@tool
-def my_tool(query: str) -> str:
+async def my_tool(query: str) -> str:
     """Your tool description."""
     return f"Result for: {query}"
+
+def get_tools() -> list[ToolDef]:
+    return [ToolDef.from_function(my_tool)]
 ```
 
 ---

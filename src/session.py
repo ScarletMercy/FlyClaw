@@ -107,7 +107,7 @@ class SessionTracker:
 @dataclass
 class SessionEntry:
     session_id: str       # short display id (s1, s2, ...)
-    thread_id: str        # full thread_id for LangGraph
+    thread_id: str        # full thread_id for state store
     created_at: float     # unix timestamp
     summary: str = ""     # first user message excerpt
 

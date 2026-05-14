@@ -144,4 +144,3 @@ async def api_request_with_retry(
             continue
 
         return resp
-    return await request_fn()

@@ -21,6 +21,7 @@ from lark_oapi.event.dispatcher_handler import EventDispatcherHandlerBuilder
 from lark_oapi.api.im.v1.model.p2_im_message_receive_v1 import P2ImMessageReceiveV1
 
 from .base import Channel, api_request_with_retry
+from src.tools.feishu_tools import _lark_call_with_retry
 
 logger = logging.getLogger("myclaw.feishu")
 
@@ -842,8 +843,6 @@ class FeishuChannel(Channel):
         msg_type: str = "text",
         reply_to: Optional[str] = None,
     ):
-        from src.tools.feishu_tools import _lark_call_with_retry
-
         if msg_type == "text":
             content = json.dumps({"text": text}, ensure_ascii=False)
         else:
@@ -880,8 +879,6 @@ class FeishuChannel(Channel):
         text: str,
         message_id: str,
     ):
-        from src.tools.feishu_tools import _lark_call_with_retry
-
         try:
             content = json.dumps({"text": text}, ensure_ascii=False)
             body = CreateMessageRequestBody.builder().msg_type("text").content(content).build()

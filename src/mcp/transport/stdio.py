@@ -129,6 +129,9 @@ class StdioTransport(MCPTransport):
                 logger.warning("MCP stdio reconnect attempt %d/%d failed, wait %ds: %s", attempt + 1, _RECONNECT_ATTEMPTS, wait, e)
                 await asyncio.sleep(wait)
         logger.error("MCP stdio reconnect failed after %d attempts, will retry next health check", _RECONNECT_ATTEMPTS)
+        self._stopped = False
+        if self._health_task is None or self._health_task.done():
+            self._health_task = asyncio.create_task(self._health_check_loop())
 
     async def send(self, data: str) -> None:
         if not self._process or not self._process.stdin:
