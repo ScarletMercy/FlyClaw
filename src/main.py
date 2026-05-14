@@ -106,6 +106,9 @@ class Application:
         self._memory_searcher = None
         self._rbac: RBAC | None = None
         self._background_tasks: set = set()
+        self._config_path: str = "config.yaml"
+        self._config_watcher = None
+        self._reload_executor = None
 
     def _resolve_session_key(self, sender_id: str, chat_type: str, chat_id: str, scope: str) -> str:
         if scope == "global":
@@ -412,9 +415,11 @@ class Application:
             self.qq.set_media_understanding_runner(self._qq_mu_runner)
             logger.info("Media understanding runner initialized for QQ channel")
 
-        from src.gateway import create_gateway
+        from src.gateway import create_gateway, _app_ref as _gw_app_ref_mod
+        import src.gateway as _gw_mod
 
         self.api = create_gateway(self.config, self.agent_loop, self.feishu, self.cron_service)
+        _gw_mod._app_ref = self
 
         self.api.on_event("startup")(self._on_startup)
         self.api.on_event("shutdown")(self._on_shutdown)
@@ -977,8 +982,24 @@ class Application:
         if self.cron_service:
             logger.info("Cron API:      GET /api/cron/status")
 
+        from src.config_watcher import ConfigWatcher
+        from src.config_reload import ReloadExecutor
+
+        self._reload_executor = ReloadExecutor(self)
+        self._config_watcher = ConfigWatcher(
+            path=self._config_path,
+            on_reload=self._on_config_reload,
+        )
+        await self._config_watcher.start()
+
+    async def _on_config_reload(self, old_config, new_config, plan):
+        self.config = new_config
+        await self._reload_executor.execute(plan)
+
     async def _on_shutdown(self):
         try:
+            if self._config_watcher:
+                await self._config_watcher.stop()
             if hasattr(self, "_memory_store") and self._memory_store:
                 await self._memory_store.close()
             if self.config.skills.enabled and self.config.skills.watch:

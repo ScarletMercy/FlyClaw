@@ -10,11 +10,84 @@ import time
 import uuid
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from src.canvas.server import router as canvas_router
+
 logger = logging.getLogger("myclaw.gateway")
+
+router = APIRouter()
+
+
+@router.websocket("/ws/acp")
+async def acp_websocket(ws: WebSocket):
+    await ws.accept()
+    from src.acp.session import AcpSessionManager
+    from src.acp.runtime import AgentLoopRuntime
+
+    sessions = AcpSessionManager()
+    runtime = AgentLoopRuntime(sessions)
+
+    try:
+        while True:
+            raw = await ws.receive_json()
+            method = raw.get("method", "")
+            msg_id = raw.get("id")
+
+            if method == "initialize":
+                await ws.send_json({
+                    "id": msg_id,
+                    "result": {
+                        "protocolVersion": "0.2",
+                        "agentCapabilities": {"streaming": True, "tools": True},
+                        "configOptions": [],
+                        "modes": ["default"],
+                    },
+                })
+            elif method == "newSession":
+                params = raw.get("params", {})
+                sid = sessions.create("default", cwd=params.get("cwd", ""))
+                await ws.send_json({
+                    "id": msg_id,
+                    "result": {"sessionId": sid, "configOptions": [], "modes": ["default"]},
+                })
+            elif method == "prompt":
+                params = raw.get("params", {})
+                sid = params.get("sessionId", "")
+                content = params.get("content", [])
+                prompt = " ".join(
+                    b.get("text", "") for b in content if b.get("type") == "text"
+                )
+                stop_reason = "end_turn"
+                async for event in runtime.run_turn(session_id=sid, prompt=prompt):
+                    if event.type == "text_delta" and event.text:
+                        await ws.send_json({
+                            "method": "sessionUpdate",
+                            "params": {
+                                "sessionId": sid,
+                                "update": {"type": "agent_message_chunk", "content": {"type": "text", "text": event.text}},
+                            },
+                        })
+                    elif event.type == "done":
+                        stop_reason = event.stop_reason or "end_turn"
+                await ws.send_json({"id": msg_id, "result": {"stopReason": stop_reason, "usage": {}}})
+            elif method == "cancel":
+                await runtime.cancel(raw.get("params", {}).get("sessionId", ""))
+                await ws.send_json({"id": msg_id, "result": {"cancelled": True}})
+            elif method == "listSessions":
+                s_list = sessions.list_sessions()
+                await ws.send_json({
+                    "id": msg_id,
+                    "result": {"sessions": [{"sessionId": s.session_id, "agentId": s.agent_id} for s in s_list]},
+                })
+            else:
+                await ws.send_json({"id": msg_id, "error": {"code": -32601, "message": f"Unknown method: {method}"}})
+    except WebSocketDisconnect:
+        pass
 
 
 class TokenBucketRateLimiter:
@@ -53,6 +126,11 @@ class TokenBucketRateLimiter:
 
 
 _rate_limiter: Optional[TokenBucketRateLimiter] = None
+_app_ref = None
+
+
+def _get_app(request: Request):
+    return _app_ref
 
 
 def create_gateway(app_config, agent_loop, feishu_channel=None, cron_service=None):
@@ -61,6 +139,8 @@ def create_gateway(app_config, agent_loop, feishu_channel=None, cron_service=Non
     capacity = getattr(app_config.gateway, "rate_limit_burst", 20) if hasattr(app_config, "gateway") else 20
     _rate_limiter = TokenBucketRateLimiter(rate=rate, capacity=capacity)
     app = FastAPI(title="MyClaw", version="0.1.0")
+    app.include_router(canvas_router)
+    app.include_router(router)
     cors_origins = getattr(app_config.gateway, "cors_origins", []) or []
     app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials=bool(cors_origins), allow_methods=["*"], allow_headers=["*"])
 
@@ -467,5 +547,52 @@ def create_gateway(app_config, agent_loop, feishu_channel=None, cron_service=Non
             return JSONResponse({"error": "session search not enabled"}, status_code=503)
         rows = store._db.execute("SELECT message_id, role, content, tool_name, timestamp FROM messages WHERE thread_id = ? ORDER BY timestamp ASC LIMIT ?", (thread_id, int(request.query_params.get("limit", "100")))).fetchall()
         return JSONResponse({"thread_id": thread_id, "messages": [dict(r) for r in rows]})
+
+    @app.get("/api/config")
+    async def get_config(request: Request):
+        app = _get_app(request)
+        if not app:
+            raise HTTPException(503, "Application not ready")
+        raw = app.config.model_dump()
+        for sensitive_key in ("api_key", "app_secret", "client_secret", "auth_token"):
+            for section in raw.values():
+                if isinstance(section, dict) and sensitive_key in section:
+                    section[sensitive_key] = "***"
+        return raw
+
+    @app.post("/api/config/reload")
+    async def reload_config(request: Request):
+        app = _get_app(request)
+        if not app or not app._config_watcher:
+            raise HTTPException(503, "Config watcher not active")
+        await app._config_watcher._apply_reload()
+        return {"status": "ok"}
+
+    @app.patch("/api/config")
+    async def patch_config(request: Request):
+        import yaml as _yaml
+        app = _get_app(request)
+        if not app:
+            raise HTTPException(503, "Application not ready")
+        patch_data = await request.json()
+        config_path = Path(app._config_path or "config.yaml")
+        if config_path.exists():
+            current = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        else:
+            current = {}
+
+        def _deep_merge(base, override):
+            for k, v in override.items():
+                if k in base and isinstance(base[k], dict) and isinstance(v, dict):
+                    _deep_merge(base[k], v)
+                else:
+                    base[k] = v
+
+        _deep_merge(current, patch_data)
+        config_path.write_text(
+            _yaml.dump(current, allow_unicode=True, default_flow_style=False),
+            encoding="utf-8",
+        )
+        return {"status": "written"}
 
     return app

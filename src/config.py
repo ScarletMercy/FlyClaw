@@ -330,6 +330,12 @@ class CompressionConfig(BaseModel):
     max_summary_tokens: int = 2000
 
 
+class CanvasConfig(BaseModel):
+    enabled: bool = False
+    root: str = ""
+    live_reload: bool = True
+
+
 class AppConfig(BaseModel):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     model: ModelConfig = Field(default_factory=ModelConfig)
@@ -351,6 +357,7 @@ class AppConfig(BaseModel):
     beads: BeadsConfig = Field(default_factory=BeadsConfig)
     session_search: SessionSearchConfig = Field(default_factory=SessionSearchConfig)
     compression: CompressionConfig = Field(default_factory=CompressionConfig)
+    canvas: CanvasConfig = Field(default_factory=CanvasConfig)
     owner_id: str = ""
 
 

@@ -1,0 +1,91 @@
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+from src.config_watcher import ReloadPlan
+
+if TYPE_CHECKING:
+    from src.main import Application
+
+logger = logging.getLogger("myclaw.config_reload")
+
+
+class ReloadExecutor:
+    def __init__(self, app: Application):
+        self._app = app
+
+    async def execute(self, plan: ReloadPlan) -> None:
+        if plan.requires_restart:
+            logger.warning(
+                "Config change requires gateway restart — hot-reload skipped for: %s",
+                [a.action for a in plan.actions],
+            )
+
+        for action in plan.actions:
+            handler = getattr(self, f"_do_{action.action}", None)
+            if handler:
+                try:
+                    await handler()
+                    logger.info("Reload action '%s' applied", action.action)
+                except Exception as e:
+                    logger.error("Reload action '%s' failed: %s", action.action, e, exc_info=True)
+            else:
+                logger.warning("No handler for reload action '%s'", action.action)
+
+    async def _do_reload_model(self):
+        from src.agent.client import create_chain
+        new_client = create_chain(self._app.config)
+        if self._app.agent_loop:
+            self._app.agent_loop._client = new_client
+
+    async def _do_reload_cron(self):
+        from src.cron.service import CronService
+        if self._app.cron_service:
+            await self._app.cron_service.stop()
+        self._app.cron_service = CronService(self._app.config.cron)
+        await self._app.cron_service.start(self._app)
+
+    async def _do_reload_tools(self):
+        from src.tools.registry import get_tool_registry
+        tools = list(get_tool_registry().collect())
+        if self._app.agent_loop:
+            self._app.agent_loop._tools = tools
+            self._app.agent_loop._tool_map = {t.name: t for t in tools}
+
+    async def _do_reload_skills(self):
+        self._app._skills_cache = []
+        await self._do_reload_tools()
+        if self._app.agent_loop:
+            from src.skills.loader import discover_skills
+            from src.main import _build_skill_directories
+            dirs = self._app._build_skill_directories()
+            skills = discover_skills(dirs)
+            self._app._skills_cache = skills
+            from src.skills.prompt import build_skills_prompt
+            self._app.agent_loop._skills_prompt = build_skills_prompt(skills)
+
+    async def _do_reload_memory(self):
+        pass
+
+    async def _do_reload_mcp(self):
+        try:
+            from src.mcp.manager import get_mcp_manager
+            mgr = get_mcp_manager()
+            if mgr and hasattr(mgr, 'reload'):
+                await mgr.reload(self._app.config.mcp)
+        except Exception as e:
+            logger.warning("MCP reload failed: %s", e)
+
+    async def _do_reload_auth(self):
+        try:
+            from src.auth.rbac import set_rbac, RBAC
+            from src.auth.store import AuthStore
+            store = AuthStore(self._app.config.auth.db_path)
+            rbac = RBAC(self._app.config, store)
+            set_rbac(rbac)
+        except Exception as e:
+            logger.warning("Auth reload failed: %s", e)
+
+    async def _do_reload_security(self):
+        pass

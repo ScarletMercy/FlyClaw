@@ -57,3 +57,4 @@ default = true
 myclaw = "src.cli:cli_main"
 myclaw-setup = "src.setup:main"
 myclaw-daemon = "src.daemon:main_daemon"
+myclaw-acp = "src.acp.cli:main"
