@@ -4,8 +4,6 @@ import fnmatch
 import logging
 from typing import TYPE_CHECKING, Optional
 
-from langchain_core.tools import BaseTool
-
 from src.auth.models import ROLE_PERMISSIONS, User, UserRole
 from src.auth.store import AuthStore
 
@@ -114,7 +112,7 @@ class RBAC:
         """Check if user can bypass tool approval workflows."""
         return user.permissions.get("approval_bypass", False) is True
 
-    def filter_tools(self, user: User, tools: list[BaseTool]) -> list[BaseTool]:
+    def filter_tools(self, user: User, tools: list) -> list:
         """Filter a tool list based on user permissions."""
         filtered = []
         for tool in tools:

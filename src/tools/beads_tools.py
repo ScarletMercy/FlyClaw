@@ -213,7 +213,7 @@ async def save_memory(content: str, key: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
-# LangChain tools exposed to the LLM
+# Tools exposed to the LLM
 # ---------------------------------------------------------------------------
 
 async def bd_remember(content: str, key: str = "") -> str:

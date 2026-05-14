@@ -23,6 +23,7 @@ class ApprovalRequest(BaseModel):
     sender_id: str = ""
     chat_id: str = ""
     message_id: str = ""
+    thread_id: str = ""
     created_at: float = Field(default_factory=time.time)
     timeout_seconds: int = 300
 
@@ -103,6 +104,7 @@ class ApprovalManager:
         sender_id: str = "",
         chat_id: str = "",
         message_id: str = "",
+        thread_id: str = "",
         timeout_seconds: int = 300,
     ) -> ApprovalRequest:
         req = ApprovalRequest(
@@ -112,6 +114,7 @@ class ApprovalManager:
             sender_id=sender_id,
             chat_id=chat_id,
             message_id=message_id,
+            thread_id=thread_id,
             timeout_seconds=timeout_seconds,
         )
         self._pending[req.id] = _PendingApproval(req)

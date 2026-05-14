@@ -294,9 +294,7 @@ def register_dashboard(app: FastAPI, application):
                 "domain": cfg.channels.feishu.domain,
             },
             "sessions": _app_ref.session_tracker.active_count if _app_ref.session_tracker else 0,
-            "tools": len(_app_ref.compiled_graph.get_graph().nodes) - 2
-            if _app_ref.compiled_graph
-            else 0,  # subtract agent + tools nodes
+            "tools": len(_app_ref.agent_loop._tools) if _app_ref.agent_loop else 0,
             "skills": len(skills),
             "cron": {
                 "enabled": cfg.cron.enabled,
@@ -328,29 +326,19 @@ def register_dashboard(app: FastAPI, application):
                     active_ids.add(tid)
                     sessions.append({**s, "status": "active"})
 
-        # Historical sessions from checkpointer
-        if _app_ref.checkpointer:
+        # Historical sessions from state store
+        if _app_ref.state_store:
             try:
-                import sqlite3
-                from pathlib import Path
-                db_path = Path(_app_ref.config.checkpointer.path)
-                if db_path.exists():
-                    conn = sqlite3.connect(str(db_path))
-                    rows = conn.execute("""
-                        SELECT c.thread_id, COUNT(*) as cnt
-                        FROM checkpoints c
-                        GROUP BY c.thread_id
-                        ORDER BY MAX(c.rowid) DESC
-                    """).fetchall()
-                    conn.close()
-                    for tid, cnt in rows:
-                        if tid not in active_ids and _chat_pattern.match(tid):
-                            sessions.append({
-                                "thread_id": tid,
-                                "last_active": None,
-                                "status": "idle",
-                                "checkpoint_count": cnt,
-                            })
+                for tid in _app_ref.state_store.list_threads():
+                    if tid not in active_ids and _chat_pattern.match(tid):
+                        state = _app_ref.state_store.load(tid)
+                        msg_count = len(state.messages) if state else 0
+                        sessions.append({
+                            "thread_id": tid,
+                            "last_active": None,
+                            "status": "idle",
+                            "checkpoint_count": msg_count,
+                        })
             except Exception:
                 pass
 
@@ -371,11 +359,10 @@ def register_dashboard(app: FastAPI, application):
     @router.post("/api/dashboard/sessions/{thread_id}/reset")
     async def dashboard_reset_session(thread_id: str, request: Request):
         _check_auth(request, app)
-        if not _app_ref.compiled_graph:
-            raise HTTPException(status_code=500, detail="Graph not initialized")
+        if not _app_ref.state_store:
+            raise HTTPException(status_code=500, detail="State store not initialized")
         try:
-            config = {"configurable": {"thread_id": thread_id}}
-            await _app_ref.compiled_graph.aupdate_state(config, {"messages": []})
+            _app_ref.state_store.delete(thread_id)
             if _app_ref.session_tracker:
                 _app_ref.session_tracker.remove(thread_id)
             return {"ok": True}
@@ -582,28 +569,18 @@ def register_dashboard(app: FastAPI, application):
                 if _chat_pattern.match(s["thread_id"]):
                     active_ids.add(s["thread_id"])
                     all_sessions.append({**s, "status": "active"})
-        if _app_ref.checkpointer:
+        if _app_ref.state_store:
             try:
-                import sqlite3 as _sq
-                from pathlib import Path as _P
-                db_path = _P(_app_ref.config.checkpointer.path)
-                if db_path.exists():
-                    conn = _sq.connect(str(db_path))
-                    rows = conn.execute("""
-                        SELECT c.thread_id, COUNT(*) as cnt
-                        FROM checkpoints c
-                        GROUP BY c.thread_id
-                        ORDER BY MAX(c.rowid) DESC
-                    """).fetchall()
-                    conn.close()
-                    for tid, cnt in rows:
-                        if tid not in active_ids and _chat_pattern.match(tid):
-                            all_sessions.append({
-                                "thread_id": tid,
-                                "last_active": None,
-                                "status": "idle",
-                                "checkpoint_count": cnt,
-                            })
+                for tid in _app_ref.state_store.list_threads():
+                    if tid not in active_ids and _chat_pattern.match(tid):
+                        state = _app_ref.state_store.load(tid)
+                        msg_count = len(state.messages) if state else 0
+                        all_sessions.append({
+                            "thread_id": tid,
+                            "last_active": None,
+                            "status": "idle",
+                            "checkpoint_count": msg_count,
+                        })
             except Exception:
                 pass
         snapshot["sessions"] = all_sessions
@@ -653,14 +630,13 @@ def register_dashboard(app: FastAPI, application):
         _check_auth(request, app)
         cfg = _app_ref.config
         active_model = _app_ref.model_ref.model if _app_ref.model_ref else None
-        from src.graph import FallbackModelChain
-        if isinstance(active_model, FallbackModelChain):
-            meta = active_model._model_meta
+        from src.agent.client import FallbackChain
+        if isinstance(active_model, FallbackChain):
             idx = active_model._active_idx
             available = []
-            for i, m in enumerate(meta):
-                available.append({"provider": m["provider"], "name": m["name"], "active": i == idx})
-            current = meta[idx] if idx < len(meta) else meta[0]
+            for i, c in enumerate(active_model._all):
+                available.append({"name": c.model, "active": i == idx})
+            current = available[idx] if idx < len(available) else available[0]
         else:
             current = {"provider": cfg.model.provider, "name": cfg.model.name}
             available = [{"provider": current["provider"], "name": current["name"], "active": True}]
@@ -678,30 +654,24 @@ def register_dashboard(app: FastAPI, application):
             raise HTTPException(status_code=500, detail="model_ref not initialized")
 
         active_model = _app_ref.model_ref.model
-        from src.graph import FallbackModelChain
-        if isinstance(active_model, FallbackModelChain):
-            meta = active_model._model_meta
+        from src.agent.client import FallbackChain
+        if isinstance(active_model, FallbackChain):
+            all_clients = active_model._all
             old_idx = active_model._active_idx
-            old_name = f"{meta[old_idx]['provider']}/{meta[old_idx]['name']}"
-            # Find target index
+            old_name = all_clients[old_idx].model
             target_idx = None
-            for i, m in enumerate(meta):
-                if m["provider"] == provider and m["name"] == name:
+            for i, c in enumerate(all_clients):
+                if c.model == name:
                     target_idx = i
                     break
             if target_idx is None:
-                raise HTTPException(status_code=404, detail=f"Model {provider}/{name} not found in chain")
+                raise HTTPException(status_code=404, detail=f"Model {name} not found in chain")
             active_model.switch_to(target_idx)
-            # Update context window to match the new model
-            target_meta = meta[target_idx]
-            if _app_ref.model_ref.ctx_window and "context_window" in target_meta:
-                _app_ref.model_ref.ctx_window["tokens"] = target_meta["context_window"]
-                logger.info("Context window updated to %d for %s/%s", target_meta["context_window"], provider, name)
-            logger.info("Model switched from %s to %s/%s", old_name, provider, name)
-            return {"ok": True, "previous": old_name, "current": f"{provider}/{name}"}
+            logger.info("Model switched from %s to %s", old_name, name)
+            return {"ok": True, "previous": old_name, "current": name}
         else:
             # Single model (no chain) — create new model for switch
-            from src.graph import _make_chat_model
+            from src.agent.client import create_client
             cfg = _app_ref.config
             fb_base_url = None
             fb_api_key = None
@@ -711,7 +681,7 @@ def register_dashboard(app: FastAPI, application):
                     fb_api_key = getattr(fb, "api_key", None)
                     break
             try:
-                new_model = _make_chat_model(
+                new_model = create_client(
                     provider, name,
                     cfg.model.temperature,
                     base_url=fb_base_url or cfg.model.base_url,

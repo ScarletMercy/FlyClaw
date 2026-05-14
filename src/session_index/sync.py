@@ -1,36 +1,35 @@
-"""Sync messages from LangGraph checkpoints to the session index."""
+"""Sync messages from state store to the session index."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-import re
-import sqlite3
 import time
+import uuid
 from pathlib import Path
 from typing import Optional
-
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from .store import SessionIndexStore, parse_thread_id
 
 logger = logging.getLogger("myclaw.session_index.sync")
 
 
-def _extract_role(msg) -> str:
-    if isinstance(msg, HumanMessage):
+def _extract_role(msg: dict) -> str:
+    role = msg.get("role", "")
+    if role == "user":
         return "human"
-    if isinstance(msg, AIMessage):
+    if role == "assistant":
         return "ai"
-    if isinstance(msg, ToolMessage):
+    if role == "tool":
         return "tool"
-    if isinstance(msg, SystemMessage):
+    if role == "system":
         return "system"
     return "unknown"
 
 
-def _extract_content(msg) -> str:
-    content = getattr(msg, "content", "")
+def _extract_content(msg: dict) -> str:
+    content = msg.get("content", "")
     if isinstance(content, list):
         parts = []
         for item in content:
@@ -42,13 +41,19 @@ def _extract_content(msg) -> str:
     return str(content) if content else ""
 
 
-def _extract_tool_calls(msg) -> Optional[str]:
-    calls = getattr(msg, "tool_calls", None)
+def _extract_tool_calls(msg: dict) -> Optional[str]:
+    calls = msg.get("tool_calls")
     if not calls:
         return None
     try:
         return json.dumps(
-            [{"name": c.get("name", ""), "args": str(c.get("args", ""))[:200]} for c in calls],
+            [
+                {
+                    "name": tc.get("function", {}).get("name", ""),
+                    "args": str(tc.get("function", {}).get("arguments", ""))[:200],
+                }
+                for tc in calls
+            ],
             ensure_ascii=False,
         )
     except Exception:
@@ -58,14 +63,13 @@ def _extract_tool_calls(msg) -> Optional[str]:
 def sync_messages(
     store: SessionIndexStore,
     thread_id: str,
-    messages: list,
+    messages: list[dict],
     channel: str,
     sender_id: str,
     chat_id: str,
     chat_type: str,
     tool_max_chars: int = 500,
 ) -> None:
-    """Sync messages to the index store. Idempotent via message_id UNIQUE."""
     if not messages:
         return
 
@@ -73,50 +77,29 @@ def sync_messages(
 
     records = []
     for msg in messages:
-        msg_id = getattr(msg, "id", None)
-        if not msg_id:
-            continue
-
+        msg_id = msg.get("id") or msg.get("message_id") or uuid.uuid4().hex[:12]
         role = _extract_role(msg)
         content = _extract_content(msg)
 
         if role == "tool":
             content = content[:tool_max_chars] if content else None
 
-        records.append({
-            "message_id": msg_id,
-            "role": role,
-            "content": content,
-            "tool_name": getattr(msg, "name", None) if role == "tool" else None,
-            "tool_calls": _extract_tool_calls(msg) if role == "ai" else None,
-            "timestamp": time.time(),
-        })
+        records.append(
+            {
+                "message_id": msg_id,
+                "role": role,
+                "content": content,
+                "tool_name": msg.get("name") if role == "tool" else None,
+                "tool_calls": _extract_tool_calls(msg) if role == "ai" else None,
+                "timestamp": time.time(),
+            }
+        )
 
     if records:
         store.add_messages(thread_id, records)
 
 
-def _get_all_thread_ids(checkpoints_path: str) -> list[str]:
-    """Get all distinct thread_ids from checkpoints.db."""
-    if not checkpoints_path or not Path(checkpoints_path).exists():
-        return []
-    conn = None
-    try:
-        conn = sqlite3.connect(checkpoints_path)
-        rows = conn.execute(
-            "SELECT DISTINCT thread_id FROM checkpoints"
-        ).fetchall()
-        return [r[0] for r in rows]
-    except Exception as e:
-        logger.warning("Failed to read checkpoints.db: %s", e)
-        return []
-    finally:
-        if conn:
-            conn.close()
-
-
 def _infer_channel_from_thread_id(thread_id: str) -> str:
-    """Best-effort channel extraction from thread_id."""
     if ":" in thread_id:
         return thread_id.split(":")[0]
     return "unknown"
@@ -124,27 +107,22 @@ def _infer_channel_from_thread_id(thread_id: str) -> str:
 
 async def startup_sync(
     store: SessionIndexStore,
-    compiled_graph,
-    checkpoints_path: str,
+    state_store,
     tool_max_chars: int = 500,
 ) -> int:
-    """Sync all threads from checkpoints.db into the index store.
-
-    Uses LangGraph's aget_state() for proper deserialization.
-    Skips threads that already have messages in the index.
-    Returns count of threads synced.
-    """
-    thread_ids = _get_all_thread_ids(checkpoints_path)
-    if not thread_ids:
-        logger.info("No threads found in checkpoints.db")
+    try:
+        thread_ids = await asyncio.to_thread(state_store.list_threads)
+    except Exception as e:
+        logger.warning("Failed to list threads: %s", e)
         return 0
 
-    # Find threads that need syncing (no messages in index yet)
+    if not thread_ids:
+        logger.info("No threads found in state store")
+        return 0
+
     already_indexed = set()
     try:
-        rows = store._db.execute(
-            "SELECT DISTINCT thread_id FROM messages"
-        ).fetchall()
+        rows = store._db.execute("SELECT DISTINCT thread_id FROM messages").fetchall()
         already_indexed = {r[0] for r in rows}
     except Exception:
         pass
@@ -154,37 +132,38 @@ async def startup_sync(
         logger.info("All %d threads already indexed", len(thread_ids))
         return 0
 
-    logger.info("Startup sync: %d/%d threads need indexing", len(to_sync), len(thread_ids))
+    logger.info(
+        "Startup sync: %d/%d threads need indexing", len(to_sync), len(thread_ids)
+    )
     synced = 0
     for tid in to_sync:
         try:
-            config = {"configurable": {"thread_id": tid}}
-            state = await compiled_graph.aget_state(config)
-            messages = state.values.get("messages", []) if state and state.values else []
-            if not messages:
+            state = await asyncio.to_thread(state_store.load, tid)
+            if state is None or not state.messages:
                 continue
 
             meta = parse_thread_id(tid)
-            channel = meta["channel"] if meta["channel"] != "unknown" else _infer_channel_from_thread_id(tid)
-
-            # Try to extract channel from state values
-            state_channel = state.values.get("channel", "")
-            if state_channel:
-                channel = state_channel
+            channel = (
+                meta["channel"] if meta["channel"] != "unknown" else "unknown"
+            )
+            if state.channel:
+                channel = state.channel
 
             sync_messages(
                 store,
                 thread_id=tid,
-                messages=messages,
+                messages=state.messages,
                 channel=channel,
-                sender_id=state.values.get("sender_id", meta.get("sender_id", "")),
-                chat_id=state.values.get("chat_id", ""),
-                chat_type=state.values.get("chat_type", meta.get("chat_type", "p2p")),
+                sender_id=state.sender_id or meta.get("sender_id", ""),
+                chat_id=state.chat_id,
+                chat_type=state.chat_type or meta.get("chat_type", "p2p"),
                 tool_max_chars=tool_max_chars,
             )
             synced += 1
         except Exception as e:
             logger.debug("Skipping thread %s: %s", tid, e)
 
-    logger.info("Startup sync complete: %d/%d threads indexed", synced, len(to_sync))
+    logger.info(
+        "Startup sync complete: %d/%d threads indexed", synced, len(to_sync)
+    )
     return synced

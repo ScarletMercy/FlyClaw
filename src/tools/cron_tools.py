@@ -5,8 +5,6 @@ import logging
 from typing import Optional
 from contextvars import ContextVar
 
-from langchain_core.tools import tool
-
 logger = logging.getLogger("myclaw.cron_tools")
 
 _cron_service = None
@@ -33,7 +31,6 @@ def _clean_job_id(job_id: str) -> str:
     return job_id.strip().strip("[]()`").strip()
 
 
-@tool
 async def cron_list() -> str:
     """List all scheduled cron jobs. Returns job IDs, names, schedules, enabled status, and last run info."""
     svc = _get_service()
@@ -58,7 +55,6 @@ async def cron_list() -> str:
     return "\n".join(lines)
 
 
-@tool
 async def cron_add(
     name: str,
     message: str,
@@ -124,7 +120,6 @@ async def cron_add(
         return f"Failed to create job: {e}"
 
 
-@tool
 async def cron_delete(job_id: str) -> str:
     """Delete a cron job by its ID.
 
@@ -144,7 +139,6 @@ async def cron_delete(job_id: str) -> str:
         return f"Failed to delete job: {e}"
 
 
-@tool
 async def cron_toggle(job_id: str) -> str:
     """Enable or disable a cron job (toggles its current state).
 
@@ -168,7 +162,6 @@ async def cron_toggle(job_id: str) -> str:
     return f"Failed to toggle job: {job_id}"
 
 
-@tool
 async def cron_run(job_id: str) -> str:
     """Immediately trigger a cron job execution.
 
@@ -189,3 +182,14 @@ async def cron_run(job_id: str) -> str:
         return f"Job [{job_id}] triggered."
     except Exception as e:
         return f"Failed to run job: {e}"
+
+
+def get_tools() -> list:
+    from src.agent.tooldef import ToolDef
+    return [
+        ToolDef.from_function(cron_list),
+        ToolDef.from_function(cron_add),
+        ToolDef.from_function(cron_delete),
+        ToolDef.from_function(cron_toggle),
+        ToolDef.from_function(cron_run),
+    ]

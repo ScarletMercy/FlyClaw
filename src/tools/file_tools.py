@@ -8,8 +8,6 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from langchain_core.tools import tool
-
 logger = logging.getLogger("myclaw.file_tools")
 
 _BASE_DIR = os.path.abspath(os.environ.get("MYCLAW_WORKSPACE", "."))
@@ -41,7 +39,6 @@ def _resolve_path(path: str) -> str:
     return str(real)
 
 
-@tool
 def read_file(path: str, offset: int = 0, limit: int = 500) -> str:
     """Read file contents. Returns specified line range.
 
@@ -75,7 +72,6 @@ def read_file(path: str, offset: int = 0, limit: int = 500) -> str:
         return f"Error reading {path}: {e}"
 
 
-@tool
 def write_file(path: str, content: str) -> str:
     """Write content to a file. Creates parent directories if needed.
 
@@ -105,7 +101,6 @@ def write_file(path: str, content: str) -> str:
             return f"Error writing {path}: {e}"
 
 
-@tool
 def edit_file(path: str, old_string: str, new_string: str) -> str:
     """Replace a specific text segment in a file with new text.
 
@@ -147,7 +142,6 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
             return f"Error writing {path}: {e}"
 
 
-@tool
 def list_dir(path: str = ".") -> str:
     """List directory contents.
 
@@ -186,7 +180,6 @@ def list_dir(path: str = ".") -> str:
         return f"Error listing {path}: {e}"
 
 
-@tool
 def grep_files(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
     """Search for a text pattern in files.
 
@@ -237,7 +230,6 @@ def grep_files(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
     return f"Found {len(results)} match(es) for '{pattern}':\n" + "\n".join(results)
 
 
-@tool
 def glob_files(pattern: str, path: str = ".") -> str:
     """Find files matching a glob pattern.
 
@@ -267,3 +259,15 @@ def glob_files(pattern: str, path: str = ".") -> str:
         return f"Found {len(matches)} match(es) for '{pattern}':\n" + "\n".join(lines)
     except Exception as e:
         return f"Error: {e}"
+
+
+def get_tools() -> list:
+    from src.agent.tooldef import ToolDef
+    return [
+        ToolDef.from_function(read_file),
+        ToolDef.from_function(write_file),
+        ToolDef.from_function(edit_file),
+        ToolDef.from_function(list_dir),
+        ToolDef.from_function(grep_files),
+        ToolDef.from_function(glob_files),
+    ]

@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from langchain_core.tools import tool
-
 logger = logging.getLogger("myclaw.session_search_tools")
 
 
@@ -27,7 +25,6 @@ def _format_results(results: list[dict]) -> str:
     return "\n".join(lines)
 
 
-@tool
 async def session_search(query: str, limit: int = 3) -> str:
     """Search historical conversation records. Supports keywords and semantic search.
 
@@ -92,3 +89,10 @@ async def _try_llm_search(store, query: str, limit: int) -> list[dict] | None:
     except Exception as e:
         logger.warning("LLM search failed, falling back to FTS5: %s", e)
         return None
+
+
+def get_tools() -> list:
+    from src.agent.tooldef import ToolDef
+    return [
+        ToolDef.from_function(session_search),
+    ]

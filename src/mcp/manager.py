@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import Optional
 
-from langchain_core.tools import BaseTool
+from src.agent.tooldef import ToolDef
 
 from src.mcp.adapter import MCPToolAdapter
 from src.mcp.client import MCPClient
@@ -24,7 +24,7 @@ class MCPManager:
         self._configs: dict[str, MCPServerConfig] = {}
         self._clients: dict[str, MCPClient] = {}
         self._adapter = MCPToolAdapter(self.ensure_connected)
-        self._tools: dict[str, BaseTool] = {}  # tool_name -> BaseTool
+        self._tools: dict[str, ToolDef] = {}  # tool_name -> ToolDef
         self._connect_locks: dict[str, asyncio.Lock] = {}
 
     def load_config(self, configs: dict[str, MCPServerConfig]) -> None:
@@ -74,7 +74,7 @@ class MCPManager:
         self._configs.pop(name, None)
         logger.info("MCP server '%s' removed", name)
 
-    def get_all_tools(self) -> list[BaseTool]:
+    def get_all_tools(self) -> list[ToolDef]:
         """Return all MCP tools (both connected and placeholders)."""
         return list(self._tools.values())
 
@@ -127,17 +127,11 @@ class MCPManager:
                 t.get("name", "?") for t in tools
             )
 
-        from langchain_core.tools import StructuredTool
-        from pydantic import BaseModel
-
-        class EmptyArgs(BaseModel):
-            pass
-
-        tool = StructuredTool(
+        tool = ToolDef.from_schema(
             name=tool_name,
             description=f"List available tools from MCP server '{server_name}'. Connects lazily on first call.",
-            args_schema=EmptyArgs,
-            coroutine=_list_and_connect,
+            parameters={"type": "object", "properties": {}},
+            fn=_list_and_connect,
         )
         self._tools[tool_name] = tool
         logger.debug("Lazy-connect tool registered for MCP server '%s'", server_name)

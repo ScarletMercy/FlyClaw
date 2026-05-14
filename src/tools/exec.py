@@ -6,8 +6,6 @@ import logging
 import time
 from typing import Optional
 
-from langchain_core.tools import tool
-
 from src.tools.exceptions import ToolExecutionError
 
 logger = logging.getLogger("myclaw.exec")
@@ -269,7 +267,6 @@ def _has_shell_bypass(command: str) -> tuple[bool, str]:
     return False, ""
 
 
-@tool
 async def exec_command(
     command: str,
     timeout: Optional[int] = 30,
@@ -418,3 +415,10 @@ async def exec_command(
             duration = time.monotonic() - start
             logger.error("[exec-audit] ERROR dur=%.1fs cmd=%.200s: %s", duration, command, e)
             raise ToolExecutionError(f"{type(e).__name__}: {e}")
+
+
+def get_tools() -> list:
+    from src.agent.tooldef import ToolDef
+    return [
+        ToolDef.from_function(exec_command),
+    ]

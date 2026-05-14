@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import logging
 
-from langchain_core.tools import tool
-
 logger = logging.getLogger("myclaw.tools.ai")
 
 # ── Memory search ──────────────────────────────────────────
@@ -18,7 +16,6 @@ def set_memory_searcher(searcher):
     _searcher = searcher
 
 
-@tool
 async def memory_search(query: str, max_results: int = 6) -> str:
     """Search the memory/knowledge base for relevant information.
 
@@ -57,7 +54,6 @@ async def memory_search(query: str, max_results: int = 6) -> str:
 # ── Sub-agent status ───────────────────────────────────────
 
 
-@tool
 async def subagent_status() -> str:
     """List recent sub-agent runs and their status. Shows agent name, depth, duration, and outcome."""
     from src.agents.run_registry import get_run_registry
@@ -82,3 +78,11 @@ async def subagent_status() -> str:
             line += f" — {task}"
         lines.append(line)
     return "\n".join(lines)
+
+
+def get_tools() -> list:
+    from src.agent.tooldef import ToolDef
+    return [
+        ToolDef.from_function(memory_search),
+        ToolDef.from_function(subagent_status),
+    ]

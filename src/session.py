@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import os
-import sqlite3
 import tempfile
 import threading
 import time
@@ -48,7 +47,7 @@ class SessionTracker:
 
     async def start_periodic_cleanup(
         self,
-        compiled_graph,
+        state_store,
         interval_seconds: int = 60,
     ) -> None:
         if self._task is not None and not self._task.done():
@@ -63,12 +62,14 @@ class SessionTracker:
                     continue
                 for tid in expired:
                     try:
-                        config = {"configurable": {"thread_id": tid}}
-                        state = await compiled_graph.aget_state(config)
-                        if state and state.values:
-                            await compiled_graph.aupdate_state(config, {"messages": []})
+                        state = state_store.load(tid)
+                        if state and state.messages:
+                            empty_state = state.copy()
+                            empty_state.messages = []
+                            await asyncio.get_event_loop().run_in_executor(
+                                None, state_store.save, tid, empty_state
+                            )
                             logger.info("Session reset (idle): %s", tid)
-                            # Mark session as inactive in search index
                             try:
                                 from src.session_index.store import get_session_index
 
@@ -254,64 +255,40 @@ class SessionRegistry:
                 return
 
 
-def get_session_summaries(checkpointer_path: str, thread_ids: list[str]) -> dict[str, str]:
-    """Read first user message for each thread_id from checkpointer DB.
+def get_session_summaries(state_store, thread_ids: list[str]) -> dict[str, str]:
+    """Read message count for each thread_id from state store.
 
     Returns dict of thread_id -> summary string.
     """
-    if not checkpointer_path or not Path(checkpointer_path).exists():
-        return {}
     results = {}
-    conn = None
-    try:
-        conn = sqlite3.connect(checkpointer_path)
-        for tid in thread_ids:
-            try:
-                cnt = conn.execute(
-                    "SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?",
-                    (tid,),
-                ).fetchone()[0]
-                results[tid] = f"({cnt} messages)"
-            except Exception:
-                results[tid] = "(unknown)"
-    except Exception as e:
-        logger.debug("Failed to read session summaries: %s", e)
-    finally:
-        if conn:
-            conn.close()
+    for tid in thread_ids:
+        try:
+            state = state_store.load(tid)
+            msg_count = len(state.messages) if state else 0
+            results[tid] = f"({msg_count} messages)"
+        except Exception:
+            results[tid] = "(unknown)"
     return results
 
 
-def get_threads_for_user(checkpointer_path: str, user_key: str) -> list[dict]:
-    """Get all thread_ids from checkpointer that belong to a user.
+def get_threads_for_user(state_store, user_key: str) -> list[dict]:
+    """Get all thread_ids from state store that belong to a user.
 
     Matches threads starting with user_key prefix or containing the user hash.
     """
-    if not checkpointer_path or not Path(checkpointer_path).exists():
-        return []
-    conn = None
     try:
-        conn = sqlite3.connect(checkpointer_path)
-        # Match legacy thread_id exactly and multi-session threads by pattern
-        rows = conn.execute(
-            "SELECT thread_id, COUNT(*) as cnt, MAX(rowid) as last_rowid "
-            "FROM checkpoints GROUP BY thread_id ORDER BY last_rowid DESC",
-        ).fetchall()
-
-        # Extract user hash from user_key (e.g. "qq:user:ABC123" -> "ABC123")
-        parts = user_key.split(":")
-        user_hash = parts[-1] if parts else ""
-
-        results = []
-        for tid, cnt, _ in rows:
-            # Legacy: exact match
-            # Multi-session: contains the user_hash
-            if tid == user_key or (user_hash and user_hash in tid):
-                results.append({"thread_id": tid, "checkpoint_count": cnt})
-        return results
+        threads = state_store.list_threads()
     except Exception as e:
         logger.debug("Failed to list threads for user: %s", e)
         return []
-    finally:
-        if conn:
-            conn.close()
+
+    parts = user_key.split(":")
+    user_hash = parts[-1] if parts else ""
+
+    results = []
+    for tid in threads:
+        if tid == user_key or (user_hash and user_hash in tid):
+            state = state_store.load(tid)
+            msg_count = len(state.messages) if state else 0
+            results.append({"thread_id": tid, "checkpoint_count": msg_count})
+    return results

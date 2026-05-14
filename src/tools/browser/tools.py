@@ -9,8 +9,6 @@ import time
 from contextvars import ContextVar
 from typing import Optional
 
-from langchain_core.tools import tool
-
 logger = logging.getLogger("myclaw.browser.tools")
 
 _current_session: ContextVar[str] = ContextVar("_browser_session", default="default")
@@ -24,7 +22,6 @@ def _session_id() -> str:
     return _current_session.get("default")
 
 
-@tool
 async def browser_navigate(url: str) -> str:
     """Navigate browser to a URL. Returns page title and accessibility snapshot with element refs (@e1, @e2...).
 
@@ -46,7 +43,6 @@ async def browser_navigate(url: str) -> str:
     return build_page_info(snap["url"], snap["title"], snap["snapshot"], snap["element_count"])
 
 
-@tool
 async def browser_snapshot(full: bool = False) -> str:
     """Get a text snapshot of the current page's accessibility tree. Elements have refs like @e1, @e2.
 
@@ -66,7 +62,6 @@ async def browser_snapshot(full: bool = False) -> str:
     return build_page_info(snap["url"], snap["title"], snap["snapshot"], snap["element_count"])
 
 
-@tool
 async def browser_click(ref: str) -> str:
     """Click an element on the page by its ref (e.g. @e1, @e2 from snapshot).
 
@@ -96,7 +91,6 @@ async def browser_click(ref: str) -> str:
     return f"Clicked {ref}\n{build_page_info(snap['url'], snap['title'], snap['snapshot'], snap['element_count'])}"
 
 
-@tool
 async def browser_type(ref: str, text: str, submit: bool = False) -> str:
     """Type text into an input element identified by ref. Optionally press Enter after typing.
 
@@ -133,7 +127,6 @@ async def browser_type(ref: str, text: str, submit: bool = False) -> str:
     return f"Typed '{text}' into {ref}"
 
 
-@tool
 async def browser_scroll(direction: str = "down", amount: int = 3) -> str:
     """Scroll the page in a direction.
 
@@ -167,7 +160,6 @@ async def browser_scroll(direction: str = "down", amount: int = 3) -> str:
     return f"Scrolled {direction} ({amount}x)\n{build_page_info(snap['url'], snap['title'], snap['snapshot'], snap['element_count'])}"
 
 
-@tool
 async def browser_back() -> str:
     """Go back in browser history. Returns snapshot of the previous page."""
     from src.tools.browser.manager import get_browser_manager
@@ -185,7 +177,6 @@ async def browser_back() -> str:
     return build_page_info(snap["url"], snap["title"], snap["snapshot"], snap["element_count"])
 
 
-@tool
 async def browser_press(key: str) -> str:
     """Press a keyboard key (Enter, Tab, Escape, ArrowDown, etc.).
 
@@ -207,7 +198,6 @@ async def browser_press(key: str) -> str:
     return f"Pressed {key}\n{build_page_info(snap['url'], snap['title'], snap['snapshot'], snap['element_count'])}"
 
 
-@tool
 async def browser_screenshot(path: str = "") -> str:
     """Take a screenshot of the current page. Returns the file path.
 
@@ -235,7 +225,6 @@ async def browser_screenshot(path: str = "") -> str:
     return f"Screenshot saved: {path}"
 
 
-@tool
 async def browser_console(expression: str) -> str:
     """Execute JavaScript in the browser console and return the result.
 
@@ -256,7 +245,6 @@ async def browser_console(expression: str) -> str:
     return str(result)
 
 
-@tool
 async def browser_close() -> str:
     """Close the current browser session and release resources."""
     from src.tools.browser.manager import get_browser_manager
@@ -311,4 +299,20 @@ async def _ref_to_locator(page, ref: str):
         return page.get_by_role(role)
     except Exception:
         return None
+
+
+def get_tools() -> list:
+    from src.agent.tooldef import ToolDef
+    return [
+        ToolDef.from_function(browser_navigate),
+        ToolDef.from_function(browser_snapshot),
+        ToolDef.from_function(browser_click),
+        ToolDef.from_function(browser_type),
+        ToolDef.from_function(browser_scroll),
+        ToolDef.from_function(browser_back),
+        ToolDef.from_function(browser_press),
+        ToolDef.from_function(browser_screenshot),
+        ToolDef.from_function(browser_console),
+        ToolDef.from_function(browser_close),
+    ]
 

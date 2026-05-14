@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import Any, Callable, Optional
 
-from langchain_core.tools import BaseTool
+from src.agent.tooldef import ToolDef
 
 from .loader import HookResult, PluginRecord, discover_plugins
 
@@ -14,7 +14,7 @@ logger = logging.getLogger("myclaw.plugins.registry")
 class PluginRegistry:
     def __init__(self):
         self._records: list[PluginRecord] = []
-        self._tools: list[BaseTool] = []
+        self._tools: list[ToolDef] = []
         self._hooks: dict[str, list[Callable]] = {}
 
     def register_plugin(self, record: PluginRecord) -> None:
@@ -33,7 +33,10 @@ class PluginRegistry:
             sum(len(v) for v in record.hooks.values()),
         )
 
-    def get_all_tools(self) -> list[BaseTool]:
+    def get_all_tools(self) -> list[ToolDef]:
+        return list(self._tools)
+
+    def collect_tools(self) -> list[ToolDef]:
         return list(self._tools)
 
     async def run_hooks(self, hook_name: str, **kwargs) -> list[HookResult]:

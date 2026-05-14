@@ -146,20 +146,12 @@ class TestMCPToolAdapter:
         formatted = MCPToolAdapter._format_result(result)
         assert "[image]" in formatted
 
-    def test_json_schema_to_pydantic(self):
-        from src.mcp.adapter import _json_schema_to_pydantic
-
-        schema = {
-            "type": "object",
-            "properties": {
-                "query": {"type": "string", "description": "Search query"},
-                "limit": {"type": "integer", "description": "Max results"},
-            },
-            "required": ["query"],
-        }
-        model = _json_schema_to_pydantic(schema, "test_tool")
-        assert "query" in model.model_fields
-        assert "limit" in model.model_fields
+    def test_json_schema_passthrough(self):
+        from src.mcp.adapter import MCPToolAdapter
+        schema = {"type": "object", "properties": {"query": {"type": "string", "description": "Search query"}, "limit": {"type": "integer", "description": "Max results"}}, "required": ["query"]}
+        tool = MCPToolAdapter(lambda x: None).create_tool("test", {"name": "search", "description": "Search things", "inputSchema": schema})
+        assert tool.name == "mcp__test__search"
+        assert "query" in tool.parameters.get("properties", {})
 
 
 class TestMCPManager:

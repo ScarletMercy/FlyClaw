@@ -6,11 +6,6 @@ import logging
 import platform
 import sys
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from langchain_core.tools import BaseTool
-
 logger = logging.getLogger("myclaw.prompt")
 
 # ── Section builders ──────────────────────────────────────────
@@ -23,7 +18,7 @@ def _build_identity() -> list[str]:
     ]
 
 
-def _build_tooling(tools: list[BaseTool]) -> list[str]:
+def _build_tooling(tools: list) -> list[str]:
     lines = [
         "## Tooling",
         "Tool availability (filtered by policy):",
@@ -191,7 +186,7 @@ def _build_runtime_info(config=None) -> list[str]:
 
 def build_system_prompt(
     config,
-    tools: list[BaseTool],
+    tools: list,
     skills_prompt: str = "",
     context_files: list[dict] | None = None,
     extra_system_prompt: str = "",

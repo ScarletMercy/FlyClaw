@@ -80,20 +80,19 @@ class CommandDispatcher:
     ) -> str:
         tool_name = spec.dispatch_tool
         try:
-            from src.graph import collect_tools
+            from src.tools.registry import get_tool_registry
 
-            # Use existing config or load a fresh one (isolated context)
             config = self._config
             if config is None:
                 from src.config import load_config
 
                 config = load_config()
-            all_tools = collect_tools(config)
+            all_tools = get_tool_registry().collect()
             tool_map = {t.name: t for t in all_tools}
             tool = tool_map.get(tool_name)
             if tool is None:
                 return f"Tool not found: {tool_name}"
-            result = await tool.ainvoke({"__arg1": args} if args else {})
+            result = await tool.execute({"__arg1": args} if args else {})
             return str(result)
         except Exception as e:
             logger.error("Tool dispatch failed for /%s: %s", spec.name, e)
@@ -105,27 +104,21 @@ class CommandDispatcher:
         args: str,
         context: Optional[dict],
     ) -> str:
-        from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-
         system_text = skill.body or skill.description
         messages = [
-            SystemMessage(content=system_text),
-            HumanMessage(content=args or "(no arguments)"),
+            {"role": "system", "content": system_text},
+            {"role": "user", "content": args or "(no arguments)"},
         ]
         try:
-            from src.graph import create_model
+            from src.agent.client import create_client, create_chain
 
-            # Use existing config or load a fresh one (isolated context)
             config = self._config
             if config is None:
                 from src.config import load_config
 
                 config = load_config()
-            model = create_model(config)
-            response = await model.ainvoke(messages)
-            if isinstance(response.content, str):
-                return response.content
-            return str(response.content)
+            client = create_chain(config)
+            return await client.chat_simple(messages)
         except Exception as e:
             logger.error("Skill prompt dispatch failed for %s: %s", skill.name, e)
             return f"[error] {type(e).__name__}: {e}"

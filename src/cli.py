@@ -10,7 +10,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import asyncio
 import sys
 from pathlib import Path
 
@@ -139,38 +138,28 @@ def cmd_status(args):
 
 
 def cmd_sessions(args):
-    """List active sessions from checkpoint database."""
+    """List active sessions from state store."""
     config = _load_config()
     db_path = Path(config.checkpointer.path)
     if not db_path.exists():
-        print("No sessions found (checkpoint database does not exist)")
+        print("No sessions found (database does not exist)")
         return 0
 
-    async def _list_sessions():
-        import aiosqlite
+    from src.agent.state import StateStore
 
-        async with aiosqlite.connect(str(db_path)) as conn:
-            # LangGraph checkpoint tables: checkpoints, writes
-            try:
-                cursor = await conn.execute(
-                    "SELECT thread_id, parent_checkpoint_id FROM checkpoints ORDER BY thread_id"
-                )
-                rows = await cursor.fetchall()
-                if not rows:
-                    print("No sessions found")
-                    return
-                # Count messages per thread
-                sessions = {}
-                for row in rows:
-                    tid = row[0]
-                    sessions[tid] = sessions.get(tid, 0) + 1
-                print(f"Sessions ({len(sessions)}):\n")
-                for tid, count in sorted(sessions.items()):
-                    print(f"  {tid}: {count} checkpoints")
-            except Exception as e:
-                print(f"Error reading sessions: {e}")
-
-    asyncio.run(_list_sessions())
+    store = StateStore(str(db_path))
+    try:
+        threads = store.list_threads()
+        if not threads:
+            print("No sessions found")
+            return 0
+        print(f"Sessions ({len(threads)}):\n")
+        for tid in threads:
+            state = store.load(tid)
+            msg_count = len(state.messages) if state else 0
+            print(f"  {tid}: {msg_count} messages")
+    finally:
+        store.close()
     return 0
 
 

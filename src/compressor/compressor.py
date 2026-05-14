@@ -14,14 +14,6 @@ import logging
 import re
 from typing import Optional
 
-from langchain_core.messages import (
-    AIMessage,
-    BaseMessage,
-    HumanMessage,
-    SystemMessage,
-    ToolMessage,
-)
-
 logger = logging.getLogger("myclaw.compressor")
 
 _CHARS_PER_TOKEN = 4
@@ -49,30 +41,31 @@ _SUMMARY_SYSTEM = """你是一个会话摘要助手。你需要将一段对话�
 _PLACEHOLDER = "[旧工具输出已清除以节省上下文空间]"
 
 
-def _estimate_tokens(messages: list[BaseMessage]) -> int:
+def _estimate_tokens(messages: list[dict]) -> int:
     total = 0
     for m in messages:
-        if isinstance(m.content, str):
-            total += len(m.content) // _CHARS_PER_TOKEN
-        elif isinstance(m.content, list):
-            for part in m.content:
+        content = m.get("content", "")
+        if isinstance(content, str):
+            total += len(content) // _CHARS_PER_TOKEN
+        elif isinstance(content, list):
+            for part in content:
                 if isinstance(part, dict) and "text" in part:
                     total += len(part["text"]) // _CHARS_PER_TOKEN
                 elif isinstance(part, str):
                     total += len(part) // _CHARS_PER_TOKEN
-                elif hasattr(part, "text"):
-                    total += len(part.text) // _CHARS_PER_TOKEN
         total += 10
     return total
 
 
 def _tool_result_summary(name: str, content: str) -> str:
-    """Create a 1-line summary of a tool result."""
     content_len = len(content) if isinstance(content, str) else 0
     line_count = content.count("\n") + 1 if isinstance(content, str) else 0
 
     if name in ("exec_command", "terminal"):
-        preview = (content[:80] if isinstance(content, str) else "") .replace("\n", " ")
+        preview = (
+            (content[:80] if isinstance(content, str) else "")
+            .replace("\n", " ")
+        )
         return f"[{name}] {preview}... ({line_count} lines)"
 
     if name in ("read_file",):
@@ -99,10 +92,15 @@ class ContextCompressor:
         self._previous_summary: Optional[str] = None
         self._compression_count = 0
 
+    def should_compress(self, messages: list[dict]) -> bool:
+        estimated = _estimate_tokens(messages)
+        threshold = int(100000 * self.config.threshold_percent)
+        return estimated > threshold
+
     def _get_model_config(self):
-        """Resolve model config, inheriting from main model if needed."""
         if self._main_config is None:
             from src.config import load_config
+
             self._main_config = load_config()
         main = self._main_config
         model_name = self.config.model or "LongCat-Flash-Lite"
@@ -112,13 +110,9 @@ class ContextCompressor:
 
     async def compress(
         self,
-        messages: list[BaseMessage],
+        messages: list[dict],
         context_window_tokens: int = 100000,
-    ) -> list[BaseMessage]:
-        """Compress messages if they exceed threshold.
-
-        Returns original messages if under threshold, or compressed list.
-        """
+    ) -> list[dict]:
         if not self.config.enabled:
             return self._static_compact(messages, context_window_tokens)
 
@@ -130,17 +124,16 @@ class ContextCompressor:
 
         logger.info(
             "Context compression triggered: %d estimated tokens > %d threshold",
-            estimated, threshold,
+            estimated,
+            threshold,
         )
 
-        # 1. Separate system messages
-        system_msgs = [m for m in messages if isinstance(m, SystemMessage)]
-        non_system = [m for m in messages if not isinstance(m, SystemMessage)]
+        system_msgs = [m for m in messages if m.get("role") == "system"]
+        non_system = [m for m in messages if m.get("role") != "system"]
 
         if not non_system:
             return messages
 
-        # 2. Protect tail
         tail_count = max(self.config.tail_messages, len(non_system) // 4)
         tail = non_system[-tail_count:]
         middle = non_system[:-tail_count]
@@ -148,62 +141,58 @@ class ContextCompressor:
         if not middle:
             return messages
 
-        # 3. Prune tool outputs in middle section
         pruned_middle = self._prune_tool_outputs(middle)
 
-        # 4. Build text for LLM summarization
         turns_text = self._format_turns(pruned_middle)
         if not turns_text.strip():
             return messages
 
-        # 5. Call LLM for summary
         summary = await self._llm_summarize(turns_text)
 
         if summary:
             self._previous_summary = summary
             self._compression_count += 1
-            summary_msg = SystemMessage(
-                content=f"[对话历史摘要 — 仅供参考]\n{summary}"
-            )
+            summary_msg = {
+                "role": "system",
+                "content": f"[对话历史摘要 — 仅供参考]\n{summary}",
+            }
             result = system_msgs + [summary_msg] + tail
             new_estimated = _estimate_tokens(result)
             logger.info(
                 "Context compressed: %d → %d messages (%d → %d tokens, compression #%d)",
-                len(messages), len(result),
-                estimated, new_estimated,
+                len(messages),
+                len(result),
+                estimated,
+                new_estimated,
                 self._compression_count,
             )
             return result
 
-        # Fallback to static compression
         return self._static_compact(messages, context_window_tokens)
 
-    def _prune_tool_outputs(self, messages: list[BaseMessage]) -> list[BaseMessage]:
-        """Replace large tool outputs with 1-line summaries."""
-        # Build tool_call_id → tool_name mapping
+    def _prune_tool_outputs(self, messages: list[dict]) -> list[dict]:
         call_id_to_name: dict[str, str] = {}
         for m in messages:
-            if isinstance(m, AIMessage) and m.tool_calls:
-                for tc in m.tool_calls:
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                for tc in m["tool_calls"]:
                     tc_id = tc.get("id", "")
-                    tc_name = tc.get("name", "unknown")
+                    fn = tc.get("function", {})
+                    tc_name = fn.get("name", "unknown") if isinstance(fn, dict) else tc.get("name", "unknown")
                     if tc_id:
                         call_id_to_name[tc_id] = tc_name
 
         result = []
         for m in messages:
-            if isinstance(m, ToolMessage):
-                content = m.content if isinstance(m.content, str) else str(m.content)
-                if len(content) > 300:
-                    tool_name = call_id_to_name.get(m.tool_call_id, "unknown")
-                    # Also check m.name (LangChain sets this)
-                    if hasattr(m, "name") and m.name:
-                        tool_name = m.name
+            if m.get("role") == "tool":
+                content = m.get("content", "")
+                if isinstance(content, str) and len(content) > 300:
+                    tool_name = call_id_to_name.get(
+                        m.get("tool_call_id", ""), "unknown"
+                    )
+                    if m.get("name"):
+                        tool_name = m["name"]
                     summary = _tool_result_summary(tool_name, content)
-                    result.append(ToolMessage(
-                        content=summary,
-                        tool_call_id=m.tool_call_id,
-                    ))
+                    result.append({**m, "content": summary})
                 else:
                     result.append(m)
             else:
@@ -211,40 +200,47 @@ class ContextCompressor:
 
         return result
 
-    def _format_turns(self, messages: list[BaseMessage]) -> str:
-        """Format messages into text for LLM summarization."""
+    def _format_turns(self, messages: list[dict]) -> str:
         lines = []
         for m in messages:
-            if isinstance(m, HumanMessage):
-                text = m.content if isinstance(m.content, str) else str(m.content)[:300]
+            role = m.get("role", "")
+            content = m.get("content", "")
+            if role == "user":
+                text = content if isinstance(content, str) else str(content)[:300]
                 lines.append(f"用户: {text[:300]}")
-            elif isinstance(m, AIMessage):
-                if m.tool_calls:
-                    calls = ", ".join(tc.get("name", "?") for tc in m.tool_calls)
-                    text = m.content if isinstance(m.content, str) else ""
+            elif role == "assistant":
+                tool_calls = m.get("tool_calls")
+                if tool_calls:
+                    calls = ", ".join(
+                        tc.get("function", {}).get("name", "?")
+                        if isinstance(tc.get("function"), dict)
+                        else tc.get("name", "?")
+                        for tc in tool_calls
+                    )
+                    text = content if isinstance(content, str) else ""
                     entry = f"AI调用工具: [{calls}]"
                     if text:
                         entry += f" {text[:100]}"
                     lines.append(entry)
-                elif m.content:
-                    text = m.content if isinstance(m.content, str) else str(m.content)[:300]
+                elif content:
+                    text = content if isinstance(content, str) else str(content)[:300]
                     lines.append(f"AI: {text[:300]}")
-            elif isinstance(m, ToolMessage):
-                content = m.content if isinstance(m.content, str) else str(m.content)[:150]
-                lines.append(f"工具结果: {content[:150]}")
-            elif isinstance(m, SystemMessage):
-                pass  # Skip system messages in the summary
+            elif role == "tool":
+                c = content if isinstance(content, str) else str(content)[:150]
+                lines.append(f"工具结果: {c[:150]}")
+            elif role == "system":
+                pass
         return "\n".join(lines)
 
     async def _llm_summarize(self, turns_text: str) -> Optional[str]:
-        """Call LLM to summarize conversation turns."""
         model_name, base_url, api_key = self._get_model_config()
 
         if not base_url or not api_key:
-            logger.warning("Compression: no model config available, using static fallback")
+            logger.warning(
+                "Compression: no model config available, using static fallback"
+            )
             return None
 
-        # Truncate input if too long (max ~12K chars for input)
         if len(turns_text) > 12000:
             turns_text = turns_text[:12000] + "\n... (更多历史已截断)"
 
@@ -257,7 +253,9 @@ class ContextCompressor:
         try:
             import httpx
 
-            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(30.0)
+            ) as client:
                 resp = await client.post(
                     f"{base_url.rstrip('/')}/chat/completions",
                     headers={"Authorization": f"Bearer {api_key}"},
@@ -280,17 +278,16 @@ class ContextCompressor:
 
     def _static_compact(
         self,
-        messages: list[BaseMessage],
+        messages: list[dict],
         context_window_tokens: int = 100000,
-    ) -> list[BaseMessage]:
-        """Fallback static compression (original behavior)."""
+    ) -> list[dict]:
         max_tokens = int(context_window_tokens * self.config.threshold_percent)
         estimated = _estimate_tokens(messages)
         if estimated <= max_tokens:
             return messages
 
-        system_msgs = [m for m in messages if isinstance(m, SystemMessage)]
-        non_system = [m for m in messages if not isinstance(m, SystemMessage)]
+        system_msgs = [m for m in messages if m.get("role") == "system"]
+        non_system = [m for m in messages if m.get("role") != "system"]
 
         if not non_system:
             return messages
@@ -304,31 +301,42 @@ class ContextCompressor:
 
         summaries = []
         for m in pruned:
-            if isinstance(m, ToolMessage):
-                tool_name = getattr(m, "name", "unknown")
-                content = m.content if isinstance(m.content, str) else str(m.content)
-                summaries.append(f"[Tool({tool_name})]: {content[:150]}")
-            elif isinstance(m, AIMessage) and m.tool_calls:
-                calls = ", ".join(tc.get("name", "?") for tc in m.tool_calls)
-                text = m.content if isinstance(m.content, str) else ""
+            role = m.get("role", "")
+            content = m.get("content", "")
+            if role == "tool":
+                tool_name = m.get("name", "unknown")
+                c = content if isinstance(content, str) else str(content)
+                summaries.append(f"[Tool({tool_name})]: {c[:150]}")
+            elif role == "assistant" and m.get("tool_calls"):
+                calls = ", ".join(
+                    tc.get("function", {}).get("name", "?")
+                    if isinstance(tc.get("function"), dict)
+                    else tc.get("name", "?")
+                    for tc in m["tool_calls"]
+                )
+                text = content if isinstance(content, str) else ""
                 entry = f"Assistant: called [{calls}]"
                 if text:
                     entry += f" {text[:100]}"
                 summaries.append(entry)
-            elif isinstance(m, HumanMessage):
-                text = m.content if isinstance(m.content, str) else str(m.content)[:200]
+            elif role == "user":
+                text = content if isinstance(content, str) else str(content)[:200]
                 summaries.append(f"User: {text[:200]}")
-            elif isinstance(m, AIMessage) and m.content:
-                text = m.content if isinstance(m.content, str) else str(m.content)[:200]
+            elif role == "assistant" and content:
+                text = content if isinstance(content, str) else str(content)[:200]
                 summaries.append(f"Assistant: {text[:200]}")
 
-        summary_text = "[Earlier conversation summarized]\n" + "\n".join(summaries[-20:])
-        summary_msg = SystemMessage(content=summary_text)
+        summary_text = (
+            "[Earlier conversation summarized]\n" + "\n".join(summaries[-20:])
+        )
+        summary_msg = {"role": "system", "content": summary_text}
 
         result = system_msgs + [summary_msg] + kept
         logger.info(
             "Static compact: %d → %d messages (%d → %d tokens)",
-            len(messages), len(result),
-            estimated, _estimate_tokens(result),
+            len(messages),
+            len(result),
+            estimated,
+            _estimate_tokens(result),
         )
         return result

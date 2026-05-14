@@ -39,13 +39,15 @@ class AgentState(BaseModel):
         for msg in messages:
             role = msg.get("role")
             if role not in _VALID_ROLES:
-                raise ValueError(f"Invalid message role: {role!r}")
-            if role == "tool" and not msg.get("tool_call_id"):
-                raise ValueError("Tool messages must have 'tool_call_id'")
-            if role == "assistant" and "tool_calls" in msg:
+                msg["role"] = "user"
+            if msg["role"] == "tool" and not msg.get("tool_call_id"):
+                msg["tool_call_id"] = "unknown"
+            if msg["role"] == "assistant" and "tool_calls" in msg:
                 for tc in msg["tool_calls"]:
-                    if not tc.get("id") or not tc.get("function"):
-                        raise ValueError("Tool calls must have 'id' and 'function'")
+                    if not tc.get("id"):
+                        tc["id"] = "unknown"
+                    if not tc.get("function"):
+                        tc["function"] = {"name": "unknown", "arguments": "{}"}
         return messages
 
     def meta_dict(self) -> dict[str, Any]:

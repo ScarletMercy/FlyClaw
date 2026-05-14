@@ -197,82 +197,35 @@ class TestSessionIndexStore:
         store.close()
 
 
-from unittest.mock import MagicMock
-
-
 class TestSyncMessages:
-    def _make_msg(self, role, content, msg_id=None, name=None, tool_calls=None):
-        msg = MagicMock()
-        msg.content = content
-        msg.id = msg_id or f"uuid-{role}"
-        msg.name = name
-        msg.tool_calls = tool_calls
-        # Set __class__ so isinstance works
-        if role == "human":
-            msg.__class__ = type("HumanMessage", (), {})
-        elif role == "ai":
-            msg.__class__ = type("AIMessage", (), {})
-        elif role == "tool":
-            msg.__class__ = type("ToolMessage", (), {})
-        else:
-            msg.__class__ = type("SystemMessage", (), {})
-        return msg
-
     def test_sync_extracts_messages(self, tmp_path):
         from src.session_index.store import SessionIndexStore
         from src.session_index.sync import sync_messages
-
         store = SessionIndexStore(str(tmp_path / "index.db"))
-        # Patch isinstance checks by using real LangChain messages
-        from langchain_core.messages import HumanMessage as HM, AIMessage as AM, ToolMessage as TM
-
         msgs = [
-            HM(content="hello world", id="h1"),
-            AM(content="hi there", id="a1"),
-            TM(content="/bin/ls output...", tool_call_id="tc1", id="t1", name="exec_command"),
+            {"role": "user", "content": "hello world", "id": "h1"},
+            {"role": "assistant", "content": "hi there", "id": "a1"},
+            {"role": "tool", "content": "/bin/ls output...", "tool_call_id": "tc1", "id": "t1", "name": "exec_command"},
         ]
-        sync_messages(
-            store,
-            thread_id="t1",
-            messages=msgs,
-            channel="feishu",
-            sender_id="ou_abc",
-            chat_id="c1",
-            chat_type="p2p",
-            tool_max_chars=500,
-        )
-        count = store._db.execute("SELECT COUNT(*) FROM messages WHERE thread_id='t1'").fetchone()[0]
-        assert count == 3
+        sync_messages(store, thread_id="t1", messages=msgs, channel="feishu", sender_id="ou_abc", chat_id="c1", chat_type="p2p", tool_max_chars=500)
+        assert store._db.execute("SELECT COUNT(*) FROM messages WHERE thread_id='t1'").fetchone()[0] == 3
         store.close()
 
     def test_sync_truncates_tool_content(self, tmp_path):
         from src.session_index.store import SessionIndexStore
         from src.session_index.sync import sync_messages
-        from langchain_core.messages import ToolMessage
-
         store = SessionIndexStore(str(tmp_path / "index.db"))
-        long_content = "x" * 2000
-        msgs = [ToolMessage(content=long_content, tool_call_id="tc1", id="t1", name="exec_command")]
-        sync_messages(
-            store, "t1", msgs,
-            channel="qq", sender_id="s", chat_id="c", chat_type="p2p",
-            tool_max_chars=500,
-        )
-        row = store._db.execute(
-            "SELECT content FROM messages WHERE thread_id='t1'"
-        ).fetchone()
-        assert len(row["content"]) == 500
+        msgs = [{"role": "tool", "content": "x" * 2000, "tool_call_id": "tc1", "id": "t1", "name": "exec_command"}]
+        sync_messages(store, "t1", msgs, channel="qq", sender_id="s", chat_id="c", chat_type="p2p", tool_max_chars=500)
+        assert len(store._db.execute("SELECT content FROM messages WHERE thread_id='t1'").fetchone()["content"]) == 500
         store.close()
 
     def test_sync_idempotent(self, tmp_path):
         from src.session_index.store import SessionIndexStore
         from src.session_index.sync import sync_messages
-        from langchain_core.messages import HumanMessage
-
         store = SessionIndexStore(str(tmp_path / "index.db"))
-        msgs = [HumanMessage(content="hello", id="h1")]
+        msgs = [{"role": "user", "content": "hello", "id": "h1"}]
         sync_messages(store, "t1", msgs, "qq", "s", "c", "p2p", 500)
         sync_messages(store, "t1", msgs, "qq", "s", "c", "p2p", 500)
-        count = store._db.execute("SELECT COUNT(*) FROM messages WHERE thread_id='t1'").fetchone()[0]
-        assert count == 1
+        assert store._db.execute("SELECT COUNT(*) FROM messages WHERE thread_id='t1'").fetchone()[0] == 1
         store.close()

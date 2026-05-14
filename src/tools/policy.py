@@ -4,7 +4,7 @@ import fnmatch
 import logging
 from typing import Optional
 
-from langchain_core.tools import BaseTool
+from src.agent.tooldef import ToolDef
 
 from src.auth.models import User
 
@@ -24,11 +24,11 @@ class ToolPolicy:
 
     def filter_tools(
         self,
-        tools: list[BaseTool],
+        tools: list[ToolDef],
         sender_id: str = "",
         owner_id: str = "",
         user: Optional[User] = None,
-    ) -> list[BaseTool]:
+    ) -> list[ToolDef]:
         filtered = []
         for tool in tools:
             name = tool.name
@@ -96,11 +96,11 @@ class ToolPolicy:
 
 
 def apply_tool_policy(
-    tools: list[BaseTool],
+    tools: list[ToolDef],
     sender_id: str = "",
     config=None,
     user: Optional[User] = None,
-) -> list[BaseTool]:
+) -> list[ToolDef]:
     if config is None or not hasattr(config, "tools"):
         return tools
 

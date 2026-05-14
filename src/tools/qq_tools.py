@@ -6,8 +6,6 @@ import logging
 from contextvars import ContextVar
 from typing import Optional
 
-from langchain_core.tools import tool
-
 logger = logging.getLogger("myclaw.qq_tools")
 
 # Auto-injected by QQ channel before each message callback
@@ -74,7 +72,6 @@ async def _qq_get(path: str, description: str = "QQ API"):
         return None
 
 
-@tool
 async def qq_list_guilds() -> str:
     """List all guilds (servers) the QQ Bot has joined.
 
@@ -96,7 +93,6 @@ async def qq_list_guilds() -> str:
     return result
 
 
-@tool
 async def qq_list_channels(guild_id: str) -> str:
     """List all channels in a QQ guild.
 
@@ -122,7 +118,6 @@ async def qq_list_channels(guild_id: str) -> str:
     return result
 
 
-@tool
 async def qq_list_members(guild_id: str, limit: int = 20) -> str:
     """List members in a QQ guild.
 
@@ -153,7 +148,6 @@ async def qq_list_members(guild_id: str, limit: int = 20) -> str:
     return "\n".join(lines)
 
 
-@tool
 async def qq_get_member(guild_id: str, user_id: str) -> str:
     """Get detailed info about a QQ guild member.
 
@@ -178,7 +172,6 @@ async def qq_get_member(guild_id: str, user_id: str) -> str:
     return "\n".join(lines)
 
 
-@tool
 async def qq_send_text(chat_id: str = "", text: str = "", reply_to: Optional[str] = None) -> str:
     """Send a text message to a QQ user or group via the bot.
 
@@ -199,7 +192,6 @@ async def qq_send_text(chat_id: str = "", text: str = "", reply_to: Optional[str
     return "[error] Failed to send message"
 
 
-@tool
 async def qq_send_image(chat_id: str = "", image_key: str = "") -> str:
     """Send an image to a QQ user or group.
 
@@ -217,7 +209,6 @@ async def qq_send_image(chat_id: str = "", image_key: str = "") -> str:
     return "Image sent." if ok else "[error] Failed to send image"
 
 
-@tool
 async def qq_send_file(chat_id: str = "", file_key: str = "") -> str:
     """Send a file to a QQ user or group (C2C and group only).
 
@@ -233,3 +224,16 @@ async def qq_send_file(chat_id: str = "", file_key: str = "") -> str:
         return "[error] QQ channel not initialized"
     ok = await ch.send_file(chat_id, file_key)
     return "File sent." if ok else "[error] Failed to send file"
+
+
+def get_tools() -> list:
+    from src.agent.tooldef import ToolDef
+    return [
+        ToolDef.from_function(qq_list_guilds),
+        ToolDef.from_function(qq_list_channels),
+        ToolDef.from_function(qq_list_members),
+        ToolDef.from_function(qq_get_member),
+        ToolDef.from_function(qq_send_text),
+        ToolDef.from_function(qq_send_image),
+        ToolDef.from_function(qq_send_file),
+    ]

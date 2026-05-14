@@ -6,8 +6,6 @@ import logging
 import random
 from typing import Optional
 
-from langchain_core.tools import tool
-
 logger = logging.getLogger("myclaw.feishu_tools")
 
 _LARK_RATE_LIMIT_CODES = {99991400, 99991401, 99991402}
@@ -78,7 +76,6 @@ async def _feishu_call(api_path, req, *, extract=None, ok_msg=None):
         return f"[error] {type(e).__name__}: {e}"
 
 
-@tool
 async def feishu_send_message(chat_id: str, text: str, msg_type: str = "text") -> str:
     """Send a text or interactive message to a Feishu chat.
 
@@ -98,7 +95,6 @@ async def feishu_send_message(chat_id: str, text: str, msg_type: str = "text") -
     )
 
 
-@tool
 async def feishu_get_user_info(user_id: str) -> str:
     """Get information about a Feishu user by open_id or user_id.
 
@@ -119,7 +115,6 @@ async def feishu_get_user_info(user_id: str) -> str:
     )
 
 
-@tool
 async def feishu_get_chat_member_list(chat_id: str, page_size: int = 50) -> str:
     """Get the member list of a Feishu chat group.
 
@@ -160,7 +155,6 @@ async def feishu_get_chat_member_list(chat_id: str, page_size: int = 50) -> str:
         return f"[error] {type(e).__name__}: {e}"
 
 
-@tool
 async def feishu_create_chat(name: str, description: str = "", user_ids: str = "") -> str:
     """Create a Feishu group chat.
 
@@ -198,7 +192,6 @@ async def feishu_create_chat(name: str, description: str = "", user_ids: str = "
         return f"[error] {type(e).__name__}: {e}"
 
 
-@tool
 async def feishu_get_chat_info(chat_id: str) -> str:
     """Get information about a Feishu chat group.
 
@@ -219,7 +212,6 @@ async def feishu_get_chat_info(chat_id: str) -> str:
     )
 
 
-@tool
 async def feishu_get_doc_content(doc_token: str) -> str:
     """Read the content of a Feishu document (docx or wiki).
 
@@ -265,7 +257,6 @@ async def feishu_get_doc_content(doc_token: str) -> str:
         return f"[error] {type(e).__name__}: {e}"
 
 
-@tool
 async def feishu_list_calendar_events(start_time: str = "", end_time: str = "", user_id: str = "") -> str:
     """List Feishu calendar events in a time range.
 
@@ -295,7 +286,6 @@ async def feishu_list_calendar_events(start_time: str = "", end_time: str = "", 
     )
 
 
-@tool
 async def feishu_create_document(title: str, folder_token: str = "") -> str:
     """Create a new Feishu cloud document (docx) and return its URL.
 
@@ -317,7 +307,6 @@ async def feishu_create_document(title: str, folder_token: str = "") -> str:
     )
 
 
-@tool
 async def feishu_drive_upload(file_path: str, folder_token: str = "") -> str:
     """Upload a local file to Feishu Drive.
 
@@ -379,7 +368,6 @@ async def feishu_drive_upload(file_path: str, folder_token: str = "") -> str:
         return f"[error] {type(e).__name__}: {e}"
 
 
-@tool
 async def feishu_write_document(doc_token: str, content: str) -> str:
     """Write content to an existing Feishu document (replace all content).
 
@@ -472,7 +460,6 @@ async def feishu_write_document(doc_token: str, content: str) -> str:
         return f"[error] {type(e).__name__}: {e}"
 
 
-@tool
 async def feishu_create_calendar_event(
     title: str,
     start_time: str,
@@ -575,7 +562,6 @@ def _parse_messages(resp):
     return "\n---\n".join(messages) if messages else "No readable messages found"
 
 
-@tool
 async def feishu_get_message_list(chat_id: str, count: int = 20) -> str:
     """Get recent messages from a Feishu chat.
 
@@ -589,7 +575,6 @@ async def feishu_get_message_list(chat_id: str, count: int = 20) -> str:
     return await _feishu_call("im.v1.message.list", req, extract=_parse_messages, ok_msg="No messages found")
 
 
-@tool
 async def feishu_recall_message(message_id: str) -> str:
     """Recall (delete) a previously sent message.
 
@@ -602,7 +587,6 @@ async def feishu_recall_message(message_id: str) -> str:
     return await _feishu_call("im.v1.message.delete", req, ok_msg=f"Message recalled: {message_id}")
 
 
-@tool
 async def feishu_create_folder(name: str, folder_token: str = "") -> str:
     """Create a folder in Feishu Drive.
 
@@ -673,7 +657,6 @@ async def feishu_create_folder(name: str, folder_token: str = "") -> str:
         return f"[error] {type(e).__name__}: {e}"
 
 
-@tool
 async def feishu_drive_list(folder_token: str = "") -> str:
     """List files and folders in Feishu Drive.
 
@@ -690,7 +673,6 @@ async def feishu_drive_list(folder_token: str = "") -> str:
     )
 
 
-@tool
 async def feishu_send_card(chat_id: str, title: str, content: str) -> str:
     """Send an interactive card message to a Feishu chat.
 
@@ -714,7 +696,6 @@ async def feishu_send_card(chat_id: str, title: str, content: str) -> str:
     )
 
 
-@tool
 async def feishu_create_bitable(name: str, folder_token: str = "") -> str:
     """Create a new Feishu bitable (multi-dimensional table).
 
@@ -732,7 +713,6 @@ async def feishu_create_bitable(name: str, folder_token: str = "") -> str:
     )
 
 
-@tool
 async def feishu_bitable_list_records(app_token: str, table_id: str, page_size: int = 20) -> str:
     """List records from a Feishu bitable table.
 
@@ -751,7 +731,6 @@ async def feishu_bitable_list_records(app_token: str, table_id: str, page_size: 
     )
 
 
-@tool
 async def feishu_bitable_add_record(app_token: str, table_id: str, fields_json: str) -> str:
     """Add a record to a Feishu bitable table.
 
@@ -776,7 +755,6 @@ async def feishu_bitable_add_record(app_token: str, table_id: str, fields_json: 
 # ============================================================
 
 
-@tool
 async def feishu_doc_append(doc_token: str, content: str) -> str:
     """Append content to the end of a Feishu document.
 
@@ -828,7 +806,6 @@ async def feishu_doc_append(doc_token: str, content: str) -> str:
         return f"[error] {type(e).__name__}: {e}"
 
 
-@tool
 async def feishu_doc_insert(doc_token: str, content: str, after_block_id: str) -> str:
     """Insert content after a specific block in a Feishu document.
 
@@ -895,7 +872,6 @@ async def feishu_doc_insert(doc_token: str, content: str, after_block_id: str) -
         return f"[error] {type(e).__name__}: {e}"
 
 
-@tool
 async def feishu_doc_list_blocks(doc_token: str) -> str:
     """List all blocks in a Feishu document.
 
@@ -912,7 +888,6 @@ async def feishu_doc_list_blocks(doc_token: str) -> str:
     )
 
 
-@tool
 async def feishu_doc_get_block(doc_token: str, block_id: str) -> str:
     """Get details of a specific block in a Feishu document.
 
@@ -932,7 +907,6 @@ async def feishu_doc_get_block(doc_token: str, block_id: str) -> str:
     )
 
 
-@tool
 async def feishu_doc_update_block(doc_token: str, block_id: str, content: str) -> str:
     """Update the text content of a block in a Feishu document.
 
@@ -954,7 +928,6 @@ async def feishu_doc_update_block(doc_token: str, block_id: str, content: str) -
     return await _feishu_call("docx.v1.document_block.patch", req, ok_msg=f"Block updated: {block_id}")
 
 
-@tool
 async def feishu_doc_delete_block(doc_token: str, block_id: str) -> str:
     """Delete a block from a Feishu document.
 
@@ -1024,7 +997,6 @@ async def feishu_doc_delete_block(doc_token: str, block_id: str) -> str:
         return f"[error] {type(e).__name__}: {e}"
 
 
-@tool
 async def feishu_doc_create_table(doc_token: str, row_size: int, column_size: int) -> str:
     """Create a table in a Feishu document.
 
@@ -1073,7 +1045,6 @@ async def feishu_doc_create_table(doc_token: str, row_size: int, column_size: in
         return f"[error] {type(e).__name__}: {e}"
 
 
-@tool
 async def feishu_doc_insert_table_row(doc_token: str, table_block_id: str, row_index: int = -1) -> str:
     """Insert a row into a table in a Feishu document.
 
@@ -1089,7 +1060,6 @@ async def feishu_doc_insert_table_row(doc_token: str, table_block_id: str, row_i
     return await _feishu_call("docx.v1.document_block.patch", req, ok_msg=f"Row inserted at index {row_index}")
 
 
-@tool
 async def feishu_doc_insert_table_col(doc_token: str, table_block_id: str, col_index: int = -1) -> str:
     """Insert a column into a table in a Feishu document.
 
@@ -1105,7 +1075,6 @@ async def feishu_doc_insert_table_col(doc_token: str, table_block_id: str, col_i
     return await _feishu_call("docx.v1.document_block.patch", req, ok_msg=f"Column inserted at index {col_index}")
 
 
-@tool
 async def feishu_doc_delete_table_rows(doc_token: str, table_block_id: str, row_start: int, row_end: int) -> str:
     """Delete rows from a table in a Feishu document.
 
@@ -1124,7 +1093,6 @@ async def feishu_doc_delete_table_rows(doc_token: str, table_block_id: str, row_
     return await _feishu_call("docx.v1.document_block.patch", req, ok_msg=f"Rows deleted: {row_start}-{row_end}")
 
 
-@tool
 async def feishu_doc_delete_table_cols(doc_token: str, table_block_id: str, col_start: int, col_end: int) -> str:
     """Delete columns from a table in a Feishu document.
 
@@ -1148,7 +1116,6 @@ async def feishu_doc_delete_table_cols(doc_token: str, table_block_id: str, col_
 # ============================================================
 
 
-@tool
 async def feishu_drive_info(file_token: str) -> str:
     """Get information about a file or folder in Feishu Drive.
 
@@ -1168,7 +1135,6 @@ async def feishu_drive_info(file_token: str) -> str:
     )
 
 
-@tool
 async def feishu_drive_move(file_token: str, folder_token: str, file_type: str = "") -> str:
     """Move a file or folder to another folder in Feishu Drive.
 
@@ -1218,7 +1184,6 @@ async def feishu_drive_move(file_token: str, folder_token: str, file_type: str =
         return f"[error] {type(e).__name__}: {e}"
 
 
-@tool
 async def feishu_drive_delete(file_token: str, file_type: str) -> str:
     """Delete a file or folder from Feishu Drive.
 
@@ -1263,7 +1228,6 @@ def _parse_comments(resp):
     return comments
 
 
-@tool
 async def feishu_drive_list_comments(file_token: str, file_type: str = "docx", page_size: int = 20) -> str:
     """List comments on a file in Feishu Drive.
 
@@ -1278,7 +1242,6 @@ async def feishu_drive_list_comments(file_token: str, file_type: str = "docx", p
     return await _feishu_call("drive.v1.file_comment.list", req, extract=_parse_comments, ok_msg="No comments found")
 
 
-@tool
 async def feishu_drive_add_comment(file_token: str, content: str, file_type: str = "docx", block_id: str = "") -> str:
     """Add a comment to a file in Feishu Drive.
 
@@ -1334,7 +1297,6 @@ async def feishu_drive_add_comment(file_token: str, content: str, file_type: str
         return f"[error] {type(e).__name__}: {e}"
 
 
-@tool
 async def feishu_drive_reply_comment(file_token: str, comment_id: str, content: str, file_type: str = "docx") -> str:
     """Reply to a comment on a file in Feishu Drive.
 
@@ -1383,7 +1345,6 @@ async def feishu_drive_reply_comment(file_token: str, comment_id: str, content: 
 # ============================================================
 
 
-@tool
 async def feishu_bitable_get_meta(url: str) -> str:
     """Parse a Bitable URL and get app_token, table_id, and table list.
 
@@ -1449,7 +1410,6 @@ async def feishu_bitable_get_meta(url: str) -> str:
         return f"[error] {type(e).__name__}: {e}"
 
 
-@tool
 async def feishu_bitable_list_fields(app_token: str, table_id: str) -> str:
     """List all fields (columns) in a Bitable table.
 
@@ -1467,7 +1427,6 @@ async def feishu_bitable_list_fields(app_token: str, table_id: str) -> str:
     )
 
 
-@tool
 async def feishu_bitable_get_record(app_token: str, table_id: str, record_id: str) -> str:
     """Get a single record from a Bitable table.
 
@@ -1488,7 +1447,6 @@ async def feishu_bitable_get_record(app_token: str, table_id: str, record_id: st
     )
 
 
-@tool
 async def feishu_bitable_update_record(app_token: str, table_id: str, record_id: str, fields_json: str) -> str:
     """Update an existing record in a Bitable table.
 
@@ -1509,7 +1467,6 @@ async def feishu_bitable_update_record(app_token: str, table_id: str, record_id:
     )
 
 
-@tool
 async def feishu_bitable_create_field(app_token: str, table_id: str, field_name: str, field_type: int) -> str:
     """Create a new field (column) in a Bitable table.
 
@@ -1534,7 +1491,6 @@ async def feishu_bitable_create_field(app_token: str, table_id: str, field_name:
 # ============================================================
 
 
-@tool
 async def feishu_wiki_list_spaces() -> str:
     """List all wiki knowledge spaces.
 
@@ -1550,7 +1506,6 @@ async def feishu_wiki_list_spaces() -> str:
     )
 
 
-@tool
 async def feishu_wiki_list_nodes(space_id: str, parent_node_token: str = "") -> str:
     """List nodes in a wiki space.
 
@@ -1568,7 +1523,6 @@ async def feishu_wiki_list_nodes(space_id: str, parent_node_token: str = "") -> 
     )
 
 
-@tool
 async def feishu_wiki_get_node(token: str) -> str:
     """Get details of a wiki node.
 
@@ -1588,7 +1542,6 @@ async def feishu_wiki_get_node(token: str) -> str:
     )
 
 
-@tool
 async def feishu_wiki_create_node(
     space_id: str, title: str, obj_type: str = "docx", parent_node_token: str = ""
 ) -> str:
@@ -1610,7 +1563,6 @@ async def feishu_wiki_create_node(
     )
 
 
-@tool
 async def feishu_wiki_move_node(
     space_id: str, node_token: str, target_space_id: str = "", target_parent_token: str = ""
 ) -> str:
@@ -1629,7 +1581,6 @@ async def feishu_wiki_move_node(
     return await _feishu_call("wiki.v2.space_node.move", req, ok_msg=f"Wiki node moved: {node_token}")
 
 
-@tool
 async def feishu_wiki_rename_node(space_id: str, node_token: str, title: str) -> str:
     """Rename a wiki node.
 
@@ -1650,7 +1601,6 @@ async def feishu_wiki_rename_node(space_id: str, node_token: str, title: str) ->
 # ============================================================
 
 
-@tool
 async def feishu_perm_list_members(token: str, perm_type: str = "docx", page_size: int = 50) -> str:
     """List members with permissions on a resource.
 
@@ -1669,7 +1619,6 @@ async def feishu_perm_list_members(token: str, perm_type: str = "docx", page_siz
     )
 
 
-@tool
 async def feishu_perm_add_member(
     token: str, perm_type: str = "docx", member_type: str = "openid", member_id: str = "", perm: str = "read_only"
 ) -> str:
@@ -1693,7 +1642,6 @@ async def feishu_perm_add_member(
     )
 
 
-@tool
 async def feishu_perm_remove_member(token: str, perm_type: str, member_type: str, member_id: str) -> str:
     """Remove a member's permissions from a resource.
 
@@ -1717,7 +1665,6 @@ async def feishu_perm_remove_member(token: str, perm_type: str, member_type: str
 # ============================================================
 
 
-@tool
 async def feishu_get_member_info(member_id: str, id_type: str = "open_id") -> str:
     """Get detailed info about a Feishu user.
 
@@ -1744,7 +1691,6 @@ async def feishu_get_member_info(member_id: str, id_type: str = "open_id") -> st
 # ============================================================
 
 
-@tool
 async def feishu_doc_upload_image(doc_token: str, file_path: str) -> str:
     """Upload a local image and insert it into a Feishu document.
 
@@ -1816,3 +1762,61 @@ async def feishu_doc_upload_image(doc_token: str, file_path: str) -> str:
         return f"[error] Image block insertion failed: {insert_resp.code} {insert_resp.msg}"
     except Exception as e:
         return f"[error] {type(e).__name__}: {e}"
+
+
+def get_tools() -> list:
+    from src.agent.tooldef import ToolDef
+    return [
+        ToolDef.from_function(feishu_send_message),
+        ToolDef.from_function(feishu_get_user_info),
+        ToolDef.from_function(feishu_get_chat_member_list),
+        ToolDef.from_function(feishu_create_chat),
+        ToolDef.from_function(feishu_get_chat_info),
+        ToolDef.from_function(feishu_get_doc_content),
+        ToolDef.from_function(feishu_list_calendar_events),
+        ToolDef.from_function(feishu_create_document),
+        ToolDef.from_function(feishu_drive_upload),
+        ToolDef.from_function(feishu_write_document),
+        ToolDef.from_function(feishu_create_calendar_event),
+        ToolDef.from_function(feishu_get_message_list),
+        ToolDef.from_function(feishu_recall_message),
+        ToolDef.from_function(feishu_create_folder),
+        ToolDef.from_function(feishu_drive_list),
+        ToolDef.from_function(feishu_send_card),
+        ToolDef.from_function(feishu_create_bitable),
+        ToolDef.from_function(feishu_bitable_list_records),
+        ToolDef.from_function(feishu_bitable_add_record),
+        ToolDef.from_function(feishu_doc_append),
+        ToolDef.from_function(feishu_doc_insert),
+        ToolDef.from_function(feishu_doc_list_blocks),
+        ToolDef.from_function(feishu_doc_get_block),
+        ToolDef.from_function(feishu_doc_update_block),
+        ToolDef.from_function(feishu_doc_delete_block),
+        ToolDef.from_function(feishu_doc_create_table),
+        ToolDef.from_function(feishu_doc_insert_table_row),
+        ToolDef.from_function(feishu_doc_insert_table_col),
+        ToolDef.from_function(feishu_doc_delete_table_rows),
+        ToolDef.from_function(feishu_doc_delete_table_cols),
+        ToolDef.from_function(feishu_drive_info),
+        ToolDef.from_function(feishu_drive_move),
+        ToolDef.from_function(feishu_drive_delete),
+        ToolDef.from_function(feishu_drive_list_comments),
+        ToolDef.from_function(feishu_drive_add_comment),
+        ToolDef.from_function(feishu_drive_reply_comment),
+        ToolDef.from_function(feishu_bitable_get_meta),
+        ToolDef.from_function(feishu_bitable_list_fields),
+        ToolDef.from_function(feishu_bitable_get_record),
+        ToolDef.from_function(feishu_bitable_update_record),
+        ToolDef.from_function(feishu_bitable_create_field),
+        ToolDef.from_function(feishu_wiki_list_spaces),
+        ToolDef.from_function(feishu_wiki_list_nodes),
+        ToolDef.from_function(feishu_wiki_get_node),
+        ToolDef.from_function(feishu_wiki_create_node),
+        ToolDef.from_function(feishu_wiki_move_node),
+        ToolDef.from_function(feishu_wiki_rename_node),
+        ToolDef.from_function(feishu_perm_list_members),
+        ToolDef.from_function(feishu_perm_add_member),
+        ToolDef.from_function(feishu_perm_remove_member),
+        ToolDef.from_function(feishu_get_member_info),
+        ToolDef.from_function(feishu_doc_upload_image),
+    ]

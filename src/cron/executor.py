@@ -14,8 +14,8 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 import httpx
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from src.agent.state import AgentState
 from .types import CronJob, CronRunResult
 
 logger = logging.getLogger("myclaw.cron.executor")
@@ -82,16 +82,16 @@ async def _is_safe_webhook_url(url: str) -> tuple[bool, str]:
     return True, ""
 
 
-def _extract_assistant_text(result: dict) -> str:
-    for msg in reversed(result.get("messages", [])):
-        if isinstance(msg, AIMessage) and msg.content:
-            return msg.content
+def _extract_assistant_text(messages: list[dict]) -> str:
+    for msg in reversed(messages):
+        if msg.get("role") == "assistant" and msg.get("content"):
+            return msg["content"]
     return ""
 
 
 async def execute_cron_job(
     job: CronJob,
-    graph: Any,
+    agent_loop: Any,
     config: Any,
     feishu_channel: Any = None,
     started_at: Optional[float] = None,
@@ -112,23 +112,23 @@ async def execute_cron_job(
 
     input_state = None
     if job.payload.kind == "agent_turn":
-        input_state = {
-            "messages": [HumanMessage(content=job.payload.message or "")],
-            "system_prompt": system_prompt,
-            "sender_id": f"cron:{job.id}",
-            "chat_id": thread_id,
-            "chat_type": "p2p",
-            "message_id": f"cron:{job.id}:{started_at}",
-        }
+        input_state = AgentState(
+            messages=[{"role": "user", "content": job.payload.message or ""}],
+            system_prompt=system_prompt,
+            sender_id=f"cron:{job.id}",
+            chat_id=thread_id,
+            chat_type="p2p",
+            message_id=f"cron:{job.id}:{started_at}",
+        )
     elif job.payload.kind == "system_event":
-        input_state = {
-            "messages": [SystemMessage(content=f"[Scheduled Event] {job.payload.text or ''}")],
-            "system_prompt": system_prompt,
-            "sender_id": "system",
-            "chat_id": thread_id,
-            "chat_type": "p2p",
-            "message_id": f"cron:{job.id}:{started_at}",
-        }
+        input_state = AgentState(
+            messages=[{"role": "system", "content": f"[Scheduled Event] {job.payload.text or ''}"}],
+            system_prompt=system_prompt,
+            sender_id="system",
+            chat_id=thread_id,
+            chat_type="p2p",
+            message_id=f"cron:{job.id}:{started_at}",
+        )
     else:
         return CronRunResult(
             job_id=job.id,
@@ -140,10 +140,10 @@ async def execute_cron_job(
 
     try:
         result = await asyncio.wait_for(
-            graph.ainvoke(input_state, run_config),
+            agent_loop.run(input_state, thread_id),
             timeout=timeout,
         )
-        output = _extract_assistant_text(result)
+        output = _extract_assistant_text(result.messages)
         finished_at = time.time()
 
         cr = CronRunResult(

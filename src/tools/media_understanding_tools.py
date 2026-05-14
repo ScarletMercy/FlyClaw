@@ -7,8 +7,6 @@ import mimetypes
 from pathlib import Path
 from urllib.parse import urlparse
 
-from langchain_core.tools import tool
-
 logger = logging.getLogger("myclaw.tools.media_understanding")
 
 _runner = None
@@ -94,7 +92,6 @@ async def _resolve_media_input(source: str, default_mime: str) -> tuple[bytes, s
         return resp.content, mime_type
 
 
-@tool
 async def describe_image(image_url: str) -> str:
     """Describe/analyze an image. Provide a URL, a data:image base64 URL, or a local file path.
 
@@ -119,7 +116,6 @@ async def describe_image(image_url: str) -> str:
         return f"[error] {e}"
 
 
-@tool
 async def transcribe_audio(audio_url: str) -> str:
     """Transcribe audio/speech to text. Provide a URL, a data:audio base64 URL, or a local file path.
 
@@ -144,7 +140,6 @@ async def transcribe_audio(audio_url: str) -> str:
         return f"[error] {e}"
 
 
-@tool
 async def describe_video(video_url: str) -> str:
     """Describe/analyze a video (extracts a frame and describes it).
 
@@ -167,3 +162,12 @@ async def describe_video(video_url: str) -> str:
     except Exception as e:
         logger.error("describe_video error: %s", e)
         return f"[error] {e}"
+
+
+def get_tools() -> list:
+    from src.agent.tooldef import ToolDef
+    return [
+        ToolDef.from_function(describe_image),
+        ToolDef.from_function(transcribe_audio),
+        ToolDef.from_function(describe_video),
+    ]

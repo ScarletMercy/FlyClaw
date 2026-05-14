@@ -4,8 +4,6 @@ import logging
 from contextvars import ContextVar
 from typing import Optional
 
-from langchain_core.tools import tool
-
 logger = logging.getLogger("myclaw.media_tools")
 
 _current_channel: ContextVar[str] = ContextVar("_current_channel", default="")
@@ -15,7 +13,6 @@ def set_current_channel(channel: str):
     _current_channel.set(channel)
 
 
-@tool
 async def send_image_to_chat(chat_id: str, image_url: str) -> str:
     """Send an image to a Feishu chat. Downloads from URL, uploads to Feishu, sends.
 
@@ -45,7 +42,6 @@ async def send_image_to_chat(chat_id: str, image_url: str) -> str:
     return "[error] Failed to send image message"
 
 
-@tool
 async def send_file_to_chat(chat_id: str, file_url: str, filename: str) -> str:
     """Send a file to a Feishu chat. Downloads from URL, uploads to Feishu, sends.
 
@@ -110,7 +106,6 @@ async def _send_file_message(client, chat_id: str, file_key: str) -> bool:
         return False
 
 
-@tool
 async def send_voice(audio_source: str) -> str:
     """Send an audio file as a voice message to the current chat.
 
@@ -154,3 +149,12 @@ async def send_voice(audio_source: str) -> str:
         if _feishu_channel and await _feishu_channel.send_audio(chat_id, audio):
             return f"Voice sent ({len(audio)} bytes)"
     return "[error] Failed to send voice"
+
+
+def get_tools() -> list:
+    from src.agent.tooldef import ToolDef
+    return [
+        ToolDef.from_function(send_image_to_chat),
+        ToolDef.from_function(send_file_to_chat),
+        ToolDef.from_function(send_voice),
+    ]

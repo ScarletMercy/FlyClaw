@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from langchain_core.tools import BaseTool
+from src.agent.tooldef import ToolDef
 from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger("myclaw.plugins")
@@ -61,12 +61,20 @@ def _load_module(module_path: Path, module_name: str, allowed_dir: Optional[Path
     return module
 
 
-def _extract_tools(module) -> list[BaseTool]:
-    tools = []
+def _extract_tools(module) -> list[Any]:
+    tools: list[Any] = []
     for attr_name in dir(module):
         attr = getattr(module, attr_name)
-        if isinstance(attr, BaseTool):
+        if isinstance(attr, ToolDef):
             tools.append(attr)
+    get_tools_fn = getattr(module, "get_tools", None)
+    if callable(get_tools_fn):
+        try:
+            extra = get_tools_fn()
+            if isinstance(extra, list):
+                tools.extend(extra)
+        except Exception:
+            pass
     return tools
 
 
@@ -90,7 +98,7 @@ def load_plugin(plugin_dir: Path) -> Optional[PluginRecord]:
         logger.error("Failed to parse plugin manifest %s: %s", manifest_path, e)
         return None
 
-    tools: list[BaseTool] = []
+    tools: list[Any] = []
     hooks: dict[str, list[Callable]] = {}
 
     for tools_file in manifest.tools:
