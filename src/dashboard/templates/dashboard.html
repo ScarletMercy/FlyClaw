@@ -1365,36 +1365,159 @@ async function searchSessions() {
 
 async function viewSessionMessages(threadId) {
   if (!threadId) return;
+  
+  const modal = document.createElement('div');
+  modal.className = 'message-modal';
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center';
+  
+  const content = document.createElement('div');
+  content.style.cssText = 'background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:900px;width:95%;max-height:85vh;display:flex;flex-direction:column';
+  
+  content.innerHTML = `
+    <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-size:14px;font-weight:600">Session Messages</div>
+        <div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-top:2px">${escHtml(threadId)}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <input type="text" id="msgSearchInput" placeholder="Search messages..." 
+               style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px;width:200px"
+               oninput="filterMessages(this.value)">
+        <button onclick="this.closest('.message-modal').remove()" 
+                style="background:none;border:none;color:var(--text);font-size:20px;cursor:pointer">&times;</button>
+      </div>
+    </div>
+    <div id="messageList" style="flex:1;overflow-y:auto;padding:16px 20px">
+      <div style="color:var(--text3);font-size:13px;padding:20px;text-align:center">Loading messages...</div>
+    </div>
+    <div id="messageFooter" style="padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+      <span id="messageCount" style="font-size:12px;color:var(--text3)"></span>
+      <button id="loadMoreBtn" class="btn sm" style="display:none" onclick="loadMoreMessages()">Load More</button>
+    </div>
+  `;
+  
+  modal.appendChild(content);
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+  
+  const escHandler = (e) => { if (e.key === 'Escape') { modal.remove(); document.removeEventListener('keydown', escHandler); } };
+  document.addEventListener('keydown', escHandler);
+  document.body.appendChild(modal);
+  
+  window._msgThread = threadId;
+  window._msgAll = [];
+  window._msgTotal = 0;
+  await loadMessages(threadId, 0, 50);
+}
+
+async function loadMessages(threadId, offset, limit) {
+  const listEl = document.getElementById('messageList');
+  const countEl = document.getElementById('messageCount');
+  const loadMoreBtn = document.getElementById('loadMoreBtn');
+  
   try {
-    const data = await api('/api/dashboard/sessions/' + encodeURIComponent(threadId) + '/messages?limit=50');
+    const data = await api(`/api/dashboard/sessions/${encodeURIComponent(threadId)}/messages?limit=${limit}&offset=${offset}`);
     if (data.error) {
-      alert('Error: ' + data.error);
+      listEl.innerHTML = '<div style="color:var(--red);font-size:13px;padding:16px">Error: ' + escHtml(data.error) + '</div>';
       return;
     }
+    
     const messages = data.messages || [];
-    let html = '<div style="max-height:400px;overflow-y:auto;padding:16px">';
-    html += '<div style="font-size:12px;color:var(--text3);margin-bottom:12px">' + messages.length + ' messages (of ' + data.total + ')</div>';
-    for (const m of messages) {
-      const role = m.role || 'unknown';
-      const color = role === 'user' ? 'var(--green)' : role === 'assistant' ? 'var(--accent)' : 'var(--text3)';
-      html += '<div style="margin-bottom:12px;padding:8px 12px;background:var(--surface2);border-radius:8px">';
-      html += '<div style="font-size:11px;font-weight:600;color:' + color + ';margin-bottom:4px">' + role + '</div>';
-      html += '<div style="font-size:13px;color:var(--text);white-space:pre-wrap;word-break:break-word">' + escHtml(m.content || '').substring(0, 500) + '</div>';
-      html += '</div>';
+    window._msgTotal = data.total;
+    
+    if (offset === 0) {
+      window._msgAll = messages;
+    } else {
+      window._msgAll = window._msgAll.concat(messages);
     }
-    html += '</div>';
-    const modal = document.createElement('div');
-    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center';
-    modal.innerHTML = '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:800px;width:90%;max-height:80vh;overflow:hidden">' +
-      '<div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">' +
-      '<span style="font-size:14px;font-weight:600">Session Messages</span>' +
-      '<button onclick="this.closest(\'div[style*=fixed]\').remove()" style="background:none;border:none;color:var(--text);font-size:20px;cursor:pointer">&times;</button></div>' +
-      html + '</div>';
-    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-    document.body.appendChild(modal);
+    
+    renderMessages(window._msgAll);
+    countEl.textContent = `Showing ${window._msgAll.length} of ${window._msgTotal} messages`;
+    loadMoreBtn.style.display = data.has_more ? 'inline-block' : 'none';
+    
   } catch(e) {
-    alert('Error: ' + e.message);
+    listEl.innerHTML = '<div style="color:var(--red);font-size:13px;padding:16px">Error: ' + escHtml(e.message) + '</div>';
   }
+}
+
+function renderMessages(messages) {
+  const listEl = document.getElementById('messageList');
+  let html = '';
+  
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    const role = m.role || 'unknown';
+    const icon = role === 'user' ? '&#128101;' : role === 'assistant' ? '&#129302;' : '&#128295;';
+    const color = role === 'user' ? 'var(--green)' : role === 'assistant' ? 'var(--accent)' : 'var(--text3)';
+    const align = role === 'user' ? 'flex-end' : 'flex-start';
+    
+    html += `<div class="message-item" style="display:flex;justify-content:${align};margin-bottom:12px" data-role="${role}">`;
+    html += `<div style="max-width:80%;background:var(--surface2);border-radius:12px;padding:12px 16px;border:1px solid var(--border)">`;
+    
+    // Header: role + timestamp
+    html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">`;
+    html += `<span style="font-size:11px;font-weight:600;color:${color}">${icon} ${role}</span>`;
+    if (m.timestamp) {
+      html += `<span style="font-size:10px;color:var(--text3)">${new Date(m.timestamp).toLocaleString()}</span>`;
+    }
+    html += `</div>`;
+    
+    // Content
+    const content = m.content || '';
+    const isTruncated = content.length > 500;
+    const msgId = 'msg-' + i;
+    
+    if (role === 'tool' && m.tool_name) {
+      html += `<div style="margin-bottom:8px"><span class="tag tag-blue">${escHtml(m.tool_name)}</span></div>`;
+      if (m.tool_calls) {
+        html += `<details style="margin-top:8px"><summary style="font-size:11px;color:var(--text3);cursor:pointer">Arguments (JSON)</summary>`;
+        html += `<pre style="background:var(--bg);padding:8px;border-radius:6px;font-size:11px;overflow-x:auto;margin-top:4px">${escHtml(JSON.stringify(m.tool_calls, null, 2))}</pre>`;
+        html += `</details>`;
+      }
+    }
+    
+    html += `<div id="${msgId}" style="font-size:13px;color:var(--text);white-space:pre-wrap;word-break:break-word;line-height:1.6">`;
+    html += isTruncated ? escHtml(content.substring(0, 500)) + '...' : escHtml(content);
+    html += `</div>`;
+    
+    if (isTruncated) {
+      html += `<button onclick="expandMessage('${msgId}', ${i})" style="margin-top:8px;font-size:11px;color:var(--accent);background:none;border:none;cursor:pointer">Show more</button>`;
+    }
+    
+    // Copy button
+    html += `<button onclick="copyMessage(${i})" style="margin-top:8px;font-size:11px;color:var(--text3);background:none;border:none;cursor:pointer" title="Copy message">&#128203; Copy</button>`;
+    
+    html += `</div></div>`;
+  }
+  
+  listEl.innerHTML = html;
+}
+
+function expandMessage(msgId, index) {
+  const el = document.getElementById(msgId);
+  const content = window._msgAll[index].content || '';
+  el.textContent = content;
+  el.nextElementSibling?.remove();
+}
+
+function copyMessage(index) {
+  const content = window._msgAll[index].content || '';
+  navigator.clipboard.writeText(content).then(() => {
+    // Optional: show toast notification
+  });
+}
+
+function filterMessages(query) {
+  query = query.toLowerCase().trim();
+  const items = document.querySelectorAll('.message-item');
+  items.forEach(item => {
+    const text = item.textContent.toLowerCase();
+    item.style.display = text.includes(query) ? 'flex' : 'none';
+  });
+}
+
+async function loadMoreMessages() {
+  const threadId = window._msgThread;
+  await loadMessages(threadId, window._msgAll.length, 50);
 }
 
 // Load enhancement data on page load

@@ -863,7 +863,7 @@ def register_dashboard(app: FastAPI, application):
             return {"results": [], "error": str(e)}
 
     @router.get("/api/dashboard/sessions/{thread_id}/messages")
-    async def dashboard_session_messages(thread_id: str, request: Request, limit: int = 50):
+    async def dashboard_session_messages(thread_id: str, request: Request, limit: int = 50, offset: int = 0):
         """Get message history for a session."""
         _check_auth(request, app)
         try:
@@ -872,8 +872,16 @@ def register_dashboard(app: FastAPI, application):
             state = await _app_ref.state_store.aload(thread_id)
             if not state:
                 raise HTTPException(status_code=404, detail="Session not found")
-            messages = state.messages[-limit:]
-            return {"thread_id": thread_id, "messages": messages, "total": len(state.messages)}
+            messages = state.messages[offset:offset+limit]
+            total = len(state.messages)
+            return {
+                "thread_id": thread_id,
+                "messages": messages,
+                "total": total,
+                "offset": offset,
+                "limit": limit,
+                "has_more": offset + limit < total,
+            }
         except HTTPException:
             raise
         except Exception as e:
