@@ -45,6 +45,7 @@ class ServiceContainer:
         self.memory_store = None
         self.memory_searcher = None
         self.rbac = None
+        self.session_index = None
         self.background_tasks: set = set()
         self._qq_mu_runner = None
         self._config_path: str = "config.yaml"
@@ -138,6 +139,10 @@ class ServiceContainer:
         return tools
 
     async def setup(self):
+        from src._container import set_container
+
+        set_container(self)
+
         logger.info("MyClaw 0.1.0 starting...")
         logger.info("Model: %s/%s", self.config.model.provider, self.config.model.name)
         if not self.config.gateway.auth_token:
@@ -168,7 +173,6 @@ class ServiceContainer:
             try:
                 from src.memory.embeddings import EmbeddingProvider
                 from src.memory.search import MemorySearcher
-                from src.tools.ai_tools import set_memory_searcher
 
                 backend = getattr(self.config.memory, "backend", "sqlite")
                 if backend == "lancedb":
@@ -193,7 +197,6 @@ class ServiceContainer:
 
                 embeddings = EmbeddingProvider(self.config.memory, self.config.model)
                 searcher = MemorySearcher(store, embeddings, self.config.memory)
-                set_memory_searcher(searcher)
                 self.memory_searcher = searcher
 
                 indexed = 0
@@ -210,11 +213,10 @@ class ServiceContainer:
 
         if self.config.auth.enabled:
             from src.auth.store import AuthStore
-            from src.auth.rbac import RBAC, set_rbac
+            from src.auth.rbac import RBAC
 
             auth_store = AuthStore(self.config.auth.db_path)
             self.rbac = RBAC(auth_store, self.config)
-            set_rbac(self.rbac)
             logger.info(
                 "RBAC initialized (default_role=%s, pairing=%s)",
                 self.config.auth.default_role,
@@ -259,10 +261,10 @@ class ServiceContainer:
         logger.info("AgentLoop created with %d tools, %d skills", len(tools), len(skills))
 
         if self.config.session_search.enabled:
-            from src.session_index.store import SessionIndexStore, set_session_index
+            from src.session_index.store import SessionIndexStore
 
             store = SessionIndexStore(self.config.session_search.index_path)
-            set_session_index(store)
+            self.session_index = store
             logger.info("Session search index initialized: %s", self.config.session_search.index_path)
 
             self._startup_sync_task = asyncio.create_task(
@@ -282,10 +284,6 @@ class ServiceContainer:
         self.typing = TypingIndicator(self.feishu.client, enabled=self.config.channels.feishu.typing_indicator)
 
         self.dispatcher = CommandDispatcher(skills if skills else [], config=self.config)
-
-        from src.commands.dispatcher import set_dispatcher
-
-        set_dispatcher(self.dispatcher)
 
         if self.config.tools.media_understanding.enabled:
             try:
@@ -321,9 +319,6 @@ class ServiceContainer:
 
             self.cron_service = CronService(cron_store, cron_execute, config=self.config, feishu_channel=self.feishu)
             logger.info("Cron service initialized")
-            from src.tools.cron_tools import set_cron_service
-
-            set_cron_service(self.cron_service)
 
         from src.tools.file_tools import set_workspace
 
@@ -468,15 +463,9 @@ class ServiceContainer:
                 pass
             if self.state_store:
                 self.state_store.close()
-            try:
-                from src.session_index.store import get_session_index, set_session_index
-
-                idx = get_session_index()
-                if idx:
-                    idx.close()
-                    set_session_index(None)
-            except Exception:
-                pass
+            if self.session_index:
+                self.session_index.close()
+                self.session_index = None
             try:
                 if self.config.tools.browser.enabled:
                     from src.tools.browser.manager import get_browser_manager

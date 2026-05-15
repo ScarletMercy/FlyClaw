@@ -4,16 +4,11 @@ from __future__ import annotations
 
 import logging
 
+from src._container import get_container
+
 logger = logging.getLogger("myclaw.tools.ai")
 
 # ── Memory search ──────────────────────────────────────────
-
-_searcher = None
-
-
-def set_memory_searcher(searcher):
-    global _searcher
-    _searcher = searcher
 
 
 async def memory_search(query: str, max_results: int = 6) -> str:
@@ -26,11 +21,12 @@ async def memory_search(query: str, max_results: int = 6) -> str:
         query: The search query describing what information you need.
         max_results: Maximum number of results to return (default 6).
     """
-    if not _searcher:
+    searcher = get_container().memory_searcher
+    if not searcher:
         return "Memory search is not available (not configured or not initialized)."
 
     try:
-        results = await _searcher.search(query, max_results=max_results)
+        results = await searcher.search(query, max_results=max_results)
         if not results:
             return f"No results found for: {query}"
 

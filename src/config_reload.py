@@ -91,11 +91,10 @@ class ReloadExecutor:
 
     async def _do_reload_auth(self):
         try:
-            from src.auth.rbac import set_rbac, RBAC
+            from src.auth.rbac import RBAC
             from src.auth.store import AuthStore
             store = AuthStore(self._app.config.auth.db_path)
-            rbac = RBAC(store, self._app.config)
-            set_rbac(rbac)
+            self._app.rbac = RBAC(store, self._app.config)
         except Exception as e:
             logger.warning("Auth reload failed: %s", e)
 

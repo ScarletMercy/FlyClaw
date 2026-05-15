@@ -7,11 +7,22 @@ def _make_gateway(tmp_path):
     from src.gateway import create_gateway
     from httpx import ASGITransport, AsyncClient
     from unittest.mock import AsyncMock, MagicMock
+    from src._container import set_container
+
     config = AppConfig()
     config.gateway.auth_token = ""
     loop = AsyncMock()
     loop.run = AsyncMock(return_value=MagicMock(messages=[{"role": "assistant", "content": "test"}]))
     app = create_gateway(config, loop)
+
+    mock_container = MagicMock()
+    mock_container.rbac = None
+    mock_container.dispatcher = None
+    mock_container.session_index = None
+    mock_container.cron_service = None
+    mock_container.memory_searcher = None
+    set_container(mock_container)
+
     transport = ASGITransport(app=app)
     client = AsyncClient(transport=transport, base_url="http://test")
     return client, config

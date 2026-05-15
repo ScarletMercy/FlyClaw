@@ -58,16 +58,13 @@ CREATE INDEX IF NOT EXISTS idx_sessions_last ON sessions(last_message_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(is_active);
 """
 
-_session_index_store: Optional[SessionIndexStore] = None
+# ── Module-level singleton — delegates to ServiceContainer ──
+
+from src._container import get_container
 
 
 def get_session_index() -> Optional[SessionIndexStore]:
-    return _session_index_store
-
-
-def set_session_index(store: Optional[SessionIndexStore]) -> None:
-    global _session_index_store
-    _session_index_store = store
+    return get_container().session_index
 
 
 def parse_thread_id(thread_id: str) -> dict:

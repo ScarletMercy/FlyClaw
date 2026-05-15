@@ -13,6 +13,10 @@ from src.config import AppConfig
 
 
 def _make_gateway_app(auth_token="test-token"):
+    from src.config import AppConfig
+    from src.gateway import create_gateway
+    from src._container import set_container
+
     config = AppConfig()
     config.gateway.auth_token = auth_token
 
@@ -20,8 +24,16 @@ def _make_gateway_app(auth_token="test-token"):
     feishu_channel = None
     cron_service = None
 
-    from src.gateway import create_gateway
     app = create_gateway(config, agent_loop, feishu_channel, cron_service)
+
+    mock_container = MagicMock()
+    mock_container.rbac = None
+    mock_container.dispatcher = None
+    mock_container.session_index = None
+    mock_container.cron_service = None
+    mock_container.memory_searcher = None
+    set_container(mock_container)
+
     return app, config
 
 

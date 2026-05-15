@@ -2,7 +2,7 @@
 
 import os
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -79,43 +79,45 @@ class TestApplyToolPolicy:
     def test_rbac_filtering_with_user(self, tmp_path):
         """When user is passed, RBAC filtering is applied."""
         from src.auth.models import User, UserRole
-        from src.auth.rbac import RBAC, set_rbac
+        from src.auth.rbac import RBAC
         from src.auth.store import AuthStore
         from src.config import AppConfig
         from src.tools.policy import apply_tool_policy
 
         store = AuthStore(db_path=str(tmp_path / "auth.db"))
         rbac = RBAC(store)
-        set_rbac(rbac)
 
-        try:
+        mock_container = MagicMock()
+        mock_container.rbac = rbac
+
+        with patch("src.auth.rbac.get_container", return_value=mock_container):
             config = AppConfig()
             guest = User(user_id="g1", role=UserRole.guest)
             tools = [_make_tool("exec"), _make_tool("web_search")]
             result = apply_tool_policy(tools, config=config, user=guest)
             # Guest has no tools allowed by RBAC
             assert len(result) == 0
-        finally:
-            store.close()
-            set_rbac(None)
+
+        store.close()
 
     def test_rbac_allows_owner_all_tools(self, tmp_path):
         from src.auth.models import User, UserRole
-        from src.auth.rbac import RBAC, set_rbac
+        from src.auth.rbac import RBAC
         from src.auth.store import AuthStore
         from src.config import AppConfig
         from src.tools.policy import apply_tool_policy
 
         store = AuthStore(db_path=str(tmp_path / "auth.db"))
         rbac = RBAC(store)
-        set_rbac(rbac)
 
-        try:
+        mock_container = MagicMock()
+        mock_container.rbac = rbac
+
+        with patch("src.auth.rbac.get_container", return_value=mock_container):
             config = AppConfig()
             owner = User(user_id="owner", role=UserRole.owner)
             tools = [_make_tool("exec"), _make_tool("admin_panel"), _make_tool("web_search")]
             result = apply_tool_policy(tools, config=config, user=owner)
             assert len(result) == 3
-        finally:
-            store.close()
-            set_rbac(None)
+
+        store.close()

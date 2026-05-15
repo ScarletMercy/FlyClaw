@@ -136,15 +136,10 @@ class RBAC:
         return user_level >= required_level
 
 
-# ── Module-level singleton ─────────────────────────────────
+# ── Module-level singleton — delegates to ServiceContainer ──
 
-_rbac: Optional[RBAC] = None
-
-
-def set_rbac(rbac: RBAC) -> None:
-    global _rbac
-    _rbac = rbac
+from src._container import get_container
 
 
 def get_rbac() -> Optional[RBAC]:
-    return _rbac
+    return get_container().rbac

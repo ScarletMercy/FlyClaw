@@ -5,9 +5,9 @@ import logging
 from typing import Optional
 from contextvars import ContextVar
 
-logger = logging.getLogger("myclaw.cron_tools")
+from src._container import get_container
 
-_cron_service = None
+logger = logging.getLogger("myclaw.cron_tools")
 
 # Auto-injected by message handler before each user interaction
 _current_chat_id: ContextVar[str] = ContextVar("_current_chat_id", default="")
@@ -17,13 +17,8 @@ def set_current_chat_id(chat_id: str):
     _current_chat_id.set(chat_id)
 
 
-def set_cron_service(svc):
-    global _cron_service
-    _cron_service = svc
-
-
 def _get_service():
-    return _cron_service
+    return get_container().cron_service
 
 
 def _clean_job_id(job_id: str) -> str:

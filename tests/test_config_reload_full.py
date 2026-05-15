@@ -84,12 +84,14 @@ class TestReloadAuth:
         executor = ReloadExecutor(app)
         plan = ReloadPlan(actions=[ReloadAction(action="reload_auth")])
 
-        with patch("src.auth.rbac.set_rbac") as mock_set, \
+        with patch("src.auth.rbac.RBAC") as MockRBAC, \
              patch("src.auth.store.AuthStore") as MockStore:
             MockStore.return_value = MagicMock()
+            MockRBAC.return_value = MagicMock()
             await executor.execute(plan)
 
-        mock_set.assert_called_once()
+        MockRBAC.assert_called_once()
+        assert app.rbac == MockRBAC.return_value
 
 
 class TestReloadMCP:

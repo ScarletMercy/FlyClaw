@@ -145,16 +145,13 @@ def _sanitize(name: str) -> str:
     return "".join(c if c.isalnum() or c == "_" else "_" for c in cleaned)[:32]
 
 
-_dispatcher: Optional[CommandDispatcher] = None
+# ── Module-level singleton — delegates to ServiceContainer ──
+
+from src._container import get_container
 
 
 def get_dispatcher() -> Optional[CommandDispatcher]:
-    return _dispatcher
-
-
-def set_dispatcher(dispatcher: CommandDispatcher) -> None:
-    global _dispatcher
-    _dispatcher = dispatcher
+    return get_container().dispatcher
 
 
 def build_builtin_help(commands: list[dict]) -> str:
