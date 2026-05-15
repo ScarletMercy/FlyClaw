@@ -166,6 +166,39 @@ tr{transition:background .1s}tr:hover{background:var(--surface2)}
 .tag-gray{background:var(--surface3);color:var(--text3)}
 .tag-orange{background:var(--orange-bg);color:var(--orange)}
 
+/* Event Log */
+.event-item{
+  padding:4px 8px;margin:2px 0;border-radius:4px;
+  display:flex;align-items:center;gap:6px;
+  font-size:11px;line-height:1.6;
+  border-left:2px solid var(--border);
+  transition:background .1s;
+}
+.event-item:hover{background:rgba(255,255,255,.02)}
+.event-cat{
+  font-weight:600;color:var(--text2);
+  min-width:50px;text-transform:uppercase;
+  font-size:10px;letter-spacing:.5px;
+}
+.event-ts{
+  margin-left:auto;color:var(--text3);
+  font-size:10px;user-select:none;
+}
+
+/* Tool Stats */
+.tool-stat{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:6px 12px;background:var(--surface);border:1px solid var(--border);
+  border-radius:6px;font-size:12px;min-width:120px;
+}
+.tool-stat .tool-name{
+  font-family:var(--mono);color:var(--accent);font-weight:600;
+}
+.tool-stat .tool-count{
+  background:var(--blue-bg);color:var(--blue);
+  padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;
+}
+
 /* MCP Server Cards */
 .mcp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
 .mcp-card{
@@ -317,6 +350,26 @@ tr{transition:background .1s}tr:hover{background:var(--surface2)}
       <div class="stat-card"><div class="icon">&#128274;</div><div class="label">Auth</div><div class="value sm {% if auth_enabled %}c-green{% else %}c-yellow{% endif %}">{% if auth_enabled %}ON{% else %}OFF{% endif %}</div></div>
       <div class="stat-card"><div class="icon">&#128269;</div><div class="label">Security</div><div class="value sm {% if security_enabled %}c-green{% else %}c-yellow{% endif %}">{% if security_enabled %}ON{% else %}OFF{% endif %}</div></div>
       <div class="stat-card"><div class="icon">&#128200;</div><div class="label">Learning</div><div class="value sm {% if beads_enabled and beads_judge_model %}c-green{% else %}c-yellow{% endif %}">{% if beads_enabled and beads_judge_model %}ON{% else %}OFF{% endif %}</div></div>
+    </div>
+
+    <!-- Event Log (real-time from event bus) -->
+    <div class="section-title">
+      Live Events
+      <span id="eventCount" style="margin-left:8px;font-size:11px;color:var(--text3)">0</span>
+      <button class="btn sm" onclick="clearEventLog()" style="margin-left:auto">Clear</button>
+    </div>
+    <div class="card" style="margin-bottom:20px">
+      <div id="eventLog" style="padding:12px;max-height:300px;overflow-y:auto;font-size:12px;font-family:var(--mono)">
+        <div style="color:var(--text3);font-size:13px">Waiting for events...</div>
+      </div>
+    </div>
+
+    <!-- Tool Stats -->
+    <div class="section-title">Tool Usage</div>
+    <div class="card" style="margin-bottom:20px">
+      <div id="toolStats" style="padding:12px;display:flex;flex-wrap:wrap;gap:8px">
+        <div style="color:var(--text3);font-size:13px">No tool calls yet</div>
+      </div>
     </div>
 
     <!-- Config Reload Button -->
@@ -724,6 +777,14 @@ function appendLog(log) {
 }
 function escHtml(t) { return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function clearLogs() { logContainer.innerHTML = ''; logLineCount = 0; document.getElementById('logCount').textContent = ''; }
+function clearEventLog() {
+  const el = document.getElementById('eventLog');
+  if (el) {
+    el.innerHTML = '<div style="color:var(--text3);font-size:13px">Event log cleared</div>';
+    _eventLog = [];
+    document.getElementById('eventCount').textContent = '0';
+  }
+}
 
 // ── State SSE (real-time updates for all panels) ──
 let _lastState = null;
@@ -781,6 +842,148 @@ function applyState(s) {
     renderBeads(_allBeads);
   }
   {% endif %}
+}
+
+// ── Event Bus SSE (real-time event streaming) ──
+let _eventLog = [];
+const MAX_EVENT_LOG = 100;
+
+function startEventStream() {
+  const token = localStorage.getItem('myclaw_token') || '';
+  const url = '/api/dashboard/events' + (token ? '?token=' + encodeURIComponent(token) : '');
+  const es = new EventSource(url);
+
+  es.addEventListener('init', e => {
+    try {
+      const state = JSON.parse(e.data);
+      _lastState = state;
+      applyState(state);
+    } catch {}
+  });
+
+  es.addEventListener('tool.exec_started', e => {
+    try {
+      const data = JSON.parse(e.data);
+      addEventBadge('tool', 'started', data.context);
+    } catch {}
+  });
+
+  es.addEventListener('tool.exec_completed', e => {
+    try {
+      const data = JSON.parse(e.data);
+      const ctx = data.context;
+      addEventBadge('tool', 'ok', ctx);
+      updateToolStats(ctx);
+    } catch {}
+  });
+
+  es.addEventListener('tool.exec_failed', e => {
+    try {
+      const data = JSON.parse(e.data);
+      addEventBadge('tool', 'error', data.context);
+    } catch {}
+  });
+
+  es.addEventListener('session.reset', e => {
+    try {
+      const data = JSON.parse(e.data);
+      addEventBadge('session', 'reset', data.context);
+    } catch {}
+  });
+
+  es.addEventListener('message.received', e => {
+    try {
+      const data = JSON.parse(e.data);
+      addEventBadge('message', 'in', data.context);
+    } catch {}
+  });
+
+  es.addEventListener('message.replied', e => {
+    try {
+      const data = JSON.parse(e.data);
+      addEventBadge('message', 'out', data.context);
+    } catch {}
+  });
+
+  es.addEventListener('agent_loop.started', e => {
+    try {
+      const data = JSON.parse(e.data);
+      addEventBadge('agent', 'start', data.context);
+    } catch {}
+  });
+
+  es.addEventListener('agent_loop.completed', e => {
+    try {
+      const data = JSON.parse(e.data);
+      addEventBadge('agent', 'done', data.context);
+    } catch {}
+  });
+
+  es.addEventListener('agent.error', e => {
+    try {
+      const data = JSON.parse(e.data);
+      addEventBadge('agent', 'error', data.context);
+    } catch {}
+  });
+
+  es.onerror = () => { es.close(); setTimeout(startEventStream, 5000); };
+}
+
+function addEventBadge(category, type, ctx) {
+  const eventList = document.getElementById('eventLog');
+  if (!eventList) return;
+
+  const ts = new Date().toLocaleTimeString();
+  const colorMap = {
+    'started': 'tag-blue',
+    'ok': 'tag-green',
+    'error': 'tag-red',
+    'reset': 'tag-orange',
+    'in': 'tag-purple',
+    'out': 'tag-blue',
+    'start': 'tag-green',
+    'done': 'tag-gray',
+  };
+  const color = colorMap[type] || 'tag-gray';
+
+  const toolName = ctx.tool_name || ctx.channel || ctx.thread_id || '';
+  const duration = ctx.duration_ms ? ` (${Math.round(ctx.duration_ms)}ms)` : '';
+  const preview = ctx.args_preview ? `: ${escHtml(ctx.args_preview.slice(0, 50))}` : '';
+
+  const item = document.createElement('div');
+  item.className = 'event-item';
+  item.innerHTML = `<span class="tag ${color}">${type}</span> <span class="event-cat">${escHtml(category)}</span> ${escHtml(toolName)}${duration}${preview} <span class="event-ts">${ts}</span>`;
+
+  eventList.insertBefore(item, eventList.firstChild);
+
+  // Limit visible items
+  while (eventList.children.length > 50) {
+    eventList.removeChild(eventList.lastChild);
+  }
+
+  // Update counter
+  const counter = document.getElementById('eventCount');
+  if (counter) counter.textContent = eventList.children.length;
+}
+
+function updateToolStats(ctx) {
+  const toolName = ctx.tool_name;
+  if (!toolName) return;
+
+  const statsEl = document.getElementById('toolStats');
+  if (!statsEl) return;
+
+  // Simple counter per tool
+  if (!_toolStats) _toolStats = {};
+  _toolStats[toolName] = (_toolStats[toolName] || 0) + 1;
+
+  const topTools = Object.entries(_toolStats)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+
+  statsEl.innerHTML = topTools.map(([name, count]) =>
+    `<div class="tool-stat"><span class="tool-name">${escHtml(name)}</span><span class="tool-count">${count}</span></div>`
+  ).join('');
 }
 
 // ── SSE-driven renderers ──
@@ -1607,6 +1810,7 @@ async function fetchAudit() {
 
 startLogStream();
 startStateStream();
+startEventStream();
 </script>
 </body>
 </html>
