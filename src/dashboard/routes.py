@@ -1085,14 +1085,9 @@ def register_dashboard(app: FastAPI, application):
                     pass
             
             # 2. Reload skills (skill config changes)
+            # _reload_skills() already updates agent_loop._skills_prompt and dispatcher
             try:
-                skills = _app_ref._reload_skills()
-                if _app_ref.agent_loop:
-                    from src.skills.prompt import build_skills_prompt
-                    _app_ref.agent_loop._skills_prompt = build_skills_prompt(skills)
-                dispatcher = getattr(_app_ref, 'dispatcher', None)
-                if dispatcher is not None:
-                    dispatcher._reload_skills(skills)
+                _app_ref._reload_skills()
             except Exception:
                 pass
             
