@@ -6,11 +6,10 @@ import asyncio
 import fnmatch
 import logging
 import time
-import weakref
 from collections import defaultdict
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
-from src.events.types import EventContext, Subscription, WILDCARD_PATTERNS, ALL_EVENTS
+from src.events.types import EventContext, Subscription, WILDCARD_PATTERNS
 
 logger = logging.getLogger("myclaw.events")
 
@@ -41,7 +40,6 @@ class EventBus:
         self._timeout = timeout
         self._subscriptions: dict[str, list[Subscription]] = defaultdict(list)
         self._emit_depth = 0
-        self._lock = asyncio.Lock()
 
     # ── Subscription ──────────────────────────────────────────────
 
@@ -56,7 +54,10 @@ class EventBus:
         Returns:
             Subscription object for later unsubscription
         """
-        sub = Subscription(event=event, handler=handler, is_async=False, priority=priority)
+        is_async = asyncio.iscoroutinefunction(handler)
+        if is_async:
+            logger.debug("subscribe: auto-detected async handler for '%s', using subscribe_async path", event)
+        sub = Subscription(event=event, handler=handler, is_async=is_async, priority=priority)
         self._add_subscription(sub)
         logger.debug("Subscribed sync handler to '%s' (priority=%d)", event, priority)
         return sub
@@ -72,7 +73,10 @@ class EventBus:
         Returns:
             Subscription object
         """
-        sub = Subscription(event=event, handler=handler, is_async=True, priority=priority)
+        is_async = asyncio.iscoroutinefunction(handler)
+        if not is_async:
+            logger.debug("subscribe_async: auto-detected sync handler for '%s', will run in executor", event)
+        sub = Subscription(event=event, handler=handler, is_async=is_async, priority=priority)
         self._add_subscription(sub)
         logger.debug("Subscribed async handler to '%s' (priority=%d)", event, priority)
         return sub
@@ -245,6 +249,14 @@ class EventBus:
     def _call_sync_handler(self, sub: Subscription, ctx: EventContext) -> None:
         """Call a sync handler with error isolation and timeout."""
         try:
+            if asyncio.iscoroutinefunction(sub.handler):
+                # Async handler subscribed via subscribe — schedule and skip
+                try:
+                    loop = asyncio.get_running_loop()
+                    asyncio.create_task(self._call_handler_safe(sub, ctx))
+                except RuntimeError:
+                    pass
+                return
             sub.handler(event=ctx.event, **ctx.context)
         except Exception as e:
             logger.error("Handler error for '%s': %s", ctx.event, e, exc_info=True)
@@ -265,10 +277,18 @@ class EventBus:
     async def _call_handler_safe(self, sub: Subscription, ctx: EventContext) -> None:
         """Call an async handler with error isolation and timeout."""
         try:
-            await asyncio.wait_for(
-                sub.handler(event=ctx.event, **ctx.context),
-                timeout=self._timeout,
-            )
+            if asyncio.iscoroutinefunction(sub.handler):
+                await asyncio.wait_for(
+                    sub.handler(event=ctx.event, **ctx.context),
+                    timeout=self._timeout,
+                )
+            else:
+                # Sync handler subscribed via subscribe_async — run in executor
+                loop = asyncio.get_running_loop()
+                await asyncio.wait_for(
+                    loop.run_in_executor(None, lambda: sub.handler(event=ctx.event, **ctx.context)),
+                    timeout=self._timeout,
+                )
         except asyncio.TimeoutError:
             logger.warning("Async handler timed out for '%s' after %.1fs", ctx.event, self._timeout)
         except Exception as e:

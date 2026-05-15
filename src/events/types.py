@@ -125,4 +125,4 @@ class Subscription:
     def __eq__(self, other):
         if not isinstance(other, Subscription):
             return False
-        return self.event == other.event and id(self.handler) == id(other.handler)
+        return self.event == other.event and self.handler is other.handler

@@ -270,6 +270,61 @@ class TestEventBusAsync:
         # Should not hang
         await bus.emit_async("test.event")
 
+    @pytest.mark.asyncio
+    async def test_sync_handler_via_subscribe_async(self):
+        """Sync handler subscribed via subscribe_async should execute correctly."""
+        bus = EventBus()
+        results = []
+
+        def sync_handler(event, **ctx):
+            results.append(ctx.get("value"))
+
+        bus.subscribe_async("test.event", sync_handler)
+        await bus.emit_async("test.event", value=99)
+
+        assert results == [99]
+
+    @pytest.mark.asyncio
+    async def test_async_handler_via_subscribe(self):
+        """Async handler subscribed via subscribe should execute correctly."""
+        bus = EventBus()
+        results = []
+
+        async def async_handler(event, **ctx):
+            await asyncio.sleep(0.01)
+            results.append(ctx.get("value"))
+
+        bus.subscribe("test.event", async_handler)
+        await bus.emit_async("test.event", value=77)
+
+        assert results == [77]
+
+    @pytest.mark.asyncio
+    async def test_audit_store_style_sync_handler(self):
+        """Simulate audit_store pattern: sync handler via subscribe_async."""
+        bus = EventBus()
+        recorded = []
+
+        def _on_tool_completed(event, **ctx):
+            recorded.append({
+                "tool": ctx.get("tool_name", ""),
+                "success": ctx.get("success", False),
+                "duration": ctx.get("duration_ms", 0.0),
+            })
+
+        bus.subscribe_async("tool.exec_completed", _on_tool_completed)
+        await bus.emit_async(
+            "tool.exec_completed",
+            tool_name="read_file",
+            success=True,
+            duration_ms=42.5,
+        )
+
+        assert len(recorded) == 1
+        assert recorded[0]["tool"] == "read_file"
+        assert recorded[0]["success"] is True
+        assert recorded[0]["duration"] == 42.5
+
 
 class TestEventBusIntrospection:
     def test_subscription_count(self):
