@@ -11,15 +11,13 @@ from typing import Optional
 
 logger = logging.getLogger("myclaw.browser.manager")
 
-_playwright = None
-_manager: Optional[BrowserManager] = None
+# ── Module-level singleton — delegates to ServiceContainer ──
+
+from src._container import get_container
 
 
 def get_browser_manager() -> BrowserManager:
-    global _manager
-    if _manager is None:
-        _manager = BrowserManager()
-    return _manager
+    return get_container().browser_manager
 
 
 @dataclass

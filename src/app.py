@@ -53,6 +53,9 @@ class ServiceContainer:
         self.tool_registry = None
         self.card_callback_registry = None
         self.approval_manager = None
+        self.browser_manager = None
+        self.media_understanding_runner = None
+        self.process_supervisor = None
         self.background_tasks: set = set()
         self._qq_mu_runner = None
         self._config_path: str = "config.yaml"
@@ -320,6 +323,7 @@ class ServiceContainer:
                     self.config.tools.media_understanding,
                     fallback_api_key=self.config.model.api_key or "",
                 )
+                self.media_understanding_runner = mu_runner
                 set_media_understanding_runner(mu_runner)
                 logger.info("Media understanding runner initialized for Feishu channel")
             except Exception as e:
@@ -336,6 +340,19 @@ class ServiceContainer:
                 self._qq_mu_runner = qq_runner
             except Exception as e:
                 logger.warning("Failed to init QQ media understanding: %s", e)
+
+        if self.config.tools.browser.enabled:
+            try:
+                from src.tools.browser.manager import BrowserManager
+
+                self.browser_manager = BrowserManager()
+                logger.info("Browser manager initialized")
+            except Exception as e:
+                logger.warning("Failed to init browser manager: %s", e)
+
+        from src.tools.process import ProcessSupervisor
+
+        self.process_supervisor = ProcessSupervisor()
 
         if self.config.cron.enabled:
             cron_store = CronStore(self.config.cron.store_path)
@@ -492,13 +509,8 @@ class ServiceContainer:
             if self.session_index:
                 self.session_index.close()
                 self.session_index = None
-            try:
-                if self.config.tools.browser.enabled:
-                    from src.tools.browser.manager import get_browser_manager
-
-                    await get_browser_manager().close_all()
-            except Exception:
-                pass
+            if self.browser_manager:
+                await self.browser_manager.close_all()
             logger.info("MyClaw stopped")
         except Exception as e:
             logger.error("Error during shutdown: %s", e, exc_info=True)

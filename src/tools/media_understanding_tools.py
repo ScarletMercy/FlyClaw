@@ -9,8 +9,6 @@ from urllib.parse import urlparse
 
 logger = logging.getLogger("myclaw.tools.media_understanding")
 
-_runner = None
-
 
 def _validate_url(url: str) -> None:
     """Validate URL to prevent SSRF attacks."""
@@ -29,22 +27,8 @@ def _validate_url(url: str) -> None:
 
 
 def _get_runner():
-    global _runner
-    if _runner is not None:
-        return _runner
-    try:
-        from src.config import load_config
-        from src.media_understanding.runner import MediaUnderstandingRunner
-
-        cfg = load_config()
-        if not cfg.tools.media_understanding.enabled:
-            return None
-        fallback_key = cfg.model.api_key or ""
-        _runner = MediaUnderstandingRunner(cfg.tools.media_understanding, fallback_key)
-        return _runner
-    except Exception as e:
-        logger.warning("Failed to init media understanding runner: %s", e)
-        return None
+    from src._container import get_container
+    return get_container().media_understanding_runner
 
 
 def _decode_data_url(data_url: str) -> tuple[bytes, str]:

@@ -161,15 +161,13 @@ class ProcessSupervisor:
         return killed
 
 
-# Module-level convenience function
-_supervisor: Optional[ProcessSupervisor] = None
+# ── Module-level singleton — delegates to ServiceContainer ──
+
+from src._container import get_container
 
 
 def get_supervisor(max_memory_mb: Optional[int] = None) -> ProcessSupervisor:
-    global _supervisor
-    if _supervisor is None:
-        _supervisor = ProcessSupervisor(max_memory_mb=max_memory_mb)
-    return _supervisor
+    return get_container().process_supervisor
 
 
 async def run_supervised(
