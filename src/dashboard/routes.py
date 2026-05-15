@@ -1075,6 +1075,27 @@ def register_dashboard(app: FastAPI, application):
             # Reload config in app
             _app_ref.config = cfg
             
+            # Hot-reload runtime components
+            # 1. Update agent_loop client (model config changes)
+            if _app_ref.agent_loop:
+                try:
+                    from src.agent.client import create_chain
+                    _app_ref.agent_loop._client = create_chain(cfg)
+                except Exception:
+                    pass
+            
+            # 2. Reload skills (skill config changes)
+            try:
+                skills = _app_ref._reload_skills()
+                if _app_ref.agent_loop:
+                    from src.skills.prompt import build_skills_prompt
+                    _app_ref.agent_loop._skills_prompt = build_skills_prompt(skills)
+                dispatcher = getattr(_app_ref, 'dispatcher', None)
+                if dispatcher is not None:
+                    dispatcher._reload_skills(skills)
+            except Exception:
+                pass
+            
             return {"ok": True, "message": "Configuration updated and saved"}
         except Exception as e:
             return {"ok": False, "error": str(e)}

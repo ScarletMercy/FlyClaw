@@ -219,3 +219,10 @@ def get_audit_store(db_path: str = "data/audit.db") -> AuditStore:
     if _store is None:
         _store = AuditStore(db_path)
     return _store
+
+
+def reset_audit_store(db_path: str = "data/audit.db") -> AuditStore:
+    """Reset the audit store singleton (for testing or multi-environment)."""
+    global _store
+    _store = AuditStore(db_path)
+    return _store
