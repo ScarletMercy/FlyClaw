@@ -984,5 +984,69 @@ def register_dashboard(app: FastAPI, application):
         except Exception as e:
             return {"error": str(e)}
 
+    # ── Audit Log API ──────────────────────────────────────────
+
+    @router.get("/api/dashboard/audit")
+    async def dashboard_audit(
+        request: Request,
+        tool_name: str = "",
+        sender_id: str = "",
+        status: str = "",
+        limit: int = 100,
+        offset: int = 0,
+    ):
+        """Get audit log entries with filters."""
+        _check_auth(request, app)
+        try:
+            from src.analytics.audit_store import get_audit_store
+            store = get_audit_store()
+            
+            success_filter = None
+            if status == "success":
+                success_filter = True
+            elif status == "error":
+                success_filter = False
+
+            entries = store.query(
+                tool_name=tool_name or None,
+                sender_id=sender_id or None,
+                success=success_filter,
+                limit=limit,
+                offset=offset,
+            )
+            return {
+                "entries": [
+                    {
+                        "id": e.id,
+                        "thread_id": e.thread_id,
+                        "tool_name": e.tool_name,
+                        "sender_id": e.sender_id,
+                        "channel": e.channel,
+                        "success": e.success,
+                        "duration_ms": round(e.duration_ms, 2),
+                        "args_preview": e.args_preview,
+                        "error": e.error,
+                        "timestamp": e.timestamp,
+                    }
+                    for e in entries
+                ],
+                "total": len(entries),
+                "offset": offset,
+                "limit": limit,
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    @router.get("/api/dashboard/audit/stats")
+    async def dashboard_audit_stats(request: Request, days: int = 7):
+        """Get audit statistics."""
+        _check_auth(request, app)
+        try:
+            from src.analytics.audit_store import get_audit_store
+            store = get_audit_store()
+            return store.get_stats(days=days)
+        except Exception as e:
+            return {"error": str(e)}
+
     app.include_router(router)
     logger.info("Dashboard registered at /dashboard")

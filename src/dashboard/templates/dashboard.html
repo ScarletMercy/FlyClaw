@@ -293,6 +293,7 @@ tr{transition:background .1s}tr:hover{background:var(--surface2)}
   <div class="tab" data-tab="beads">Beads</div>
   {% endif %}
   <div class="tab" data-tab="search">Search</div>
+  <div class="tab" data-tab="audit">Audit</div>
   <div class="tab" data-tab="logs">Logs</div>
 </div>
 
@@ -333,267 +334,34 @@ tr{transition:background .1s}tr:hover{background:var(--surface2)}
       <div id="securityAuditResults" style="padding:16px">
         <div style="color:var(--text3);font-size:13px">Click "Run Audit" to check security posture</div>
       </div>
-    </div>
-    {% endif %}
+  </div>
+  {% endif %}
 
-    <!-- Skill Curation Status -->
-    <div class="section-title">Skill Curation</div>
-    <div class="card" id="curationCard">
+  <!-- ═══════ Audit ═══════ -->
+  <div class="tab-panel" id="panel-audit">
+    <div class="card">
       <div class="card-header">
-        Curation Status
-        <button class="btn sm primary" onclick="triggerCuration()" style="margin-left:auto">Review Now</button>
-      </div>
-      <div id="curationStatus" style="padding:16px">
-        <div style="color:var(--text3);font-size:13px">Loading curation status...</div>
-      </div>
-    </div>
-
-    <!-- Memory System Stats -->
-    {% if memory_enabled %}
-    <div class="section-title">Memory System</div>
-    <div class="card" id="memoryStatsCard">
-      <div class="card-header">Memory Statistics</div>
-      <div id="memoryStats" style="padding:16px">
-        <div style="color:var(--text3);font-size:13px">Loading memory stats...</div>
-      </div>
-    </div>
-    {% endif %}
-
-    {% if pending_approvals|length > 0 %}
-    <div class="section-title">Pending Approvals</div>
-    {% for a in pending_approvals %}
-    <div class="approval-card" id="approval-{{ a.id }}">
-      <div class="info">
-        <div class="tool">{{ a.tool_name }}</div>
-        <div class="preview">{{ (a.args_preview or '')[:200] }}</div>
-        <div class="meta-line">from {{ a.sender_id }} &middot; {{ a.created_at }}</div>
-      </div>
-      <div class="actions">
-        <button class="btn sm primary" onclick="resolveApproval('{{ a.id }}', 'allow_once')">Allow</button>
-        <button class="btn sm danger" onclick="resolveApproval('{{ a.id }}', 'deny')">Deny</button>
-      </div>
-    </div>
-    {% endfor %}
-    {% endif %}
-
-    <div class="section-title">Configuration</div>
-    <div class="card"><div class="config-grid">
-      <div class="key">Model</div><div class="val mono">{{ config.model_provider }}/{{ config.model_name }}{% if config.base_url != 'default' %} <span class="tag tag-blue">{{ config.base_url }}</span>{% endif %}{% if config.fallbacks %} <span class="tag tag-purple">{{ config.fallbacks }} fallbacks</span>{% endif %}</div>
-      <div class="key">Temperature</div><div class="val mono">{{ config.temperature }}</div>
-      <div class="key">Workspace</div><div class="val mono">{{ config.workspace }}</div>
-      <div class="key">Tool Rounds</div><div class="val">{{ config.max_tool_rounds }}</div>
-      <div class="key">Sub-agents</div><div class="val">{% if config.subagents %}{% for a in config.subagents %}<span class="tag tag-purple">{{ a }}</span> {% endfor %}{% else %}-{% endif %}</div>
-      <div class="key">Gateway</div><div class="val mono">{{ config.gateway }}{% if config.gateway.endswith('(auth)') %} <span class="tag tag-green">auth</span>{% endif %}</div>
-      <div class="key">Feishu</div><div class="val">{% if config.feishu_enabled %}<span class="tag tag-green">{{ config.feishu_domain }}</span> dm=<span class="tag tag-blue">{{ config.feishu_dm }}</span> group=<span class="tag tag-blue">{{ config.feishu_group }}</span> mention={{ config.feishu_mention }}{% if config.feishu_streaming %} <span class="tag tag-green">streaming</span>{% endif %}{% else %}<span class="tag tag-gray">disabled</span>{% endif %}</div>
-      <div class="key">QQ</div><div class="val">{% if config.qq_enabled %}<span class="tag tag-green">on</span> dm=<span class="tag tag-blue">{{ config.qq_dm }}</span> group=<span class="tag tag-blue">{{ config.qq_group }}</span>{% if config.qq_mention %} mention{% endif %}{% if config.qq_markdown %} <span class="tag tag-green">markdown</span>{% endif %}{% else %}<span class="tag tag-gray">disabled</span>{% endif %}</div>
-      <div class="key">Session</div><div class="val">{{ config.session_scope }} &middot; idle reset <span class="tag tag-yellow">{{ config.idle_reset_minutes }}m</span></div>
-      <div class="key">Exec</div><div class="val">{% if config.exec_enabled %}<span class="tag tag-blue">{{ config.exec_approval }}</span> <span class="tag {% if config.exec_sandbox %}tag-green{% else %}tag-yellow{% endif %}">sandbox={{ config.exec_sandbox }}</span>{% else %}<span class="tag tag-gray">disabled</span>{% endif %}</div>
-      <div class="key">Web</div><div class="val">search <span class="tag {% if config.web_search %}tag-green{% else %}tag-gray{% endif %}">{{ 'on' if config.web_search else 'off' }}</span> fetch <span class="tag {% if config.web_fetch %}tag-green{% else %}tag-gray{% endif %}">{{ 'on' if config.web_fetch else 'off' }}</span></div>
-      <div class="key">Media</div><div class="val">{% if config.media %}<span class="tag tag-green">on</span>{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
-      <div class="key">MCP</div><div class="val">{% if config.mcp_enabled %}<span class="tag tag-green">on</span> {{ config.mcp_server_count }} server{{ 's' if config.mcp_server_count != 1 else '' }}{% if config.mcp_servers %}{% for s in config.mcp_servers %} <span class="tag tag-purple">{{ s }}</span>{% endfor %}{% endif %}{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
-      <div class="key">Plugins</div><div class="val">{% if config.plugin_count > 0 %}<span class="tag tag-orange">{{ config.plugin_count }}</span>{% for n in config.plugin_names %} <span class="tag tag-blue">{{ n }}</span>{% endfor %}{% else %}<span class="tag tag-gray">none</span>{% endif %}</div>
-      <div class="key">Cron</div><div class="val">{% if config.cron_enabled %}<span class="tag tag-green">on</span> concurrent={{ config.cron_concurrent }}{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
-      <div class="key">Memory/RAG</div><div class="val">{% if config.memory_enabled %}<span class="tag tag-green">on</span>{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
-      <div class="key">Beads</div><div class="val">{% if config.beads_enabled %}<span class="tag tag-green">on</span>{% if config.beads_judge_model %} judge=<span class="tag tag-purple">{{ config.beads_judge_model }}</span>{% endif %}{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
-      <div class="key">TTS</div><div class="val">{% if config.tts_enabled %}<span class="tag tag-green">{{ config.tts_provider }}</span>{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
-      <div class="key">Link Preview</div><div class="val">{% if config.link_understanding_enabled %}<span class="tag tag-green">on</span> max=<span class="tag tag-blue">{{ config.link_max_previews }}</span>{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
-      <div class="key">Auth</div><div class="val">{% if config.auth_enabled %}<span class="tag tag-green">on</span> default_role=<span class="tag tag-blue">{{ config.auth_default_role }}</span>{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
-      <div class="key">Security</div><div class="val">{% if config.security_enabled %}<span class="tag tag-green">on</span>{% if config.security_audit %} <span class="tag tag-blue">audit_on_startup</span>{% endif %}{% else %}<span class="tag tag-gray">off</span>{% endif %}</div>
-      <div class="key">Checkpointer</div><div class="val"><span class="tag tag-blue">{{ config.checkpointer }}</span></div>
-    </div></div>
-  </div>
-
-  <!-- ═══════ Sessions ═══════ -->
-  <div class="tab-panel" id="panel-sessions">
-    <div class="card">
-      <div class="card-header">Sessions <span class="count" id="sessionCount">({{ sessions|length }})</span></div>
-      <table><thead><tr><th>Thread ID</th><th>Status</th><th>Idle</th><th style="width:80px"></th></tr></thead><tbody>
-        {% for s in sessions %}
-        <tr data-tid="{{ s.thread_id }}">
-          <td style="font-family:var(--mono);font-size:11px;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ s.thread_id }}</td>
-          <td>{% if s.status == 'active' %}<span class="tag tag-green">active</span>{% else %}<span class="tag tag-gray">idle</span>{% endif %}</td>
-          <td>{% if s.last_active is not none %}<span class="tag tag-green" data-idle="{{ s.last_active }}"></span>{% else %}-{% endif %}</td>
-          <td><button class="btn sm danger" onclick="resetSession('{{ s.thread_id }}')">Reset</button></td>
-        </tr>
-        {% endfor %}
-      </tbody></table>
-      <div class="empty" id="sessionEmpty" style="{{ 'display:none' if sessions else '' }}">&#128466; No sessions found</div>
-    </div>
-  </div>
-
-  <!-- ═══════ Cron ═══════ -->
-  <div class="tab-panel" id="panel-cron">
-    <div class="card">
-      <div class="card-header">Scheduled Jobs</div>
-      {% if not cron_enabled %}
-      <div class="empty" id="cronEmpty">&#9200; Cron is disabled</div>
-      {% else %}
-      <table><thead><tr><th>Name</th><th>Schedule</th><th>Status</th><th>Last Run</th><th style="width:60px"></th></tr></thead><tbody>
-        {% for j in cron_jobs %}
-        {% set enabled = j.enabled != false %}
-        {% set sched = (j.schedule.expr if j.schedule and j.schedule.expr else (j.schedule.at if j.schedule and j.schedule.at else '-')) %}
-        <tr>
-          <td style="font-weight:500">{{ j.name or j.id }}</td>
-          <td style="font-family:var(--mono);font-size:12px">{{ sched }}</td>
-          <td>{% if enabled %}<span class="tag tag-green">ON</span>{% else %}<span class="tag tag-red">OFF</span>{% endif %}</td>
-          <td style="font-size:12px;color:var(--text2)">{{ '-' }}</td>
-          <td><button class="btn sm primary" onclick="runCron('{{ j.id }}')" title="Run now">&#9654;</button></td>
-        </tr>
-        {% endfor %}
-      </tbody></table>
-      <div class="empty" id="cronEmpty" style="{{ 'display:none' if cron_jobs else '' }}">&#128466; No scheduled jobs</div>
-      {% endif %}
-    </div>
-  </div>
-
-  <!-- ═══════ Tools ═══════ -->
-  <div class="tab-panel" id="panel-tools">
-    <div class="section-title" style="margin-top:0;margin-bottom:10px">Registered Tools &mdash; {{ tool_count }}</div>
-    <div class="tools-grid">
-      {% for t in tools %}
-      <div class="tool-card"><div class="name">{{ t.name }}</div><div class="desc">{{ t.description }}</div></div>
-      {% endfor %}
-    </div>
-
-    <div class="section-title">Skills &mdash; {{ skill_count }}</div>
-    {% if skills %}
-    <div class="tools-grid">
-      {% for s in skills %}
-      <div class="tool-card"><div class="name">{{ s.name }}{% if not s.user_invocable %} <span class="tag tag-gray" style="font-size:9px;margin-left:4px">model</span>{% endif %}</div><div class="desc">{{ s.description }}</div><div class="meta">source: {{ s.source }}</div></div>
-      {% endfor %}
-    </div>
-    {% else %}
-    <div class="empty">&#128466; No skills loaded</div>
-    {% endif %}
-
-    {% if plugins|length > 0 %}
-    <div class="section-title">Plugins &mdash; {{ plugins|length }}</div>
-    <div class="tools-grid">
-      {% for p in plugins %}
-      <div class="tool-card"><div class="name">{{ p.name or p.id }}{% if p.version %} <span class="tag tag-blue" style="font-size:9px;margin-left:4px">v{{ p.version }}</span>{% endif %}</div><div class="desc">{{ p.tools or 0 }} tools{% if p.hooks %} &middot; {{ p.hooks|length }} hooks{% endif %}</div>{% if p.hooks %}<div class="meta">hooks: {{ p.hooks|join(', ') }}</div>{% endif %}</div>
-      {% endfor %}
-    </div>
-    {% endif %}
-  </div>
-
-  <!-- ═══════ MCP ═══════ -->
-  {% if mcp_enabled %}
-  <div class="tab-panel" id="panel-mcp">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <div class="section-title" style="margin:0">MCP Servers &mdash; {{ mcp_servers|length }}</div>
-      <button class="btn sm" onclick="fetchMcpServers()">Refresh</button>
-    </div>
-    <div class="mcp-grid" id="mcpGrid">
-      {% if mcp_servers %}
-        {% for s in mcp_servers %}
-        <div class="mcp-card" data-server="{{ s.name }}">
-          <div class="mcp-header">
-            <div>
-              <span class="mcp-name">{{ s.name }}</span>
-              <span class="tag tag-blue" style="margin-left:6px">{{ s.transport or 'stdio' }}</span>
-            </div>
-            <span style="display:flex;align-items:center;gap:6px">
-              <span class="status-dot" style="{% if not s.connected %}background:var(--red);box-shadow:0 0 8px var(--red){% endif %}"></span>
-              <span style="font-size:12px;color:{% if s.connected %}var(--green){% else %}var(--red){% endif %}">{{ 'Connected' if s.connected else 'Disconnected' }}</span>
-            </span>
-          </div>
-          <div style="font-size:12px;color:var(--text2)">Tools: <span style="color:var(--accent)">{{ s.tool_count or 0 }}</span></div>
-          {% if s.error %}
-          <div style="font-size:11px;color:var(--red);margin-top:6px">{{ s.error }}</div>
-          {% endif %}
-          <div class="mcp-tools" id="mcp-tools-{{ s.name }}" style="display:none"></div>
-          <div style="margin-top:8px"><button class="btn sm" onclick="toggleMcpTools('{{ s.name }}')">Show Tools</button></div>
+        Command Audit Log
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="auditToolFilter" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:12px" onchange="fetchAudit()">
+            <option value="">All Tools</option>
+          </select>
+          <select id="auditStatusFilter" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:12px" onchange="fetchAudit()">
+            <option value="">All Status</option>
+            <option value="success">Success</option>
+            <option value="error">Error</option>
+          </select>
+          <button class="btn sm" onclick="fetchAudit()">&#x21bb; Refresh</button>
         </div>
-        {% endfor %}
-      {% else %}
-        <div class="empty" style="grid-column:1/-1">&#128466; No MCP servers configured</div>
-      {% endif %}
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- ═══════ Users ═══════ -->
-  {% if auth_enabled %}
-  <div class="tab-panel" id="panel-users">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <div class="section-title" style="margin:0">Users &mdash; {{ auth_users|length }}</div>
-      <button class="btn sm" onclick="fetchUsers()">Refresh</button>
-    </div>
-    <div class="card">
-      {% if auth_users %}
-      <table><thead><tr><th>User ID</th><th>Display</th><th>Role</th><th>Devices</th><th>Last Seen</th><th style="width:80px"></th></tr></thead><tbody id="usersTbody">
-        {% for u in auth_users %}
-        <tr data-uid="{{ u.user_id }}">
-          <td style="font-family:var(--mono);font-size:11px">{{ u.user_id[:20] }}{% if u.user_id|length > 20 %}...{% endif %}</td>
-          <td>{{ u.display_name or '-' }}</td>
-          <td>
-            <select class="role-select" onchange="updateUserRole('{{ u.user_id }}', this.value)">
-              <option value="owner" {% if u.role == 'owner' %}selected{% endif %}>owner</option>
-              <option value="admin" {% if u.role == 'admin' %}selected{% endif %}>admin</option>
-              <option value="user" {% if u.role == 'user' %}selected{% endif %}>user</option>
-              <option value="guest" {% if u.role == 'guest' %}selected{% endif %}>guest</option>
-            </select>
-          </td>
-          <td>
-            <span style="font-size:12px">{{ u.device_count }} devices ({{ u.trusted_devices }} trusted)</span>
-            <button class="btn sm" style="margin-left:6px;font-size:10px" onclick="toggleDevices('{{ u.user_id }}')">Details</button>
-          </td>
-          <td style="font-size:12px;color:var(--text2)">{{ u.last_seen or '-' }}</td>
-          <td><button class="btn sm danger" onclick="deleteUser('{{ u.user_id }}')">Delete</button></td>
-        </tr>
-        <tr class="device-row" id="devices-{{ u.user_id }}" style="display:none">
-          <td colspan="6"><div id="devices-list-{{ u.user_id }}" style="padding:4px 0">Loading...</div></td>
-        </tr>
-        {% endfor %}
+      </div>
+      <div id="auditStats" style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;gap:12px;font-size:12px">
+        <span style="color:var(--text3)">Loading stats...</span>
+      </div>
+      <table><thead><tr><th>Time</th><th>Tool</th><th>Sender</th><th>Status</th><th>Duration</th><th>Args</th></tr></thead>
+      <tbody id="auditTableBody">
+        <tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Loading audit log...</td></tr>
       </tbody></table>
-      {% else %}
-      <div class="empty">&#128466; No users registered</div>
-      {% endif %}
-    </div>
-  </div>
-  {% endif %}
-
-  <!-- ═══════ Beads ═══════ -->
-  {% if beads_enabled %}
-  <div class="tab-panel" id="panel-beads">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-      <div class="section-title" style="margin:0">Memories &mdash; <span id="beadCount">...</span></div>
-      <div style="display:flex;gap:8px">
-        <button class="btn sm" onclick="fetchBeads()">Refresh</button>
-        <button class="btn sm primary" onclick="toggleAddMemory()">+ New</button>
-      </div>
-    </div>
-
-    <div id="addMemoryForm" class="memory-add-form" style="display:none">
-      <input type="text" id="memKeyInput" placeholder="Key (optional, auto-generated if empty)">
-      <textarea id="memContentInput" placeholder="Memory content..."></textarea>
-      <div style="display:flex;gap:8px">
-        <button class="btn primary" onclick="saveNewMemory()">Save</button>
-        <button class="btn" onclick="toggleAddMemory()">Cancel</button>
-      </div>
-    </div>
-
-    <div class="memory-search">
-      <input type="text" id="beadSearch" placeholder="Search memories..." oninput="filterBeads(this.value)">
-    </div>
-
-    <div id="beadsContainer"></div>
-    <div class="empty" id="beadsEmpty" style="display:none">&#128466; No memories found</div>
-  </div>
-  {% endif %}
-
-  <!-- ═══════ Search ═══════ -->
-  <div class="tab-panel" id="panel-search">
-    <div class="card">
-      <div class="card-header">Session Search</div>
-      <div style="padding:16px">
-        <div style="display:flex;gap:10px;margin-bottom:16px">
-          <input type="text" id="searchInput" placeholder="Search sessions..." style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px;font-family:var(--mono)" onkeydown="if(event.key==='Enter')searchSessions()">
-          <button class="btn primary" onclick="searchSessions()">Search</button>
-        </div>
-        <div id="searchResults" style="max-height:600px;overflow-y:auto"></div>
-        <div class="empty" id="searchEmpty">&#128269; Enter a search term to find sessions</div>
-      </div>
+      <div class="empty" id="auditEmpty" style="display:none">&#128466; No audit entries found</div>
     </div>
   </div>
 
@@ -1524,7 +1292,85 @@ async function loadMoreMessages() {
 document.addEventListener('DOMContentLoaded', () => {
   fetchCurationStatus();
   fetchMemoryStats();
+  fetchAudit();
 });
+
+// ── Audit Log Functions ──
+
+async function fetchAudit() {
+  const toolFilter = document.getElementById('auditToolFilter')?.value || '';
+  const statusFilter = document.getElementById('auditStatusFilter')?.value || '';
+  const tbody = document.getElementById('auditTableBody');
+  const statsDiv = document.getElementById('auditStats');
+  const emptyDiv = document.getElementById('auditEmpty');
+  
+  try {
+    // Fetch stats
+    const statsData = await api('/api/dashboard/audit/stats?days=7');
+    if (!statsData.error) {
+      statsDiv.innerHTML = `
+        <span class="tag tag-blue">${statsData.total_calls || 0} calls (7d)</span>
+        <span class="tag tag-green">${statsData.success_count || 0} success</span>
+        <span class="tag tag-red">${statsData.error_count || 0} errors</span>
+        <span class="tag tag-yellow">${Math.round((statsData.success_rate || 0) * 100)}% success rate</span>
+        <span class="tag tag-purple">${statsData.avg_duration_ms || 0}ms avg</span>
+      `;
+      
+      // Update tool filter options
+      if (statsData.top_tools && toolFilter.options.length <= 1) {
+        for (const t of statsData.top_tools) {
+          const opt = document.createElement('option');
+          opt.value = t.tool;
+          opt.textContent = `${t.tool} (${t.count})`;
+          toolFilter.appendChild(opt);
+        }
+      }
+    }
+    
+    // Fetch entries
+    let url = '/api/dashboard/audit?limit=100';
+    if (toolFilter) url += '&tool_name=' + encodeURIComponent(toolFilter);
+    if (statusFilter) url += '&status=' + encodeURIComponent(statusFilter);
+    
+    const data = await api(url);
+    if (data.error) {
+      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--red);padding:20px">Error: ' + escHtml(data.error) + '</td></tr>';
+      return;
+    }
+    
+    const entries = data.entries || [];
+    if (entries.length === 0) {
+      tbody.innerHTML = '';
+      emptyDiv.style.display = 'block';
+      return;
+    }
+    
+    emptyDiv.style.display = 'none';
+    let html = '';
+    for (const e of entries) {
+      const statusTag = e.success 
+        ? '<span class="tag tag-green">OK</span>' 
+        : '<span class="tag tag-red">ERR</span>';
+      const time = new Date(e.timestamp * 1000).toLocaleString();
+      const duration = e.duration_ms > 1000 
+        ? (e.duration_ms / 1000).toFixed(1) + 's' 
+        : Math.round(e.duration_ms) + 'ms';
+      
+      html += `<tr>
+        <td style="font-size:11px;color:var(--text3);white-space:nowrap">${time}</td>
+        <td><span class="tag tag-blue">${escHtml(e.tool_name)}</span></td>
+        <td style="font-size:11px;font-family:var(--mono)">${escHtml(e.sender_id || '-')}</td>
+        <td>${statusTag}</td>
+        <td style="font-size:11px;font-family:var(--mono)">${duration}</td>
+        <td style="font-size:11px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(e.args_preview || '')}">${escHtml((e.args_preview || '').substring(0, 80))}</td>
+      </tr>`;
+    }
+    tbody.innerHTML = html;
+    
+  } catch(e) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--red);padding:20px">Error: ' + escHtml(e.message) + '</td></tr>';
+  }
+}
 
 startLogStream();
 startStateStream();
