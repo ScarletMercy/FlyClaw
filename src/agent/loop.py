@@ -482,19 +482,56 @@ class AgentLoop:
         if tool_def is None:
             return f"[error] Unknown tool: {tool_name}"
 
+        import time as _time
+        start = _time.monotonic()
+        args_preview = json.dumps(args, ensure_ascii=False)[:200] if args else ""
+
         try:
             result = await tool_def.execute(args)
+            duration_ms = (_time.monotonic() - start) * 1000
             try:
                 from src.security.redact import redact
                 result = redact(result)
             except Exception:
                 pass
+            # Record audit entry
+            try:
+                from src.analytics.audit_store import get_audit_store
+                store = get_audit_store()
+                store.record_call(
+                    thread_id=thread_id,
+                    tool_name=tool_name,
+                    sender_id=getattr(state, 'sender_id', ''),
+                    channel=getattr(state, 'channel', ''),
+                    success=True,
+                    duration_ms=duration_ms,
+                    args_preview=args_preview,
+                )
+            except Exception:
+                pass
             return result
         except Exception as e:
+            duration_ms = (_time.monotonic() - start) * 1000
             from src.tools.exec import ApprovalNeededError
             if isinstance(e, ApprovalNeededError):
                 return await self._handle_approval(e, tc, state, thread_id)
             logger.error("Tool %s failed: %s", tool_name, e)
+            # Record audit entry for failure
+            try:
+                from src.analytics.audit_store import get_audit_store
+                store = get_audit_store()
+                store.record_call(
+                    thread_id=thread_id,
+                    tool_name=tool_name,
+                    sender_id=getattr(state, 'sender_id', ''),
+                    channel=getattr(state, 'channel', ''),
+                    success=False,
+                    duration_ms=duration_ms,
+                    args_preview=args_preview,
+                    error=str(e)[:500],
+                )
+            except Exception:
+                pass
             return f"[error] {type(e).__name__}: {e}"
 
     async def _handle_approval(self, error: Exception, tc: Any, state: AgentState, thread_id: str) -> str:
