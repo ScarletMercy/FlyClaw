@@ -294,6 +294,8 @@ tr{transition:background .1s}tr:hover{background:var(--surface2)}
   {% endif %}
   <div class="tab" data-tab="search">Search</div>
   <div class="tab" data-tab="audit">Audit</div>
+  <div class="tab" data-tab="config">Config</div>
+  <div class="tab" data-tab="analytics">Analytics</div>
   <div class="tab" data-tab="logs">Logs</div>
 </div>
 
@@ -336,6 +338,48 @@ tr{transition:background .1s}tr:hover{background:var(--surface2)}
       </div>
   </div>
   {% endif %}
+
+  <!-- ═══════ Config ═══════ -->
+  <div class="tab-panel" id="panel-config">
+    <div class="card">
+      <div class="card-header">
+        Configuration Editor
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn sm primary" onclick="saveConfig()">&#128190; Save Config</button>
+          <button class="btn sm" onclick="loadConfig()">&#x21bb; Reload</button>
+        </div>
+      </div>
+      <div id="configEditor" style="padding:16px">
+        <div style="color:var(--text3);font-size:13px">Loading configuration...</div>
+      </div>
+    </div>
+    <div id="configSaveStatus" style="margin-top:10px;font-size:12px;color:var(--text2)"></div>
+  </div>
+
+  <!-- ═══════ Analytics ═══════ -->
+  <div class="tab-panel" id="panel-analytics">
+    <div class="stats-grid">
+      <div class="stat-card"><div class="icon">&#128200;</div><div class="label">Total Tool Calls (7d)</div><div class="value c-blue" id="analyticsTotalCalls">-</div></div>
+      <div class="stat-card"><div class="icon">&#9200;</div><div class="label">Avg Duration</div><div class="value sm c-green" id="analyticsAvgDuration">-</div></div>
+      <div class="stat-card"><div class="icon">&#9989;</div><div class="label">Success Rate</div><div class="value c-green" id="analyticsSuccessRate">-</div></div>
+      <div class="stat-card"><div class="icon">&#10060;</div><div class="label">Error Count</div><div class="value c-red" id="analyticsErrorCount">-</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Top Tools by Usage</div>
+      <table><thead><tr><th>Tool</th><th>Calls</th><th>Success Rate</th><th>Avg Duration</th></tr></thead>
+      <tbody id="analyticsTopTools">
+        <tr><td colspan="4" style="text-align:center;color:var(--text3);padding:20px">Loading...</td></tr>
+      </tbody></table>
+    </div>
+
+    <div class="card">
+      <div class="card-header">Recent Errors</div>
+      <div id="analyticsRecentErrors" style="padding:16px">
+        <div style="color:var(--text3);font-size:13px">Loading...</div>
+      </div>
+    </div>
+  </div>
 
   <!-- ═══════ Audit ═══════ -->
   <div class="tab-panel" id="panel-audit">
@@ -409,6 +453,8 @@ document.querySelectorAll('.tab').forEach(tab => {
     {% if mcp_enabled %}if (tab.dataset.tab === 'mcp') fetchMcpServers();{% endif %}
     {% if auth_enabled %}if (tab.dataset.tab === 'users') fetchUsers();{% endif %}
     {% if beads_enabled %}if (tab.dataset.tab === 'beads') fetchBeads();{% endif %}
+    if (tab.dataset.tab === 'config') loadConfig();
+    if (tab.dataset.tab === 'analytics') loadAnalytics();
   });
 });
 
@@ -1286,6 +1332,183 @@ function filterMessages(query) {
 async function loadMoreMessages() {
   const threadId = window._msgThread;
   await loadMessages(threadId, window._msgAll.length, 50);
+}
+
+// ── Config Editor Functions ──
+
+let _currentConfig = {};
+
+async function loadConfig() {
+  const editor = document.getElementById('configEditor');
+  editor.innerHTML = '<div style="color:var(--text3);font-size:13px">Loading configuration...</div>';
+  try {
+    const data = await api('/api/dashboard/config');
+    _currentConfig = data;
+    renderConfigEditor(data);
+  } catch(e) {
+    editor.innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + escHtml(e.message) + '</div>';
+  }
+}
+
+function renderConfigEditor(config) {
+  const editor = document.getElementById('configEditor');
+  let html = '<div style="display:grid;gap:16px">';
+  
+  // Group config by section
+  const sections = Object.entries(config);
+  for (const [section, values] of sections) {
+    if (typeof values !== 'object' || values === null) continue;
+    
+    html += '<div class="card" style="margin:0">';
+    html += '<div class="card-header">' + escHtml(section.charAt(0).toUpperCase() + section.slice(1)) + '</div>';
+    html += '<div style="padding:12px 16px">';
+    
+    for (const [key, value] of Object.entries(values)) {
+      const fieldId = section + '_' + key;
+      html += '<div style="margin-bottom:12px">';
+      html += '<label style="display:block;font-size:12px;color:var(--text3);margin-bottom:4px;text-transform:capitalize">' + escHtml(key.replace(/_/g, ' ')) + '</label>';
+      
+      if (typeof value === 'boolean') {
+        html += '<input type="checkbox" id="' + fieldId + '" ' + (value ? 'checked' : '') + ' data-section="' + escHtml(section) + '" data-key="' + escHtml(key) + '" data-type="boolean" style="accent-color:var(--accent);width:16px;height:16px">';
+      } else if (typeof value === 'number') {
+        html += '<input type="number" id="' + fieldId + '" value="' + value + '" data-section="' + escHtml(section) + '" data-key="' + escHtml(key) + '" data-type="number" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;width:120px">';
+      } else if (typeof value === 'string') {
+        const isLong = value.length > 50;
+        if (isLong) {
+          html += '<textarea id="' + fieldId + '" data-section="' + escHtml(section) + '" data-key="' + escHtml(key) + '" data-type="string" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:13px;width:100%;min-height:60px;font-family:var(--mono)">' + escHtml(value) + '</textarea>';
+        } else {
+          html += '<input type="text" id="' + fieldId + '" value="' + escHtml(value) + '" data-section="' + escHtml(section) + '" data-key="' + escHtml(key) + '" data-type="string" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;width:100%;font-family:var(--mono)">';
+        }
+      } else if (Array.isArray(value)) {
+        html += '<textarea id="' + fieldId + '" data-section="' + escHtml(section) + '" data-key="' + escHtml(key) + '" data-type="array" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:13px;width:100%;min-height:60px;font-family:var(--mono)">' + escHtml(JSON.stringify(value, null, 2)) + '</textarea>';
+      } else {
+        html += '<div style="font-size:13px;color:var(--text2);font-family:var(--mono)">' + escHtml(JSON.stringify(value)) + '</div>';
+      }
+      
+      html += '</div>';
+    }
+    
+    html += '</div></div>';
+  }
+  
+  html += '</div>';
+  editor.innerHTML = html;
+}
+
+async function saveConfig() {
+  const status = document.getElementById('configSaveStatus');
+  status.textContent = 'Saving configuration...';
+  status.style.color = 'var(--text2)';
+  
+  try {
+    // Collect all form values
+    const inputs = document.querySelectorAll('#configEditor input, #configEditor textarea');
+    const updates = {};
+    
+    for (const input of inputs) {
+      const section = input.dataset.section;
+      const key = input.dataset.key;
+      const type = input.dataset.type;
+      
+      if (!section || !key) continue;
+      
+      let value;
+      if (type === 'boolean') {
+        value = input.checked;
+      } else if (type === 'number') {
+        value = parseFloat(input.value);
+      } else if (type === 'array') {
+        try {
+          value = JSON.parse(input.value);
+        } catch(e) {
+          status.textContent = 'Error: Invalid JSON in ' + key;
+          status.style.color = 'var(--red)';
+          return;
+        }
+      } else {
+        value = input.value;
+      }
+      
+      if (!updates[section]) updates[section] = {};
+      updates[section][key] = value;
+    }
+    
+    const result = await api('/api/dashboard/config/update', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(updates),
+    });
+    
+    if (result.ok) {
+      status.textContent = 'Configuration saved successfully';
+      status.style.color = 'var(--green)';
+      setTimeout(() => { status.textContent = ''; status.style.color = ''; }, 3000);
+    } else {
+      status.textContent = 'Error: ' + (result.error || 'Unknown error');
+      status.style.color = 'var(--red)';
+    }
+  } catch(e) {
+    status.textContent = 'Error: ' + escHtml(e.message);
+    status.style.color = 'var(--red)';
+  }
+}
+
+// ── Analytics Functions ──
+
+async function loadAnalytics() {
+  try {
+    // Fetch stats
+    const statsData = await api('/api/dashboard/audit/stats?days=7');
+    if (!statsData.error) {
+      document.getElementById('analyticsTotalCalls').textContent = statsData.total_calls || 0;
+      document.getElementById('analyticsAvgDuration').textContent = (statsData.avg_duration_ms || 0).toFixed(0) + 'ms';
+      document.getElementById('analyticsSuccessRate').textContent = ((statsData.success_rate || 0) * 100).toFixed(1) + '%';
+      document.getElementById('analyticsErrorCount').textContent = statsData.error_count || 0;
+      
+      // Top tools
+      if (statsData.top_tools) {
+        const tbody = document.getElementById('analyticsTopTools');
+        if (statsData.top_tools.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:20px">No tool usage data</td></tr>';
+        } else {
+          let html = '';
+          for (const t of statsData.top_tools.slice(0, 10)) {
+            const successRate = t.success_rate ? (t.success_rate * 100).toFixed(1) + '%' : '-';
+            const avgDuration = t.avg_duration_ms ? t.avg_duration_ms.toFixed(0) + 'ms' : '-';
+            html += '<tr>';
+            html += '<td><span class="tag tag-blue">' + escHtml(t.tool) + '</span></td>';
+            html += '<td>' + t.count + '</td>';
+            html += '<td>' + successRate + '</td>';
+            html += '<td style="font-family:var(--mono);font-size:12px">' + avgDuration + '</td>';
+            html += '</tr>';
+          }
+          tbody.innerHTML = html;
+        }
+      }
+    }
+    
+    // Recent errors
+    const errorData = await api('/api/dashboard/audit?limit=10&status=error');
+    const errorsDiv = document.getElementById('analyticsRecentErrors');
+    if (errorData.error || !errorData.entries || errorData.entries.length === 0) {
+      errorsDiv.innerHTML = '<div style="color:var(--text3);font-size:13px">No recent errors</div>';
+    } else {
+      let html = '';
+      for (const e of errorData.entries.slice(0, 10)) {
+        const time = new Date(e.timestamp * 1000).toLocaleString();
+        html += '<div style="padding:8px 0;border-bottom:1px solid var(--border)">';
+        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
+        html += '<span class="tag tag-red">' + escHtml(e.tool_name) + '</span>';
+        html += '<span style="font-size:11px;color:var(--text3)">' + time + '</span>';
+        html += '</div>';
+        html += '<div style="font-size:12px;color:var(--text2);font-family:var(--mono)">' + escHtml(e.error || 'Unknown error') + '</div>';
+        html += '</div>';
+      }
+      errorsDiv.innerHTML = html;
+    }
+  } catch(e) {
+    console.error('Failed to load analytics:', e);
+  }
 }
 
 // Load enhancement data on page load

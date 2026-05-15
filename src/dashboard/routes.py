@@ -1048,5 +1048,33 @@ def register_dashboard(app: FastAPI, application):
         except Exception as e:
             return {"error": str(e)}
 
+    @router.post("/api/dashboard/config/update")
+    async def dashboard_config_update(request: Request):
+        """Update configuration values."""
+        _check_auth(request, app)
+        try:
+            body = await request.json()
+            cfg = _app_ref.config
+            
+            # Apply updates to config object
+            for section, values in body.items():
+                if hasattr(cfg, section):
+                    section_obj = getattr(cfg, section)
+                    for key, value in values.items():
+                        if hasattr(section_obj, key):
+                            setattr(section_obj, key, value)
+            
+            # Save config to file using the app's config path
+            from src.config import save_config
+            config_path = getattr(_app_ref, '_config_path', 'config.yaml')
+            save_config(cfg, config_path)
+            
+            # Reload config in app
+            _app_ref.config = cfg
+            
+            return {"ok": True, "message": "Configuration updated and saved"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
     app.include_router(router)
     logger.info("Dashboard registered at /dashboard")
