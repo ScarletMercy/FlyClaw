@@ -79,20 +79,19 @@ class PluginRegistry:
         ]
 
 
-_registry: Optional[PluginRegistry] = None
+# ── Module-level singleton — delegates to ServiceContainer ──
+
+from src._container import get_container
 
 
 def get_plugin_registry() -> PluginRegistry:
-    global _registry
-    if _registry is None:
-        _registry = PluginRegistry()
-    return _registry
+    return get_container().plugin_registry
 
 
 def init_plugin_registry(extra_dirs: list[str] | None = None) -> PluginRegistry:
-    global _registry
-    _registry = PluginRegistry()
+    container = get_container()
+    container.plugin_registry = PluginRegistry()
     records = discover_plugins(extra_dirs)
     for record in records:
-        _registry.register_plugin(record)
-    return _registry
+        container.plugin_registry.register_plugin(record)
+    return container.plugin_registry

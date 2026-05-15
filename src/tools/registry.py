@@ -14,10 +14,10 @@ class ToolRegistry:
     def collect(self) -> list[ToolDef]:
         return list(self._tools)
 
-_registry: Optional[ToolRegistry] = None
+# ── Module-level singleton — delegates to ServiceContainer ──
+
+from src._container import get_container
+
 
 def get_tool_registry() -> ToolRegistry:
-    global _registry
-    if _registry is None:
-        _registry = ToolRegistry()
-    return _registry
+    return get_container().tool_registry

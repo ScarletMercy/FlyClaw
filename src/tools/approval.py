@@ -171,11 +171,10 @@ class ApprovalManager:
         return [p.request for p in self._pending.values()]
 
 
-_approval_manager: Optional[ApprovalManager] = None
+# ── Module-level singleton — delegates to ServiceContainer ──
+
+from src._container import get_container
 
 
 def get_approval_manager() -> ApprovalManager:
-    global _approval_manager
-    if _approval_manager is None:
-        _approval_manager = ApprovalManager()
-    return _approval_manager
+    return get_container().approval_manager

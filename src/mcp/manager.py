@@ -163,8 +163,10 @@ class MCPManager:
         logger.info("MCP server '%s': unregistered %d tools", server_name, len(removed))
 
 
+# ── Module-level singleton — delegates to ServiceContainer ──
+
+from src._container import get_container
+
+
 def get_mcp_manager() -> MCPManager:
-    global _manager
-    if _manager is None:
-        _manager = MCPManager()
-    return _manager
+    return get_container().mcp_manager

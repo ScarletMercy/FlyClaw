@@ -119,11 +119,10 @@ class CardCallbackRegistry:
         return list(self._handlers.keys())
 
 
-_registry: Optional[CardCallbackRegistry] = None
+# ── Module-level singleton — delegates to ServiceContainer ──
+
+from src._container import get_container
 
 
 def get_card_callback_registry() -> CardCallbackRegistry:
-    global _registry
-    if _registry is None:
-        _registry = CardCallbackRegistry()
-    return _registry
+    return get_container().card_callback_registry

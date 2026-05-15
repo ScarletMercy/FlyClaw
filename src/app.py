@@ -46,6 +46,13 @@ class ServiceContainer:
         self.memory_searcher = None
         self.rbac = None
         self.session_index = None
+        self.plugin_registry = None
+        self.agent_registry = None
+        self.run_registry = None
+        self.mcp_manager = None
+        self.tool_registry = None
+        self.card_callback_registry = None
+        self.approval_manager = None
         self.background_tasks: set = set()
         self._qq_mu_runner = None
         self._config_path: str = "config.yaml"
@@ -149,25 +156,36 @@ class ServiceContainer:
             logger.warning("Gateway auth_token is empty — all authentication is DISABLED")
 
         if self.config.plugins.enabled:
-            from src.plugins.registry import init_plugin_registry
+            from src.plugins.registry import PluginRegistry, discover_plugins
 
-            registry = init_plugin_registry(self.config.plugins.extra_dirs)
-            logger.info("Plugins: %d loaded, %d tools", registry.plugin_count, registry.tool_count)
+            self.plugin_registry = PluginRegistry()
+            records = discover_plugins(self.config.plugins.extra_dirs)
+            for record in records:
+                self.plugin_registry.register_plugin(record)
+            logger.info("Plugins: %d loaded, %d tools", self.plugin_registry.plugin_count, self.plugin_registry.tool_count)
 
         if getattr(self.config, "mcp", None) and self.config.mcp.enabled and self.config.mcp.servers is not None:
-            from src.mcp.manager import get_mcp_manager
+            from src.mcp.manager import MCPManager
 
-            mcp_manager = get_mcp_manager()
-            mcp_manager.load_config(self.config.mcp.servers)
+            self.mcp_manager = MCPManager()
+            self.mcp_manager.load_config(self.config.mcp.servers)
             logger.info("MCP: %d servers configured", len(self.config.mcp.servers))
 
         if self.config.agents.subagents:
-            from src.agents.registry import init_agent_registry
-            from src.agents.run_registry import init_run_registry
+            from src.agents.registry import AgentRegistry
+            from src.agents.run_registry import RunRegistry
 
-            agent_reg = init_agent_registry(self.config)
-            init_run_registry()
-            logger.info("Sub-agents: %d registered", agent_reg.count)
+            self.agent_registry = AgentRegistry()
+            subagents = getattr(self.config.agents, "subagents", None)
+            if subagents:
+                for name, cfg in subagents.items():
+                    if isinstance(cfg, dict):
+                        from src.config import AgentSubconfig
+                        cfg = AgentSubconfig(**cfg)
+                    self.agent_registry.register(name, cfg)
+
+            self.run_registry = RunRegistry()
+            logger.info("Sub-agents: %d registered", self.agent_registry.count)
 
         if getattr(self.config, "memory", None) and self.config.memory.enabled:
             try:
@@ -284,6 +302,14 @@ class ServiceContainer:
         self.typing = TypingIndicator(self.feishu.client, enabled=self.config.channels.feishu.typing_indicator)
 
         self.dispatcher = CommandDispatcher(skills if skills else [], config=self.config)
+
+        from src.tools.registry import ToolRegistry
+        from src.channels.cards import CardCallbackRegistry
+        from src.tools.approval import ApprovalManager
+
+        self.tool_registry = ToolRegistry()
+        self.card_callback_registry = CardCallbackRegistry()
+        self.approval_manager = ApprovalManager()
 
         if self.config.tools.media_understanding.enabled:
             try:

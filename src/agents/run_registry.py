@@ -31,8 +31,6 @@ class SubagentRun(TypedDict):
 
 _current_depth: ContextVar[int] = ContextVar("_current_depth", default=0)
 
-_registry: Optional[RunRegistry] = None
-
 
 class RunRegistry:
     """In-memory registry for tracking sub-agent runs."""
@@ -109,17 +107,19 @@ class RunRegistry:
             del self._runs[rid]
 
 
+# ── Module-level singleton — delegates to ServiceContainer ──
+
+from src._container import get_container
+
+
 def get_run_registry() -> RunRegistry:
-    global _registry
-    if _registry is None:
-        _registry = RunRegistry()
-    return _registry
+    return get_container().run_registry
 
 
 def init_run_registry() -> RunRegistry:
-    global _registry
-    _registry = RunRegistry()
-    return _registry
+    container = get_container()
+    container.run_registry = RunRegistry()
+    return container.run_registry
 
 
 def get_current_depth() -> int:

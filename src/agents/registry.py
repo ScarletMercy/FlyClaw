@@ -40,23 +40,22 @@ class AgentRegistry:
         return name in self._agents
 
 
-_registry: Optional[AgentRegistry] = None
+# ── Module-level singleton — delegates to ServiceContainer ──
+
+from src._container import get_container
 
 
 def get_agent_registry() -> AgentRegistry:
-    global _registry
-    if _registry is None:
-        _registry = AgentRegistry()
-    return _registry
+    return get_container().agent_registry
 
 
 def init_agent_registry(config) -> AgentRegistry:
-    global _registry
-    _registry = AgentRegistry()
+    container = get_container()
+    container.agent_registry = AgentRegistry()
     subagents = getattr(config.agents, "subagents", None)
     if subagents:
         for name, cfg in subagents.items():
             if isinstance(cfg, dict):
                 cfg = AgentSubconfig(**cfg)
-            _registry.register(name, cfg)
-    return _registry
+            container.agent_registry.register(name, cfg)
+    return container.agent_registry
