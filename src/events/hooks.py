@@ -71,27 +71,46 @@ class HookManager:
 
         Expected config format:
             hooks:
+              hooks:
+                - event: "tool.*"
+                  handler: "~/.myclaw/hooks/audit_tool.py"
+                  enabled: true
+
+        Or legacy flat list:
+            hooks:
               - event: "tool.*"
                 handler: "~/.myclaw/hooks/audit_tool.py"
-                enabled: true
-              - event: "session.end"
-                handler: "~/.myclaw/hooks/analyze_session.py"
 
         Returns:
             Number of hooks loaded
         """
-        hooks_config = getattr(config, "hooks", None) or []
-        if not isinstance(hooks_config, list):
+        hooks_config = getattr(config, "hooks", None)
+        if hooks_config is None:
+            return 0
+
+        # Handle HooksConfig object (new format)
+        if hasattr(hooks_config, "hooks"):
+            hooks_list = hooks_config.hooks
+        elif isinstance(hooks_config, list):
+            hooks_list = hooks_config
+        else:
+            return 0
+
+        if not hooks_list:
             return 0
 
         count = 0
-        for hook_cfg in hooks_config:
-            if not isinstance(hook_cfg, dict):
+        for hook_cfg in hooks_list:
+            if isinstance(hook_cfg, dict):
+                event = hook_cfg.get("event", "")
+                handler = hook_cfg.get("handler", "")
+                enabled = hook_cfg.get("enabled", True)
+            elif hasattr(hook_cfg, "event"):
+                event = hook_cfg.event
+                handler = hook_cfg.handler
+                enabled = hook_cfg.enabled
+            else:
                 continue
-
-            event = hook_cfg.get("event", "")
-            handler = hook_cfg.get("handler", "")
-            enabled = hook_cfg.get("enabled", True)
 
             if not event or not handler:
                 logger.warning("Skipping invalid hook config: %s", hook_cfg)

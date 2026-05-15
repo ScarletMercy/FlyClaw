@@ -543,6 +543,53 @@ def register_dashboard(app: FastAPI, application):
             },
         )
 
+    @router.get("/api/dashboard/events")
+    async def dashboard_events(request: Request):
+        """SSE endpoint pushing real-time events from the event bus."""
+        _check_auth(request, app)
+        import json
+
+        from starlette.responses import StreamingResponse
+
+        async def event_generator():
+            q: asyncio.Queue = asyncio.Queue(maxsize=100)
+
+            def _on_event(event, **ctx):
+                try:
+                    q.put_nowait({"event": event, "context": ctx, "ts": ctx.get("_ts", 0)})
+                except asyncio.QueueFull:
+                    pass  # Drop events if client is too slow
+
+            from src.events import subscribe_async
+            sub = subscribe_async("*", _on_event, priority=999)
+
+            try:
+                # Send initial state snapshot
+                yield f"event: init\ndata: {json.dumps(await _build_state_snapshot(), ensure_ascii=False)}\n\n"
+
+                # Stream events
+                while True:
+                    try:
+                        evt = await asyncio.wait_for(q.get(), timeout=30)
+                        yield f"event: {evt['event']}\ndata: {json.dumps(evt, ensure_ascii=False)}\n\n"
+                    except asyncio.TimeoutError:
+                        yield ": keepalive\n\n"
+            except asyncio.CancelledError:
+                pass
+            finally:
+                from src.events import unsubscribe
+                unsubscribe("*", _on_event)
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
     async def _build_state_snapshot() -> dict:
         cfg = _app_ref.config
         uptime = time.monotonic() - _start_time

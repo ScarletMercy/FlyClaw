@@ -338,6 +338,18 @@ class CanvasConfig(BaseModel):
     live_reload: bool = True
 
 
+class HookConfig(BaseModel):
+    """User-defined event hook configuration."""
+    event: str = ""
+    handler: str = ""
+    enabled: bool = True
+
+
+class HooksConfig(BaseModel):
+    """Event hooks configuration."""
+    hooks: list[HookConfig] = Field(default_factory=list)
+
+
 class AppConfig(BaseModel):
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     model: ModelConfig = Field(default_factory=ModelConfig)
@@ -360,6 +372,7 @@ class AppConfig(BaseModel):
     session_search: SessionSearchConfig = Field(default_factory=SessionSearchConfig)
     compression: CompressionConfig = Field(default_factory=CompressionConfig)
     canvas: CanvasConfig = Field(default_factory=CanvasConfig)
+    hooks: HooksConfig = Field(default_factory=HooksConfig)
     owner_id: str = ""
 
 
