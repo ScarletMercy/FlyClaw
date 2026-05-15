@@ -1,0 +1,10 @@
+# Termux / Android dependency constraints for MyClaw.
+#
+# Usage:
+#   python -m pip install -e '.[termux]' -c constraints-termux.txt
+#
+# These pins keep the tested Android install path stable when upstream packages
+# move faster than Termux-compatible wheels / sdists.
+
+pydantic>=2.0,<3
+pydantic-settings>=2.0,<3
