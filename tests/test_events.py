@@ -150,6 +150,51 @@ class TestEventBusWildcard:
         assert exact_count == 1
         assert wildcard_count == 1
 
+    def test_catch_all_wildcard(self):
+        """Test that '*' matches every event."""
+        bus = EventBus()
+        results = []
+
+        def handler(event, **ctx):
+            results.append(event)
+
+        bus.subscribe("*", handler)
+        bus.emit("tool.exec_started")
+        bus.emit("session.reset")
+        bus.emit("message.received")
+        bus.emit("app.startup")
+
+        assert len(results) == 4
+        assert "tool.exec_started" in results
+        assert "session.reset" in results
+        assert "message.received" in results
+        assert "app.startup" in results
+
+    def test_catch_all_with_specific(self):
+        """Test that '*' and specific handlers both fire."""
+        bus = EventBus()
+        catch_all_count = 0
+        specific_count = 0
+
+        def catch_all(event, **ctx):
+            nonlocal catch_all_count
+            catch_all_count += 1
+
+        def specific(event, **ctx):
+            nonlocal specific_count
+            specific_count += 1
+
+        bus.subscribe("*", catch_all)
+        bus.subscribe("tool.exec_completed", specific)
+
+        bus.emit("tool.exec_completed")
+        assert catch_all_count == 1
+        assert specific_count == 1
+
+        bus.emit("session.reset")
+        assert catch_all_count == 2  # Catch-all fires again
+        assert specific_count == 1   # Specific doesn't fire
+
 
 class TestEventBusErrorIsolation:
     def test_handler_error_does_not_stop_others(self):

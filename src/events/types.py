@@ -83,6 +83,11 @@ WILDCARD_PATTERNS = {
     f"{EventCategory.CONFIG}.*": [Event.CONFIG_RELOADED],
 }
 
+# Catch-all pattern: "*" matches every known event
+ALL_EVENTS = []
+for events in WILDCARD_PATTERNS.values():
+    ALL_EVENTS.extend(events)
+
 
 # ── Event Context ─────────────────────────────────────────────────
 

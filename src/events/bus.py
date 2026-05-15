@@ -10,7 +10,7 @@ import weakref
 from collections import defaultdict
 from typing import Any, Callable, Optional
 
-from src.events.types import EventContext, Subscription, WILDCARD_PATTERNS
+from src.events.types import EventContext, Subscription, WILDCARD_PATTERNS, ALL_EVENTS
 
 logger = logging.getLogger("myclaw.events")
 
@@ -210,6 +210,12 @@ class EventBus:
         """Find all subscriptions matching an event, including wildcards."""
         result: list[Subscription] = []
         seen: set[int] = set()
+
+        # Catch-all: "*" matches every event
+        for sub in self._subscriptions.get("*", []):
+            if id(sub) not in seen:
+                result.append(sub)
+                seen.add(id(sub))
 
         # Exact match
         for sub in self._subscriptions.get(event, []):
