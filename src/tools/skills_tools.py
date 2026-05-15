@@ -33,8 +33,9 @@ def _reload_all():
     skills = discover_skills(dirs, container.config)
     container.skills_cache = skills
     container.agent_loop._skills_prompt = build_skills_prompt(skills)
-    if hasattr(container, "dispatcher"):
-        container.dispatcher._reload_skills(skills)
+    dispatcher = getattr(container, 'dispatcher', None)
+    if dispatcher is not None:
+        dispatcher._reload_skills(skills)
 
 
 def skills_list_tool() -> ToolDef:

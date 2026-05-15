@@ -1065,8 +1065,11 @@ def register_dashboard(app: FastAPI, application):
                             setattr(section_obj, key, value)
             
             # Save config to file using the app's config path
+            from pathlib import Path as _Path
             from src.config import save_config
-            config_path = getattr(_app_ref, '_config_path', 'config.yaml')
+            config_path = getattr(_app_ref, '_config_path', None) or 'config.yaml'
+            # Ensure absolute path to avoid saving to wrong location
+            config_path = str(_Path(config_path).resolve())
             save_config(cfg, config_path)
             
             # Reload config in app

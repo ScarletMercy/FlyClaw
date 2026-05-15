@@ -165,9 +165,15 @@ class AuditStore:
 
             # Top tools
             top_tools = conn.execute(
-                """SELECT tool_name, COUNT(*) as count 
-                   FROM tool_calls WHERE timestamp >= ? 
-                   GROUP BY tool_name ORDER BY count DESC LIMIT 10""",
+                """SELECT tool_name, 
+                          COUNT(*) as count,
+                          CAST(SUM(success) AS FLOAT) / COUNT(*) as success_rate,
+                          AVG(duration_ms) as avg_duration_ms
+                   FROM tool_calls 
+                   WHERE timestamp >= ? 
+                   GROUP BY tool_name 
+                   ORDER BY count DESC 
+                   LIMIT 10""",
                 (from_ts,),
             ).fetchall()
 
@@ -182,7 +188,15 @@ class AuditStore:
             "error_count": error_count,
             "success_rate": success_count / total if total > 0 else 0,
             "avg_duration_ms": round(avg_duration, 2),
-            "top_tools": [{"tool": r[0], "count": r[1]} for r in top_tools],
+            "top_tools": [
+                {
+                    "tool": r[0], 
+                    "count": r[1],
+                    "success_rate": round(r[2], 4) if r[2] is not None else 0,
+                    "avg_duration_ms": round(r[3], 2) if r[3] is not None else 0,
+                } 
+                for r in top_tools
+            ],
             "period_days": days,
         }
 
