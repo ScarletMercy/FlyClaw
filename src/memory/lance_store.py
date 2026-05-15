@@ -33,7 +33,7 @@ class LanceMemoryStore(BaseMemoryStore):
         db_path: str,
         dimensions: int = 1536,
         fts_tokenizer: str = "unicode61",
-        lancedb_uri: str = "data/memory_lancedb",
+        lancedb_uri: str = "~/.myclaw/data/memory_lancedb",
     ):
         super().__init__(db_path, dimensions, fts_tokenizer)
         self.lancedb_uri = lancedb_uri

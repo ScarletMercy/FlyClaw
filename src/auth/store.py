@@ -51,7 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_pairing_expires ON pairing_codes(expires_at);
 
 
 class AuthStore:
-    def __init__(self, db_path: str = "data/auth.db"):
+    def __init__(self, db_path: str = "~/.myclaw/data/auth.db"):
         self._path = Path(db_path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()

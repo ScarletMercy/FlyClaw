@@ -241,7 +241,7 @@ class ServiceContainer:
                         self.config.memory.db_path,
                         dimensions=self.config.memory.embedding_dimensions,
                         fts_tokenizer=self.config.memory.fts_tokenizer,
-                        lancedb_uri=getattr(self.config.memory, "lancedb_uri", "data/memory_lancedb"),
+                        lancedb_uri=getattr(self.config.memory, "lancedb_uri", str(Path.home() / ".myclaw" / "data" / "memory_lancedb")),
                     )
                 else:
                     from src.memory.store import MemoryStore
