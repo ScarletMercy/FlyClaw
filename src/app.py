@@ -26,10 +26,33 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("myclaw")
 
+_MYCLAW_DATA_DIR = Path.home() / ".myclaw" / "data"
+
+
+def _ensure_myclaw_data_dir() -> Path:
+    """Create ~/.myclaw/data/ and migrate from project data/ if needed."""
+    _MYCLAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    old_data = Path("data")
+    if old_data.exists() and not (old_data / ".migrated").exists():
+        migrated_count = 0
+        for f in old_data.glob("*"):
+            if f.is_file() and not f.name.startswith("."):
+                try:
+                    import shutil
+                    shutil.copy2(f, _MYCLAW_DATA_DIR / f.name)
+                    migrated_count += 1
+                except Exception as e:
+                    logger.warning("Failed to migrate %s: %s", f.name, e)
+        if migrated_count > 0:
+            (old_data / ".migrated").touch()
+            logger.info("Migrated %d files from project data/ to %s", migrated_count, _MYCLAW_DATA_DIR)
+    return _MYCLAW_DATA_DIR
+
 
 class ServiceContainer:
     def __init__(self, config=None):
         self.config = config or load_config()
+        _ensure_myclaw_data_dir()
         self.skills_cache: list = []
         self.agent_loop: AgentLoop | None = None
         self.state_store: StateStore | None = None
@@ -102,6 +125,12 @@ class ServiceContainer:
                 logger.info("  - %s: %s (%s)", s.name, s.description[:60], s.source)
         else:
             logger.info("No skills found")
+
+        if self.agent_loop:
+            self.agent_loop._skills_prompt = build_skills_prompt(self.skills_cache)
+        if self.dispatcher:
+            self.dispatcher._reload_skills(self.skills_cache)
+
         return self.skills_cache
 
     def _collect_builtin_tools(self) -> list[ToolDef]:
@@ -310,7 +339,7 @@ class ServiceContainer:
         from src.session import SessionRegistry
 
         self.session_registry = SessionRegistry()
-        self.session_registry.init("data/sessions.json")
+        self.session_registry.init(str(_MYCLAW_DATA_DIR / "sessions.json"))
 
         from src.channels.typing import TypingIndicator
 
@@ -324,7 +353,7 @@ class ServiceContainer:
 
         self.tool_registry = ToolRegistry()
         self.card_callback_registry = CardCallbackRegistry()
-        self.approval_manager = ApprovalManager()
+        self.approval_manager = ApprovalManager(data_dir=str(_MYCLAW_DATA_DIR))
 
         if self.config.tools.media_understanding.enabled:
             try:
@@ -433,7 +462,7 @@ class ServiceContainer:
 
             await start_skills_watcher(
                 self._build_skill_directories(),
-                lambda s: self._reload_skills(),
+                lambda: self._reload_skills(),
             )
 
         if self.cron_service:

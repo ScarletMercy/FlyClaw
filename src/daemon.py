@@ -136,8 +136,8 @@ WantedBy=multi-user.target
     <key>WorkingDirectory</key><string>{self._project_dir}</string>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>{self._project_dir}/data/myclaw.log</string>
-    <key>StandardErrorPath</key><string>{self._project_dir}/data/myclaw.log</string>
+    <key>StandardOutPath</key><string>{Path.home() / ".myclaw" / "data" / "myclaw.log"}</string>
+    <key>StandardErrorPath</key><string>{Path.home() / ".myclaw" / "data" / "myclaw.log"}</string>
 </dict>
 </plist>
 """

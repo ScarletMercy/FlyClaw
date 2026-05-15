@@ -5,9 +5,6 @@ import logging
 from pathlib import Path
 from typing import Callable
 
-from .loader import discover_skills
-from .types import Skill
-
 logger = logging.getLogger("myclaw.skills.watcher")
 
 _watch_task = None
@@ -15,7 +12,7 @@ _watch_task = None
 
 async def start_skills_watcher(
     directories: list[tuple[str, Path]],
-    on_change: Callable[[list[Skill]], None],
+    on_change: Callable[[], None],
 ):
     global _watch_task
     try:
@@ -32,8 +29,7 @@ async def start_skills_watcher(
         async for _changes in awatch(*dirs, watch_filter=lambda _, p: "SKILL.md" in str(p)):
             logger.info("Skills changed, reloading...")
             try:
-                skills = discover_skills(directories)
-                on_change(skills)
+                on_change()
             except Exception as e:
                 logger.error("Skill reload failed: %s", e)
 

@@ -34,7 +34,7 @@ class AuditEntry:
 class AuditStore:
     """SQLite-backed audit log store."""
 
-    def __init__(self, db_path: str = "data/audit.db"):
+    def __init__(self, db_path: str = "~/.myclaw/data/audit.db"):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
@@ -213,7 +213,7 @@ class AuditStore:
 _store: Optional[AuditStore] = None
 
 
-def get_audit_store(db_path: str = "data/audit.db") -> AuditStore:
+def get_audit_store(db_path: str = "~/.myclaw/data/audit.db") -> AuditStore:
     """Get or create the audit store singleton."""
     global _store
     if _store is None:
@@ -221,7 +221,7 @@ def get_audit_store(db_path: str = "data/audit.db") -> AuditStore:
     return _store
 
 
-def reset_audit_store(db_path: str = "data/audit.db") -> AuditStore:
+def reset_audit_store(db_path: str = "~/.myclaw/data/audit.db") -> AuditStore:
     """Reset the audit store singleton (for testing or multi-environment)."""
     global _store
     _store = AuditStore(db_path)

@@ -40,7 +40,7 @@ class _PendingApproval:
 
 
 class ApprovalManager:
-    def __init__(self, data_dir: str = "data"):
+    def __init__(self, data_dir: str = "~/.myclaw/data"):
         self._data_dir = Path(data_dir)
         self._pending: dict[str, _PendingApproval] = {}
         self._durable: dict[str, list[str]] = {}

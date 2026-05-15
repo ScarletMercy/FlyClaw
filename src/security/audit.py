@@ -55,15 +55,15 @@ def run_security_audit(config) -> dict[str, Any]:
         _check("exec-approval", "PASS", "")
 
     # Check 4: Data directory
-    data_dir = Path("data")
+    data_dir = Path.home() / ".myclaw" / "data"
     if data_dir.exists():
         _check("data-dir", "PASS", "")
     else:
         try:
             data_dir.mkdir(parents=True, exist_ok=True)
-            _check("data-dir", "PASS", "created data/")
+            _check("data-dir", "PASS", "created ~/.myclaw/data/")
         except Exception:
-            _check("data-dir", "WARN", "cannot create data/ directory")
+            _check("data-dir", "WARN", "cannot create ~/.myclaw/data/ directory")
 
     # Check 5: Secret leakage in config.yaml
     _check_secrets(config, results, _check)

@@ -225,13 +225,13 @@ class ToolsConfig(BaseModel):
 
 class CheckpointerConfig(BaseModel):
     type: Literal["sqlite", "memory"] = "sqlite"
-    path: str = "data/checkpoints.db"
+    path: str = "~/.myclaw/data/checkpoints.db"
 
 
 class CronConfig(BaseModel):
     enabled: bool = True
     max_concurrent_runs: int = 1
-    store_path: str = "data/cron.db"
+    store_path: str = "~/.myclaw/data/cron.db"
     failure_alert_after: int = 2
     max_transient_retries: int = 3
 
@@ -264,8 +264,8 @@ class TtsConfig(BaseModel):
 class MemoryConfig(BaseModel):
     enabled: bool = False
     backend: Literal["sqlite", "lancedb"] = "sqlite"
-    db_path: str = "data/memory.db"
-    lancedb_uri: str = "data/memory_lancedb"  # LanceDB data directory
+    db_path: str = "~/.myclaw/data/memory.db"
+    lancedb_uri: str = "~/.myclaw/data/memory_lancedb"  # LanceDB data directory
     embedding_provider: str = "openai"
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
@@ -299,7 +299,7 @@ class AuthConfig(BaseModel):
     default_role: Literal["owner", "admin", "user", "guest"] = "guest"
     pairing_enabled: bool = True
     pairing_ttl_seconds: int = 300  # Pairing code validity
-    db_path: str = "data/auth.db"
+    db_path: str = "~/.myclaw/data/auth.db"
 
 
 class TimeoutsConfig(BaseModel):
@@ -312,7 +312,7 @@ class TimeoutsConfig(BaseModel):
 
 class SessionSearchConfig(BaseModel):
     enabled: bool = False
-    index_path: str = "data/session_index.db"
+    index_path: str = "~/.myclaw/data/session_index.db"
     auto_sync: bool = True
     max_results: int = 10
     tool_content_max_chars: int = 500
