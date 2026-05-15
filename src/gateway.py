@@ -51,6 +51,7 @@ async def acp_websocket(ws: WebSocket):
 
             if method == "initialize":
                 await ws.send_json({
+                    "jsonrpc": "2.0",
                     "id": msg_id,
                     "result": {
                         "protocolVersion": "0.2",
@@ -63,6 +64,7 @@ async def acp_websocket(ws: WebSocket):
                 params = raw.get("params", {})
                 sid = sessions.create("default", cwd=params.get("cwd", ""))
                 await ws.send_json({
+                    "jsonrpc": "2.0",
                     "id": msg_id,
                     "result": {"sessionId": sid, "configOptions": [], "modes": ["default"]},
                 })
@@ -86,18 +88,19 @@ async def acp_websocket(ws: WebSocket):
                         })
                     elif event.type == "done":
                         stop_reason = event.stop_reason or "end_turn"
-                await ws.send_json({"id": msg_id, "result": {"stopReason": stop_reason, "usage": {}}})
+                await ws.send_json({"jsonrpc": "2.0", "id": msg_id, "result": {"stopReason": stop_reason, "usage": {}}})
             elif method == "cancel":
                 await runtime.cancel(raw.get("params", {}).get("sessionId", ""))
-                await ws.send_json({"id": msg_id, "result": {"cancelled": True}})
+                await ws.send_json({"jsonrpc": "2.0", "id": msg_id, "result": {"cancelled": True}})
             elif method == "listSessions":
                 s_list = sessions.list_sessions()
                 await ws.send_json({
+                    "jsonrpc": "2.0",
                     "id": msg_id,
                     "result": {"sessions": [{"sessionId": s.session_id, "agentId": s.agent_id} for s in s_list]},
                 })
             else:
-                await ws.send_json({"id": msg_id, "error": {"code": -32601, "message": f"Unknown method: {method}"}})
+                await ws.send_json({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": f"Unknown method: {method}"}})
     except WebSocketDisconnect:
         pass
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -48,7 +49,9 @@ async def serve_canvas(path: str = "", request: Request = None):
         if resolved is None:
             return HTMLResponse(_default_page(), 200)
         if mime == "text/html" and _root:
-            content = resolved.read_text(encoding="utf-8", errors="replace")
+            content = await asyncio.to_thread(
+                lambda: resolved.read_text(encoding="utf-8", errors="replace")
+            )
             if "</body>" in content:
                 content = content.replace("</body>", f"{LIVE_RELOAD_SCRIPT}</body>", 1)
             return HTMLResponse(content, 200)

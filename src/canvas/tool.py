@@ -35,7 +35,7 @@ async def canvas_render(text: str, format: str = "text", surface_id: str = "main
 
         if _root:
             out_path = _root / f"__render_{surface_id}.jsonl"
-            out_path.write_text("\n".join(jsonl), encoding="utf-8")
+            await asyncio.to_thread(out_path.write_text, "\n".join(jsonl), "utf-8")
 
         asyncio.create_task(_safe_broadcast())
     except Exception as exc:

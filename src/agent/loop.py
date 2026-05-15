@@ -457,11 +457,11 @@ class AgentLoop:
             return
         last = state.messages[-1]
         if last.get("role") == "assistant" and isinstance(last.get("content"), str):
-                try:
-                    from src.security.redact import redact
-                    last["content"] = redact(last["content"])
-                except Exception as exc:
-                    logger.debug("redact failed: %s", exc)
+            try:
+                from src.security.redact import redact
+                last["content"] = redact(last["content"])
+            except Exception as exc:
+                logger.debug("redact failed: %s", exc)
 
     async def _execute_tool(self, tc: Any, state: AgentState, thread_id: str) -> str:
         """Execute a single tool call. Returns result string."""
