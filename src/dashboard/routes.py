@@ -829,5 +829,152 @@ def register_dashboard(app: FastAPI, application):
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    # ── Phase 1: Dashboard Enhancements ─────────────────────────
+
+    @router.post("/api/dashboard/config/reload")
+    async def dashboard_config_reload(request: Request):
+        """Hot-reload configuration."""
+        _check_auth(request, app)
+        try:
+            from src.config import load_config
+            new_cfg = load_config()
+            _app_ref.config = new_cfg
+            if _app_ref.agent_loop:
+                from src.agent.client import create_chain
+                _app_ref.agent_loop._client = create_chain(new_cfg)
+            return {"ok": True, "message": "Config reloaded"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    @router.get("/api/dashboard/search")
+    async def dashboard_session_search(request: Request, q: str = ""):
+        """Search session history via FTS5."""
+        _check_auth(request, app)
+        if not q:
+            return {"results": []}
+        try:
+            from src.session_index.store import get_session_index
+            idx = get_session_index()
+            if not idx:
+                return {"results": [], "error": "Session index not initialized"}
+            results = idx.search(q, limit=20)
+            return {"results": results, "query": q}
+        except Exception as e:
+            return {"results": [], "error": str(e)}
+
+    @router.get("/api/dashboard/sessions/{thread_id}/messages")
+    async def dashboard_session_messages(thread_id: str, request: Request, limit: int = 50):
+        """Get message history for a session."""
+        _check_auth(request, app)
+        try:
+            if not _app_ref.state_store:
+                raise HTTPException(status_code=500, detail="State store not initialized")
+            state = await _app_ref.state_store.aload(thread_id)
+            if not state:
+                raise HTTPException(status_code=404, detail="Session not found")
+            messages = state.messages[-limit:]
+            return {"thread_id": thread_id, "messages": messages, "total": len(state.messages)}
+        except HTTPException:
+            raise
+        except Exception as e:
+            return {"error": str(e)}
+
+    @router.get("/api/dashboard/memory/stats")
+    async def dashboard_memory_stats(request: Request):
+        """Get memory system statistics."""
+        _check_auth(request, app)
+        cfg = _app_ref.config
+        if not getattr(cfg.memory, "enabled", False):
+            return {"enabled": False}
+        try:
+            from src.memory.search import get_memory_searcher
+            searcher = get_memory_searcher()
+            if not searcher:
+                return {"enabled": True, "error": "Memory searcher not initialized"}
+            stats = searcher.get_stats()
+            return {"enabled": True, **stats}
+        except Exception as e:
+            return {"enabled": True, "error": str(e)}
+
+    @router.get("/api/dashboard/security/audit")
+    async def dashboard_security_audit(request: Request):
+        """Run and return security audit results."""
+        _check_auth(request, app)
+        try:
+            from src.security.audit import run_security_audit
+            results = run_security_audit(_app_ref.config)
+            return {
+                "pass": results.get("pass", 0),
+                "warn": results.get("warn", 0),
+                "info": results.get("info", 0),
+                "issues": results.get("issues", []),
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    @router.get("/api/dashboard/skills/curation")
+    async def dashboard_skills_curation(request: Request):
+        """Get skill curation status."""
+        _check_auth(request, app)
+        try:
+            from src.skills.curator import SkillCurator
+            from pathlib import Path
+            curator = SkillCurator(Path.home() / ".myclaw" / "skills")
+            skills = _app_ref.skills_cache or []
+            lifecycle_counts = {"active": 0, "stale": 0, "archived": 0}
+            for s in skills:
+                usage = curator.manager.get_usage(s.name)
+                state = usage.get("state", "active") if usage else "active"
+                if state in lifecycle_counts:
+                    lifecycle_counts[state] += 1
+            return {
+                "last_review": curator.state.get("last_review"),
+                "total_reviews": curator.state.get("total_reviews", 0),
+                "days_since_review": curator.days_since_last_review(),
+                "review_interval_days": curator.review_interval_days,
+                "skills_reviewed": len(skills),
+                "lifecycle_counts": lifecycle_counts,
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    @router.post("/api/dashboard/skills/curation/review")
+    async def dashboard_skills_curation_review(request: Request, dry_run: bool = False):
+        """Trigger skill curation review."""
+        _check_auth(request, app)
+        try:
+            from src.skills.curator import SkillCurator
+            from pathlib import Path
+            curator = SkillCurator(Path.home() / ".myclaw" / "skills")
+            result = await curator.review_skills(dry_run=dry_run)
+            return result
+        except Exception as e:
+            return {"error": str(e)}
+
+    @router.get("/api/dashboard/learning/status")
+    async def dashboard_learning_status(request: Request):
+        """Get learning loop status."""
+        _check_auth(request, app)
+        cfg = _app_ref.config
+        return {
+            "beads_enabled": getattr(cfg.beads, "enabled", False),
+            "memory_judge_model": getattr(cfg.beads, "memory_judge_model", ""),
+            "curated_memory_sync": True,
+            "skill_curation": True,
+            "session_end_extraction": getattr(cfg.beads, "enabled", False) and bool(getattr(cfg.beads, "memory_judge_model", "")),
+        }
+
+    @router.post("/api/dashboard/learning/trigger")
+    async def dashboard_learning_trigger(request: Request):
+        """Manually trigger learning cycle."""
+        _check_auth(request, app)
+        try:
+            from src.agent.learning import LearningLoop
+            loop = LearningLoop(_app_ref.config)
+            result = await loop.trigger_full_learning_cycle()
+            return result
+        except Exception as e:
+            return {"error": str(e)}
+
     app.include_router(router)
     logger.info("Dashboard registered at /dashboard")

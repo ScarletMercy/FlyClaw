@@ -292,6 +292,7 @@ tr{transition:background .1s}tr:hover{background:var(--surface2)}
   {% if beads_enabled %}
   <div class="tab" data-tab="beads">Beads</div>
   {% endif %}
+  <div class="tab" data-tab="search">Search</div>
   <div class="tab" data-tab="logs">Logs</div>
 </div>
 
@@ -311,7 +312,52 @@ tr{transition:background .1s}tr:hover{background:var(--surface2)}
       <div class="stat-card"><div class="icon">&#128266;</div><div class="label">TTS</div><div class="value sm {% if tts_enabled %}c-green{% else %}c-yellow{% endif %}">{% if tts_enabled %}ON{% else %}OFF{% endif %}</div></div>
       <div class="stat-card"><div class="icon">&#128230;</div><div class="label">Plugins</div><div class="value {% if plugins|length > 0 %}c-orange{% else %}sm{% endif %}">{{ plugins|length }}</div></div>
       <div class="stat-card"><div class="icon">&#128274;</div><div class="label">Auth</div><div class="value sm {% if auth_enabled %}c-green{% else %}c-yellow{% endif %}">{% if auth_enabled %}ON{% else %}OFF{% endif %}</div></div>
+      <div class="stat-card"><div class="icon">&#128269;</div><div class="label">Security</div><div class="value sm {% if security_enabled %}c-green{% else %}c-yellow{% endif %}">{% if security_enabled %}ON{% else %}OFF{% endif %}</div></div>
+      <div class="stat-card"><div class="icon">&#128200;</div><div class="label">Learning</div><div class="value sm {% if beads_enabled and beads_judge_model %}c-green{% else %}c-yellow{% endif %}">{% if beads_enabled and beads_judge_model %}ON{% else %}OFF{% endif %}</div></div>
     </div>
+
+    <!-- Config Reload Button -->
+    <div style="display:flex;gap:10px;margin-bottom:20px;align-items:center">
+      <button class="btn primary" onclick="reloadConfig()">&#x21bb; Reload Config</button>
+      <span id="configReloadStatus" style="font-size:12px;color:var(--text2)"></span>
+    </div>
+
+    <!-- Security Audit Results -->
+    {% if security_enabled %}
+    <div class="section-title">Security Audit</div>
+    <div class="card" id="securityAuditCard">
+      <div class="card-header">
+        Audit Results
+        <button class="btn sm primary" onclick="runSecurityAudit()" style="margin-left:auto">Run Audit</button>
+      </div>
+      <div id="securityAuditResults" style="padding:16px">
+        <div style="color:var(--text3);font-size:13px">Click "Run Audit" to check security posture</div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Skill Curation Status -->
+    <div class="section-title">Skill Curation</div>
+    <div class="card" id="curationCard">
+      <div class="card-header">
+        Curation Status
+        <button class="btn sm primary" onclick="triggerCuration()" style="margin-left:auto">Review Now</button>
+      </div>
+      <div id="curationStatus" style="padding:16px">
+        <div style="color:var(--text3);font-size:13px">Loading curation status...</div>
+      </div>
+    </div>
+
+    <!-- Memory System Stats -->
+    {% if memory_enabled %}
+    <div class="section-title">Memory System</div>
+    <div class="card" id="memoryStatsCard">
+      <div class="card-header">Memory Statistics</div>
+      <div id="memoryStats" style="padding:16px">
+        <div style="color:var(--text3);font-size:13px">Loading memory stats...</div>
+      </div>
+    </div>
+    {% endif %}
 
     {% if pending_approvals|length > 0 %}
     <div class="section-title">Pending Approvals</div>
@@ -535,6 +581,21 @@ tr{transition:background .1s}tr:hover{background:var(--surface2)}
     <div class="empty" id="beadsEmpty" style="display:none">&#128466; No memories found</div>
   </div>
   {% endif %}
+
+  <!-- ═══════ Search ═══════ -->
+  <div class="tab-panel" id="panel-search">
+    <div class="card">
+      <div class="card-header">Session Search</div>
+      <div style="padding:16px">
+        <div style="display:flex;gap:10px;margin-bottom:16px">
+          <input type="text" id="searchInput" placeholder="Search sessions..." style="flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:14px;font-family:var(--mono)" onkeydown="if(event.key==='Enter')searchSessions()">
+          <button class="btn primary" onclick="searchSessions()">Search</button>
+        </div>
+        <div id="searchResults" style="max-height:600px;overflow-y:auto"></div>
+        <div class="empty" id="searchEmpty">&#128269; Enter a search term to find sessions</div>
+      </div>
+    </div>
+  </div>
 
   <!-- ═══════ Logs ═══════ -->
   <div class="tab-panel" id="panel-logs">
@@ -1145,6 +1206,202 @@ async function saveNewMemory() {
   } catch(e) {}
 }
 {% endif %}
+
+// ── Dashboard Enhancement Functions ──
+
+async function reloadConfig() {
+  const status = document.getElementById('configReloadStatus');
+  status.textContent = 'Reloading...';
+  try {
+    const data = await api('/api/dashboard/config/reload', { method: 'POST' });
+    if (data.ok) {
+      status.textContent = 'Config reloaded successfully';
+      status.style.color = 'var(--green)';
+      setTimeout(() => { status.textContent = ''; status.style.color = ''; }, 3000);
+    } else {
+      status.textContent = 'Error: ' + (data.error || 'Unknown');
+      status.style.color = 'var(--red)';
+    }
+  } catch(e) {
+    status.textContent = 'Error: ' + e.message;
+    status.style.color = 'var(--red)';
+  }
+}
+
+async function runSecurityAudit() {
+  const resultsDiv = document.getElementById('securityAuditResults');
+  resultsDiv.innerHTML = '<div style="color:var(--text3);font-size:13px">Running audit...</div>';
+  try {
+    const data = await api('/api/dashboard/security/audit');
+    if (data.error) {
+      resultsDiv.innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + escHtml(data.error) + '</div>';
+      return;
+    }
+    let html = '<div style="display:flex;gap:12px;margin-bottom:12px">';
+    html += '<span class="tag tag-green">' + data.pass + ' passed</span>';
+    html += '<span class="tag tag-yellow">' + data.warn + ' warnings</span>';
+    html += '<span class="tag tag-blue">' + data.info + ' info</span>';
+    html += '</div>';
+    if (data.issues && data.issues.length > 0) {
+      html += '<div style="margin-top:12px">';
+      for (const issue of data.issues.slice(0, 10)) {
+        const color = issue.severity === 'warn' ? 'var(--yellow)' : issue.severity === 'info' ? 'var(--blue)' : 'var(--text2)';
+        html += '<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;color:' + color + '">' + escHtml(issue.message || issue) + '</div>';
+      }
+      if (data.issues.length > 10) {
+        html += '<div style="padding:8px 0;font-size:12px;color:var(--text3)">... and ' + (data.issues.length - 10) + ' more</div>';
+      }
+      html += '</div>';
+    }
+    resultsDiv.innerHTML = html;
+  } catch(e) {
+    resultsDiv.innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + escHtml(e.message) + '</div>';
+  }
+}
+
+async function fetchCurationStatus() {
+  const statusDiv = document.getElementById('curationStatus');
+  if (!statusDiv) return;
+  try {
+    const data = await api('/api/dashboard/skills/curation');
+    if (data.error) {
+      statusDiv.innerHTML = '<div style="color:var(--text3);font-size:13px">Error: ' + escHtml(data.error) + '</div>';
+      return;
+    }
+    const lc = data.lifecycle_counts || {};
+    let html = '<div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">';
+    html += '<span class="tag tag-green">Active: ' + (lc.active || 0) + '</span>';
+    html += '<span class="tag tag-yellow">Stale: ' + (lc.stale || 0) + '</span>';
+    html += '<span class="tag tag-gray">Archived: ' + (lc.archived || 0) + '</span>';
+    html += '</div>';
+    html += '<div style="font-size:12px;color:var(--text2);line-height:1.8">';
+    html += '<div>Last review: ' + (data.last_review ? new Date(data.last_review).toLocaleString() : 'Never') + '</div>';
+    html += '<div>Total reviews: ' + (data.total_reviews || 0) + '</div>';
+    html += '<div>Days since review: ' + (data.days_since_review || 0) + '</div>';
+    html += '<div>Skills reviewed: ' + (data.skills_reviewed || 0) + '</div>';
+    html += '</div>';
+    statusDiv.innerHTML = html;
+  } catch(e) {}
+}
+
+async function triggerCuration(dryRun = false) {
+  const statusDiv = document.getElementById('curationStatus');
+  statusDiv.innerHTML = '<div style="color:var(--text3);font-size:13px">Running curation review...</div>';
+  try {
+    const data = await api('/api/dashboard/skills/curation/review' + (dryRun ? '?dry_run=true' : ''), { method: 'POST' });
+    if (data.error) {
+      statusDiv.innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + escHtml(data.error) + '</div>';
+      return;
+    }
+    const changes = data.changes || [];
+    let html = '<div style="margin-bottom:12px"><span class="tag tag-green">Review complete</span></div>';
+    if (changes.length > 0) {
+      html += '<div style="font-size:12px;color:var(--text2);line-height:1.8">';
+      html += '<div style="margin-bottom:8px;font-weight:600;color:var(--text)">Changes: ' + changes.length + '</div>';
+      for (const c of changes.slice(0, 10)) {
+        html += '<div style="padding:4px 0;border-bottom:1px solid var(--border)">' + escHtml(c.skill) + ' → ' + escHtml(c.action) + '</div>';
+      }
+      html += '</div>';
+    } else {
+      html += '<div style="font-size:13px;color:var(--text3)">No changes needed</div>';
+    }
+    statusDiv.innerHTML = html;
+    fetchCurationStatus();
+  } catch(e) {
+    statusDiv.innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + escHtml(e.message) + '</div>';
+  }
+}
+
+async function fetchMemoryStats() {
+  const statsDiv = document.getElementById('memoryStats');
+  if (!statsDiv) return;
+  try {
+    const data = await api('/api/dashboard/memory/stats');
+    if (data.error || !data.enabled) {
+      statsDiv.innerHTML = '<div style="color:var(--text3);font-size:13px">' + (data.error || 'Memory system not enabled') + '</div>';
+      return;
+    }
+    let html = '<div style="display:flex;gap:12px;flex-wrap:wrap">';
+    html += '<span class="tag tag-blue">Documents: ' + (data.document_count || 0) + '</span>';
+    html += '<span class="tag tag-purple">Chunks: ' + (data.chunk_count || 0) + '</span>';
+    html += '<span class="tag tag-green">Indexed: ' + (data.last_indexed ? new Date(data.last_indexed).toLocaleString() : 'Never') + '</span>';
+    html += '</div>';
+    statsDiv.innerHTML = html;
+  } catch(e) {}
+}
+
+async function searchSessions() {
+  const query = document.getElementById('searchInput').value.trim();
+  const resultsDiv = document.getElementById('searchResults');
+  const emptyDiv = document.getElementById('searchEmpty');
+  if (!query) {
+    resultsDiv.innerHTML = '';
+    emptyDiv.style.display = 'block';
+    return;
+  }
+  emptyDiv.style.display = 'none';
+  resultsDiv.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px">Searching...</div>';
+  try {
+    const data = await api('/api/dashboard/search?q=' + encodeURIComponent(query));
+    const results = data.results || [];
+    if (results.length === 0) {
+      resultsDiv.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px">No results found</div>';
+      return;
+    }
+    let html = '<div style="font-size:12px;color:var(--text2);margin-bottom:12px">' + results.length + ' results</div>';
+    for (const r of results.slice(0, 20)) {
+      html += '<div class="card" style="margin-bottom:8px;cursor:pointer" onclick="viewSessionMessages(\'' + escHtml(r.thread_id || '') + '\')">';
+      html += '<div style="padding:12px 16px">';
+      html += '<div style="font-size:11px;font-family:var(--mono);color:var(--text3);margin-bottom:4px">' + escHtml(r.thread_id || '') + '</div>';
+      html += '<div style="font-size:13px;color:var(--text)">' + escHtml(r.snippet || r.content || '').substring(0, 200) + '</div>';
+      html += '<div style="font-size:11px;color:var(--text3);margin-top:4px">' + (r.timestamp ? new Date(r.timestamp).toLocaleString() : '') + '</div>';
+      html += '</div></div>';
+    }
+    resultsDiv.innerHTML = html;
+  } catch(e) {
+    resultsDiv.innerHTML = '<div style="color:var(--red);font-size:13px;padding:16px">Error: ' + escHtml(e.message) + '</div>';
+  }
+}
+
+async function viewSessionMessages(threadId) {
+  if (!threadId) return;
+  try {
+    const data = await api('/api/dashboard/sessions/' + encodeURIComponent(threadId) + '/messages?limit=50');
+    if (data.error) {
+      alert('Error: ' + data.error);
+      return;
+    }
+    const messages = data.messages || [];
+    let html = '<div style="max-height:400px;overflow-y:auto;padding:16px">';
+    html += '<div style="font-size:12px;color:var(--text3);margin-bottom:12px">' + messages.length + ' messages (of ' + data.total + ')</div>';
+    for (const m of messages) {
+      const role = m.role || 'unknown';
+      const color = role === 'user' ? 'var(--green)' : role === 'assistant' ? 'var(--accent)' : 'var(--text3)';
+      html += '<div style="margin-bottom:12px;padding:8px 12px;background:var(--surface2);border-radius:8px">';
+      html += '<div style="font-size:11px;font-weight:600;color:' + color + ';margin-bottom:4px">' + role + '</div>';
+      html += '<div style="font-size:13px;color:var(--text);white-space:pre-wrap;word-break:break-word">' + escHtml(m.content || '').substring(0, 500) + '</div>';
+      html += '</div>';
+    }
+    html += '</div>';
+    const modal = document.createElement('div');
+    modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center';
+    modal.innerHTML = '<div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:800px;width:90%;max-height:80vh;overflow:hidden">' +
+      '<div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">' +
+      '<span style="font-size:14px;font-weight:600">Session Messages</span>' +
+      '<button onclick="this.closest(\'div[style*=fixed]\').remove()" style="background:none;border:none;color:var(--text);font-size:20px;cursor:pointer">&times;</button></div>' +
+      html + '</div>';
+    modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+    document.body.appendChild(modal);
+  } catch(e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// Load enhancement data on page load
+document.addEventListener('DOMContentLoaded', () => {
+  fetchCurationStatus();
+  fetchMemoryStats();
+});
 
 startLogStream();
 startStateStream();
