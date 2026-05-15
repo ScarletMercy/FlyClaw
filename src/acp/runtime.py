@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import AsyncIterator
@@ -23,6 +24,23 @@ class AcpRuntimeEvent:
 class AgentLoopRuntime:
     def __init__(self, session_manager: AcpSessionManager | None = None):
         self._sessions = session_manager or AcpSessionManager()
+        self._state_store = None
+        self._agent_loop = None
+        self._cancel_events: dict[str, asyncio.Event] = {}
+
+    def _ensure_store(self):
+        from src.config import load_config
+        from src.agent.state import StateStore
+
+        if self._state_store is None:
+            config = load_config()
+            self._state_store = StateStore(config.checkpointer.path)
+        return self._state_store
+
+    def _ensure_loop(self):
+        if self._agent_loop is None:
+            self._agent_loop = _build_agent_loop(self._ensure_store())
+        return self._agent_loop
 
     async def run_turn(
         self,
@@ -31,27 +49,29 @@ class AgentLoopRuntime:
         agent_id: str = "default",
         cwd: str = "",
     ) -> AsyncIterator[AcpRuntimeEvent]:
-        loop = _build_agent_loop(agent_id, cwd)
+        loop = self._ensure_loop()
         from src.agent.state import AgentState
 
         session = self._sessions.get(session_id)
         existing_messages: list[dict] = []
-        if session and session.thread_id:
-            try:
-                from src.agent.state import get_state_store
-                store = get_state_store()
-                existing = await store.aload(session.thread_id)
-                if existing:
-                    existing_messages = existing.messages
-            except Exception:
-                pass
+        thread_id = f"acp:{session_id}"
+
+        if session:
+            tid = session.thread_id or thread_id
+            if session.thread_id:
+                try:
+                    store = self._ensure_store()
+                    existing = await store.aload(tid)
+                    if existing:
+                        existing_messages = existing.messages
+                except Exception:
+                    pass
+            thread_id = tid
 
         state = AgentState(
             messages=existing_messages + [{"role": "user", "content": prompt}],
             system_prompt="",
         )
-
-        thread_id = session.thread_id if session else f"acp:{session_id}"
 
         try:
             result = await loop.run(state, thread_id)
@@ -65,16 +85,17 @@ class AgentLoopRuntime:
             yield AcpRuntimeEvent(type="done", stop_reason="end_turn")
 
     async def cancel(self, session_id: str) -> None:
-        pass
+        ev = self._cancel_events.get(session_id)
+        if ev:
+            ev.set()
 
     async def close(self, session_id: str) -> None:
         self._sessions.close(session_id)
 
 
-def _build_agent_loop(agent_id: str, cwd: str):
+def _build_agent_loop(state_store):
     from src.agent.loop import AgentLoop
     from src.agent.client import create_chain
-    from src.agent.state import MemoryStateStore
     from src.config import load_config
     from src.tools.registry import get_tool_registry
 
@@ -85,6 +106,6 @@ def _build_agent_loop(agent_id: str, cwd: str):
     return AgentLoop(
         client=client,
         tools=tools,
-        state_store=MemoryStateStore(),
+        state_store=state_store,
         config=config,
     )

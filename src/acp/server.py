@@ -80,6 +80,7 @@ class AcpServer:
         ):
             if event.type == "text_delta" and event.text:
                 self._transport.write({
+                    "jsonrpc": "2.0",
                     "method": "sessionUpdate",
                     "params": {
                         "sessionId": session_id,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import mimetypes
+import os
 from pathlib import Path
 
 
@@ -13,7 +14,13 @@ class FileResolver:
         if ".." in clean.split("/"):
             raise ValueError(f"Path traversal rejected: {relative_path}")
 
-        target = (self._root / clean).resolve() if clean else self._root / "index.html"
+        if not clean:
+            target = self._root / "index.html"
+        else:
+            raw = self._root / clean
+            if os.path.islink(raw):
+                raise ValueError(f"Symlink rejected: {relative_path}")
+            target = raw.resolve()
 
         try:
             target.relative_to(self._root)
@@ -26,7 +33,7 @@ class FileResolver:
         if not target.exists():
             return None, ""
 
-        if target.is_symlink():
+        if os.path.islink(target):
             raise ValueError(f"Symlink rejected: {relative_path}")
 
         mime = mimetypes.guess_type(str(target))[0] or "application/octet-stream"

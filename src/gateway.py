@@ -23,14 +23,25 @@ logger = logging.getLogger("myclaw.gateway")
 router = APIRouter()
 
 
+_acp_sessions = None
+_acp_runtime = None
+
+
+def _get_acp_runtime():
+    global _acp_sessions, _acp_runtime
+    if _acp_runtime is None:
+        from src.acp.session import AcpSessionManager
+        from src.acp.runtime import AgentLoopRuntime
+
+        _acp_sessions = AcpSessionManager()
+        _acp_runtime = AgentLoopRuntime(_acp_sessions)
+    return _acp_sessions, _acp_runtime
+
+
 @router.websocket("/ws/acp")
 async def acp_websocket(ws: WebSocket):
     await ws.accept()
-    from src.acp.session import AcpSessionManager
-    from src.acp.runtime import AgentLoopRuntime
-
-    sessions = AcpSessionManager()
-    runtime = AgentLoopRuntime(sessions)
+    sessions, runtime = _get_acp_runtime()
 
     try:
         while True:
@@ -66,6 +77,7 @@ async def acp_websocket(ws: WebSocket):
                 async for event in runtime.run_turn(session_id=sid, prompt=prompt):
                     if event.type == "text_delta" and event.text:
                         await ws.send_json({
+                            "jsonrpc": "2.0",
                             "method": "sessionUpdate",
                             "params": {
                                 "sessionId": sid,
@@ -139,7 +151,8 @@ def create_gateway(app_config, agent_loop, feishu_channel=None, cron_service=Non
     capacity = getattr(app_config.gateway, "rate_limit_burst", 20) if hasattr(app_config, "gateway") else 20
     _rate_limiter = TokenBucketRateLimiter(rate=rate, capacity=capacity)
     app = FastAPI(title="MyClaw", version="0.1.0")
-    app.include_router(canvas_router)
+    if getattr(app_config, "canvas", None) and app_config.canvas.enabled:
+        app.include_router(canvas_router)
     app.include_router(router)
     cors_origins = getattr(app_config.gateway, "cors_origins", []) or []
     app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials=bool(cors_origins), allow_methods=["*"], allow_headers=["*"])

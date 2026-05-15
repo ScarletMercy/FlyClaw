@@ -18,9 +18,10 @@ class ReloadExecutor:
     async def execute(self, plan: ReloadPlan) -> None:
         if plan.requires_restart:
             logger.warning(
-                "Config change requires gateway restart — hot-reload skipped for: %s",
+                "Config change requires gateway restart — skipping hot-reload for: %s",
                 [a.action for a in plan.actions],
             )
+            return
 
         for action in plan.actions:
             handler = getattr(self, f"_do_{action.action}", None)
@@ -38,13 +39,23 @@ class ReloadExecutor:
         new_client = create_chain(self._app.config)
         if self._app.agent_loop:
             self._app.agent_loop._client = new_client
+        else:
+            logger.warning("agent_loop not initialized, model reload deferred")
 
     async def _do_reload_cron(self):
         from src.cron.service import CronService
+        from src.cron.store import CronStore
+        from src.cron.executor import execute_cron_job
         if self._app.cron_service:
             await self._app.cron_service.stop()
-        self._app.cron_service = CronService(self._app.config.cron)
-        await self._app.cron_service.start(self._app)
+        store = CronStore(self._app.config.cron.store_path)
+        app = self._app
+
+        async def cron_execute(job):
+            return await execute_cron_job(job, app.agent_loop, app.config, app.feishu)
+
+        self._app.cron_service = CronService(store, cron_execute, config=self._app.config, feishu_channel=self._app.feishu)
+        await self._app.cron_service.start()
 
     async def _do_reload_tools(self):
         from src.tools.registry import get_tool_registry
@@ -58,11 +69,12 @@ class ReloadExecutor:
         await self._do_reload_tools()
         if self._app.agent_loop:
             from src.skills.loader import discover_skills
-            from src.main import _build_skill_directories
+
             dirs = self._app._build_skill_directories()
             skills = discover_skills(dirs)
             self._app._skills_cache = skills
             from src.skills.prompt import build_skills_prompt
+
             self._app.agent_loop._skills_prompt = build_skills_prompt(skills)
 
     async def _do_reload_memory(self):
@@ -82,7 +94,7 @@ class ReloadExecutor:
             from src.auth.rbac import set_rbac, RBAC
             from src.auth.store import AuthStore
             store = AuthStore(self._app.config.auth.db_path)
-            rbac = RBAC(self._app.config, store)
+            rbac = RBAC(store, self._app.config)
             set_rbac(rbac)
         except Exception as e:
             logger.warning("Auth reload failed: %s", e)

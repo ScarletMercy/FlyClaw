@@ -29,6 +29,7 @@ class TestReloadExecutor:
         old_service = AsyncMock()
         app.cron_service = old_service
         app.config = AppConfig()
+        app.feishu = MagicMock()
         executor = ReloadExecutor(app)
         plan = ReloadPlan(actions=[ReloadAction(action="reload_cron")])
         with patch("src.cron.service.CronService") as MockCron:
@@ -36,7 +37,10 @@ class TestReloadExecutor:
             MockCron.return_value = mock_instance
             await executor.execute(plan)
         old_service.stop.assert_called_once()
-        MockCron.assert_called_once_with(app.config.cron)
+        MockCron.assert_called_once()
+        from pathlib import Path
+
+        assert MockCron.call_args[0][0].db_path == Path(app.config.cron.store_path)
 
     @pytest.mark.asyncio
     async def test_reload_tools(self):

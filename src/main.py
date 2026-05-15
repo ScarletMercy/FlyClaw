@@ -59,6 +59,8 @@ def _collect_builtin_tools(config) -> list[ToolDef]:
     ]
     if getattr(config.tools, "browser", None) and config.tools.browser.enabled:
         tool_modules.append("src.tools.browser.tools")
+    if getattr(config, "canvas", None) and config.canvas.enabled:
+        tool_modules.append("src.canvas.tool")
     for mod_name in tool_modules:
         try:
             import importlib
@@ -415,7 +417,7 @@ class Application:
             self.qq.set_media_understanding_runner(self._qq_mu_runner)
             logger.info("Media understanding runner initialized for QQ channel")
 
-        from src.gateway import create_gateway, _app_ref as _gw_app_ref_mod
+        from src.gateway import create_gateway
         import src.gateway as _gw_mod
 
         self.api = create_gateway(self.config, self.agent_loop, self.feishu, self.cron_service)
@@ -956,6 +958,17 @@ class Application:
         if self.cron_service:
             await self.cron_service.start()
 
+        if getattr(self.config, "canvas", None) and self.config.canvas.enabled and self.config.canvas.root:
+            from pathlib import Path as _Path
+            from src.canvas.server import init_canvas
+
+            canvas_root = _Path(self.config.canvas.root)
+            init_canvas(canvas_root)
+            if self.config.canvas.live_reload:
+                from src.canvas.live_reload import start_canvas_watcher
+
+                await start_canvas_watcher(canvas_root)
+
         await self.session_tracker.start_periodic_cleanup(self.state_store)
 
         if self._memory_searcher and getattr(self.config.memory, "watch", False):
@@ -1009,6 +1022,10 @@ class Application:
             from src.memory.watcher import stop_memory_watcher
 
             await stop_memory_watcher()
+            if getattr(self.config, "canvas", None) and self.config.canvas.enabled and self.config.canvas.live_reload:
+                from src.canvas.live_reload import stop_canvas_watcher
+
+                await stop_canvas_watcher()
             if self.cron_service:
                 await self.cron_service.stop()
             await self.session_tracker.stop()
