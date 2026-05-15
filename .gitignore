@@ -18,8 +18,8 @@ config.yaml
 .beads-credential-key
 .beads/issues.jsonl
 
-# Skills (pluggable extensions)
-skills/
+# Skills (pluggable extensions - user skills, not src/skills/)
+/skills/
 
 # Docs
 docs/

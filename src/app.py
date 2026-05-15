@@ -118,7 +118,11 @@ class ServiceContainer:
             "src.tools.session_search_tools",
             "src.tools.web_tools",
             "src.tools.beads_tools",
+            "src.memory.beads_sync",
             "src.tools.skills_tools",
+            "src.skills.manager",
+            "src.skills.curator",
+            "src.agent.learning",
         ]
         if getattr(self.config.tools, "browser", None) and self.config.tools.browser.enabled:
             tool_modules.append("src.tools.browser.tools")
@@ -299,7 +303,10 @@ class ServiceContainer:
 
         self.feishu = FeishuChannel(self.config.channels.feishu)
         session_scope = self.config.session.scope
-        self.session_tracker = SessionTracker(idle_reset_minutes=self.config.session.idle_reset_minutes)
+        self.session_tracker = SessionTracker(
+            idle_reset_minutes=self.config.session.idle_reset_minutes,
+            beads_config=self.config.beads if self.config.beads.enabled else None,
+        )
         from src.session import SessionRegistry
 
         self.session_registry = SessionRegistry()

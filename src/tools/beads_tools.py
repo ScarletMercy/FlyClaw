@@ -200,6 +200,118 @@ async def judge_memory_with_llm(
         return None
 
 
+_SESSION_JUDGE_PROMPT = """\
+分析以下完整会话，提取所有值得永久记住的事实信息。
+
+只提取以下情况：
+- 用户明确表达的偏好/习惯（如"我喜欢""我习惯""以后请"）
+- 用户的身份/联系方式（名字、邮箱、电话等）
+- 项目/工作的固定信息（技术栈、服务器地址、工作流程）
+
+忽略：
+- 闲聊、一次性指令、通用知识讨论
+- 情绪表达、模糊信息
+
+对话历史（{turn_count} 轮）:
+{conversation_summary}
+
+输出 JSON 数组，每个元素格式:
+[{"content": "具体事实(一句话)", "category": "preference|identity|contact|project|fact"}]
+
+如果没有值得记忆的，输出 []。
+严格判断，宁缺毋滥。"""
+
+
+async def extract_session_end_memories(
+    messages: list[dict],
+    model_name: str,
+    base_url: str,
+    api_key: str,
+) -> int:
+    """会话结束时批量提取记忆，比逐轮提取更高效。
+    
+    Args:
+        messages: 完整的会话消息列表
+        model_name: 用于判断的小模型名称
+        base_url: 模型 API 地址
+        api_key: 模型 API 密钥
+    
+    Returns:
+        成功保存的记忆数量
+    """
+    from src.agent.client import ChatClient
+
+    # 1. 先用正则快速匹配所有用户消息
+    user_messages = [m["content"] for m in messages if m.get("role") == "user"]
+    extracted_count = 0
+    
+    for msg in user_messages:
+        result = auto_extract_memory(msg, "")
+        if result:
+            content, category = result
+            await save_memory(content, "")
+            extracted_count += 1
+    
+    # 如果正则已经提取到记忆，跳过 LLM 判断（避免重复）
+    if extracted_count > 0:
+        return extracted_count
+    
+    # 2. 如果没有正则匹配，使用 LLM 对整个会话进行批量判断
+    if not model_name or not user_messages:
+        return 0
+    
+    # 构建对话摘要（限制长度避免 token 溢出）
+    conversation_parts = []
+    total_chars = 0
+    max_chars = 4000  # 限制摘要长度
+    
+    for msg in messages:
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        if role in ("user", "assistant"):
+            part = f"{role}: {content[:200]}"
+            if total_chars + len(part) > max_chars:
+                break
+            conversation_parts.append(part)
+            total_chars += len(part)
+    
+    conversation_summary = "\n".join(conversation_parts)
+    turn_count = len([m for m in messages if m.get("role") == "user"])
+    
+    prompt = _SESSION_JUDGE_PROMPT.format(
+        turn_count=turn_count,
+        conversation_summary=conversation_summary,
+    )
+    
+    model = ChatClient(
+        base_url=base_url,
+        api_key=api_key,
+        model=model_name,
+        temperature=0.0,
+    )
+    
+    try:
+        resp = await model.chat([
+            {"role": "user", "content": prompt},
+        ])
+        text = resp.content.strip()
+        if text.startswith("```"):
+            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+        
+        memories = json.loads(text)
+        if isinstance(memories, list):
+            for mem in memories:
+                if isinstance(mem, dict) and mem.get("content"):
+                    content = mem["content"].strip()
+                    category = mem.get("category", "fact")
+                    await save_memory(f"[{category}] {content}", "")
+                    extracted_count += 1
+    except Exception as e:
+        logger.debug("Session-end memory extraction error: %s", e)
+    
+    return extracted_count
+
+
 # ---------------------------------------------------------------------------
 # Passive save helper (used by main.py)
 # ---------------------------------------------------------------------------

@@ -16,10 +16,11 @@ logger = logging.getLogger("myclaw.session")
 
 
 class SessionTracker:
-    def __init__(self, idle_reset_minutes: int = 120):
+    def __init__(self, idle_reset_minutes: int = 120, beads_config=None):
         self._idle_reset_seconds = idle_reset_minutes * 60
         self._last_activity: dict[str, float] = {}
         self._task: Optional[asyncio.Task] = None
+        self._beads_config = beads_config
 
     def touch(self, thread_id: str) -> None:
         self._last_activity[thread_id] = time.monotonic()
@@ -64,6 +65,21 @@ class SessionTracker:
                     try:
                         state = await state_store.aload(tid)
                         if state and state.messages:
+                            # Phase 1: 会话结束记忆提取
+                            if self._beads_config and self._beads_config.enabled and self._beads_config.memory_judge_model:
+                                try:
+                                    from src.tools.beads_tools import extract_session_end_memories
+                                    count = await extract_session_end_memories(
+                                        state.messages,
+                                        self._beads_config.memory_judge_model,
+                                        self._beads_config.memory_judge_base_url or "",
+                                        self._beads_config.memory_judge_api_key or "",
+                                    )
+                                    if count > 0:
+                                        logger.info("Extracted %d memories from expired session %s", count, tid)
+                                except Exception as e:
+                                    logger.debug("Session-end memory extraction failed for %s: %s", tid, e)
+                            
                             empty_state = state.copy()
                             empty_state.messages = []
                             await state_store.save(tid, empty_state)
