@@ -334,7 +334,6 @@ class ServiceContainer:
         session_scope = self.config.session.scope
         self.session_tracker = SessionTracker(
             idle_reset_minutes=self.config.session.idle_reset_minutes,
-            beads_config=self.config.beads if self.config.beads.enabled else None,
         )
         from src.session import SessionRegistry
 
@@ -467,6 +466,28 @@ class ServiceContainer:
             logger.info("Audit store subscribed to tool events")
         except Exception as e:
             logger.warning("Failed to subscribe audit store: %s", e)
+
+        # Subscribe learning loop to session reset events
+        try:
+            from src.events import subscribe_async
+            from src.agent.learning import LearningLoop
+
+            learning_loop = LearningLoop(self.config)
+
+            async def _on_session_reset(event, **ctx):
+                messages = ctx.get("messages", [])
+                if messages:
+                    try:
+                        result = await learning_loop.on_session_end(messages)
+                        if result.get("memories_extracted", 0) > 0:
+                            logger.info("Learning loop: extracted %d memories", result["memories_extracted"])
+                    except Exception as e:
+                        logger.debug("Learning loop session-end failed: %s", e)
+
+            subscribe_async("session.reset", _on_session_reset, priority=10)
+            logger.info("Learning loop subscribed to session.reset events")
+        except Exception as e:
+            logger.warning("Failed to subscribe learning loop: %s", e)
 
         # Load user-defined hooks
         try:

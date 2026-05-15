@@ -16,11 +16,10 @@ logger = logging.getLogger("myclaw.session")
 
 
 class SessionTracker:
-    def __init__(self, idle_reset_minutes: int = 120, beads_config=None):
+    def __init__(self, idle_reset_minutes: int = 120):
         self._idle_reset_seconds = idle_reset_minutes * 60
         self._last_activity: dict[str, float] = {}
         self._task: Optional[asyncio.Task] = None
-        self._beads_config = beads_config
 
     def touch(self, thread_id: str) -> None:
         self._last_activity[thread_id] = time.monotonic()
@@ -66,21 +65,20 @@ class SessionTracker:
                         state = await state_store.aload(tid)
                         message_count_before = len(state.messages) if state else 0
                         if state and state.messages:
-                            # Phase 1: 会话结束记忆提取
-                            if self._beads_config and self._beads_config.enabled and self._beads_config.memory_judge_model:
-                                try:
-                                    from src.tools.beads_tools import extract_session_end_memories
-                                    count = await extract_session_end_memories(
-                                        state.messages,
-                                        self._beads_config.memory_judge_model,
-                                        self._beads_config.memory_judge_base_url or "",
-                                        self._beads_config.memory_judge_api_key or "",
-                                    )
-                                    if count > 0:
-                                        logger.info("Extracted %d memories from expired session %s", count, tid)
-                                except Exception as e:
-                                    logger.debug("Session-end memory extraction failed for %s: %s", tid, e)
-                            
+                            # Emit session reset event BEFORE clearing messages
+                            # This allows subscribers (like learning loop) to access messages
+                            try:
+                                from src.events import emit_async
+                                await emit_async(
+                                    "session.reset",
+                                    thread_id=tid,
+                                    reason="idle_timeout",
+                                    message_count_before_reset=message_count_before,
+                                    messages=state.messages,
+                                )
+                            except Exception:
+                                pass
+
                             empty_state = state.copy()
                             empty_state.messages = []
                             await state_store.save(tid, empty_state)
@@ -94,18 +92,6 @@ class SessionTracker:
                             except Exception:
                                 pass
                         self.remove(tid)
-
-                        # Emit session reset event
-                        try:
-                            from src.events import emit_async
-                            await emit_async(
-                                "session.reset",
-                                thread_id=tid,
-                                reason="idle_timeout",
-                                message_count_before_reset=message_count_before,
-                            )
-                        except Exception:
-                            pass
                     except Exception as e:
                         logger.debug("Session reset failed for %s: %s", tid, e)
                         self.remove(tid)
