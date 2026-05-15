@@ -64,6 +64,7 @@ class SessionTracker:
                 for tid in expired:
                     try:
                         state = await state_store.aload(tid)
+                        message_count_before = len(state.messages) if state else 0
                         if state and state.messages:
                             # Phase 1: 会话结束记忆提取
                             if self._beads_config and self._beads_config.enabled and self._beads_config.memory_judge_model:
@@ -93,6 +94,18 @@ class SessionTracker:
                             except Exception:
                                 pass
                         self.remove(tid)
+
+                        # Emit session reset event
+                        try:
+                            from src.events import emit_async
+                            await emit_async(
+                                "session.reset",
+                                thread_id=tid,
+                                reason="idle_timeout",
+                                message_count_before_reset=message_count_before,
+                            )
+                        except Exception:
+                            pass
                     except Exception as e:
                         logger.debug("Session reset failed for %s: %s", tid, e)
                         self.remove(tid)

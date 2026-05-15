@@ -95,6 +95,17 @@ class AgentLoop:
 
     async def run(self, state: AgentState, thread_id: str, max_rounds: int = 50) -> AgentState:
         """Execute agent loop with per-thread locking."""
+        from src.events import emit_async
+
+        await emit_async(
+            "agent_loop.started",
+            thread_id=thread_id,
+            max_rounds=max_rounds,
+            message_count=len(state.messages),
+            channel=getattr(state, 'channel', ''),
+            sender_id=getattr(state, 'sender_id', ''),
+        )
+
         lock = await self._store.acquire_thread(thread_id)
         timeout = (
             getattr(self._config.agents, "lock_timeout", 30.0)
@@ -140,6 +151,10 @@ class AgentLoop:
         Uses proactive compression (hermes-style): check token budget BEFORE
         each model call and compress if over threshold.
         """
+        import time as _time
+        from src.events import emit_async
+
+        start_ts = _time.monotonic()
         max_tool_rounds = self._get_max_tool_rounds()
         tool_round = 0
 
@@ -162,6 +177,14 @@ class AgentLoop:
             if not response.tool_calls:
                 self._redact_last_assistant(state)
                 await self._store.save(thread_id, state)
+                duration_ms = (_time.monotonic() - start_ts) * 1000
+                await emit_async(
+                    "agent_loop.completed",
+                    thread_id=thread_id,
+                    final_message_count=len(state.messages),
+                    duration_ms=duration_ms,
+                    total_rounds=tool_round,
+                )
                 return state
 
             # Checkpoint: save assistant message (with tool_calls) before execution
@@ -178,6 +201,14 @@ class AgentLoop:
                 })
                 await self._store.save(thread_id, state)
 
+        duration_ms = (_time.monotonic() - start_ts) * 1000
+        await emit_async(
+            "agent_loop.completed",
+            thread_id=thread_id,
+            final_message_count=len(state.messages),
+            duration_ms=duration_ms,
+            total_rounds=tool_round,
+        )
         return state
 
     async def _resume_inner(self, thread_id: str, decision: str) -> AgentState:
@@ -465,6 +496,8 @@ class AgentLoop:
 
     async def _execute_tool(self, tc: Any, state: AgentState, thread_id: str) -> str:
         """Execute a single tool call. Returns result string."""
+        from src.events import emit_async
+
         if isinstance(tc, dict):
             tool_name = tc.get("function", {}).get("name", "")
         else:
@@ -486,6 +519,14 @@ class AgentLoop:
         start = _time.monotonic()
         args_preview = json.dumps(args, ensure_ascii=False)[:200] if args else ""
 
+        await emit_async(
+            "tool.exec_started",
+            thread_id=thread_id,
+            tool_name=tool_name,
+            tool_call_id=getattr(tc, 'id', '') if not isinstance(tc, dict) else tc.get("id", ""),
+            args_preview=args_preview,
+        )
+
         try:
             result = await tool_def.execute(args)
             duration_ms = (_time.monotonic() - start) * 1000
@@ -494,44 +535,45 @@ class AgentLoop:
                 result = redact(result)
             except Exception:
                 pass
-            # Record audit entry
-            try:
-                from src.analytics.audit_store import get_audit_store
-                store = get_audit_store()
-                store.record_call(
-                    thread_id=thread_id,
-                    tool_name=tool_name,
-                    sender_id=getattr(state, 'sender_id', ''),
-                    channel=getattr(state, 'channel', ''),
-                    success=True,
-                    duration_ms=duration_ms,
-                    args_preview=args_preview,
-                )
-            except Exception:
-                pass
+
+            await emit_async(
+                "tool.exec_completed",
+                thread_id=thread_id,
+                tool_name=tool_name,
+                success=True,
+                duration_ms=duration_ms,
+                result_length=len(result) if isinstance(result, str) else 0,
+                args_preview=args_preview,
+                sender_id=getattr(state, 'sender_id', ''),
+                channel=getattr(state, 'channel', ''),
+            )
             return result
         except Exception as e:
             duration_ms = (_time.monotonic() - start) * 1000
             from src.tools.exec import ApprovalNeededError
             if isinstance(e, ApprovalNeededError):
+                await emit_async(
+                    "tool.approval_pending",
+                    thread_id=thread_id,
+                    tool_name="exec_command",
+                    command_preview=getattr(e, "command", "")[:200],
+                    denylisted=getattr(e, "denylisted", False),
+                )
                 return await self._handle_approval(e, tc, state, thread_id)
             logger.error("Tool %s failed: %s", tool_name, e)
-            # Record audit entry for failure
-            try:
-                from src.analytics.audit_store import get_audit_store
-                store = get_audit_store()
-                store.record_call(
-                    thread_id=thread_id,
-                    tool_name=tool_name,
-                    sender_id=getattr(state, 'sender_id', ''),
-                    channel=getattr(state, 'channel', ''),
-                    success=False,
-                    duration_ms=duration_ms,
-                    args_preview=args_preview,
-                    error=str(e)[:500],
-                )
-            except Exception:
-                pass
+
+            await emit_async(
+                "tool.exec_failed",
+                thread_id=thread_id,
+                tool_name=tool_name,
+                success=False,
+                duration_ms=duration_ms,
+                error=str(e)[:500],
+                error_type=type(e).__name__,
+                args_preview=args_preview,
+                sender_id=getattr(state, 'sender_id', ''),
+                channel=getattr(state, 'channel', ''),
+            )
             return f"[error] {type(e).__name__}: {e}"
 
     async def _handle_approval(self, error: Exception, tc: Any, state: AgentState, thread_id: str) -> str:

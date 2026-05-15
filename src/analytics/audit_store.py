@@ -211,6 +211,7 @@ class AuditStore:
 
 # Module-level singleton
 _store: Optional[AuditStore] = None
+_subscriptions: list = []
 
 
 def get_audit_store(db_path: str = "~/.myclaw/data/audit.db") -> AuditStore:
@@ -223,6 +224,45 @@ def get_audit_store(db_path: str = "~/.myclaw/data/audit.db") -> AuditStore:
 
 def reset_audit_store(db_path: str = "~/.myclaw/data/audit.db") -> AuditStore:
     """Reset the audit store singleton (for testing or multi-environment)."""
-    global _store
+    global _store, _subscriptions
     _store = AuditStore(db_path)
+    _subscriptions = []
     return _store
+
+
+def subscribe_audit_to_events() -> None:
+    """Subscribe the audit store to tool execution events.
+
+    This replaces the direct get_audit_store() calls in the agent loop,
+    decoupling audit logging from tool execution.
+    """
+    global _subscriptions
+    store = get_audit_store()
+
+    from src.events import subscribe_async
+
+    def _on_tool_completed(event, **ctx):
+        store.record_call(
+            thread_id=ctx.get("thread_id", ""),
+            tool_name=ctx.get("tool_name", ""),
+            sender_id=ctx.get("sender_id", ""),
+            channel=ctx.get("channel", ""),
+            success=True,
+            duration_ms=ctx.get("duration_ms", 0.0),
+            args_preview=ctx.get("args_preview", ""),
+        )
+
+    def _on_tool_failed(event, **ctx):
+        store.record_call(
+            thread_id=ctx.get("thread_id", ""),
+            tool_name=ctx.get("tool_name", ""),
+            sender_id=ctx.get("sender_id", ""),
+            channel=ctx.get("channel", ""),
+            success=False,
+            duration_ms=ctx.get("duration_ms", 0.0),
+            args_preview=ctx.get("args_preview", ""),
+            error=ctx.get("error", ""),
+        )
+
+    _subscriptions.append(subscribe_async("tool.exec_completed", _on_tool_completed))
+    _subscriptions.append(subscribe_async("tool.exec_failed", _on_tool_failed))

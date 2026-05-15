@@ -449,6 +449,34 @@ class ServiceContainer:
             logger.warning("Startup sync failed: %s", e)
 
     async def on_startup(self):
+        # Initialize event bus and subscribe audit store
+        from src.events import emit_async, get_hook_manager
+
+        await emit_async(
+            "app.startup",
+            model=f"{self.config.model.provider}/{self.config.model.name}",
+            tools_count=len(self.agent_loop._tools) if self.agent_loop else 0,
+            skills_count=len(self.skills_cache),
+            channels_enabled=[ch for ch in ["feishu", "qq"] if getattr(getattr(self.config.channels, ch, None), "enabled", False)],
+        )
+
+        # Subscribe audit store to tool events
+        try:
+            from src.analytics.audit_store import subscribe_audit_to_events
+            subscribe_audit_to_events()
+            logger.info("Audit store subscribed to tool events")
+        except Exception as e:
+            logger.warning("Failed to subscribe audit store: %s", e)
+
+        # Load user-defined hooks
+        try:
+            hook_mgr = get_hook_manager()
+            hook_count = hook_mgr.load_from_config(self.config)
+            if hook_count > 0:
+                logger.info("Loaded %d user-defined hooks", hook_count)
+        except Exception as e:
+            logger.warning("Failed to load user hooks: %s", e)
+
         if getattr(self.config, "security", None) and self.config.security.audit_on_startup:
             try:
                 from src.security import run_security_audit
@@ -552,6 +580,24 @@ class ServiceContainer:
                 self.session_index = None
             if self.browser_manager:
                 await self.browser_manager.close_all()
+
+            # Emit shutdown event
+            try:
+                from src.events import emit_async
+                await emit_async(
+                    "app.shutdown",
+                    active_sessions=self.session_tracker.active_count if self.session_tracker else 0,
+                )
+            except Exception:
+                pass
+
+            # Unload user-defined hooks
+            try:
+                from src.events import get_hook_manager
+                get_hook_manager().unload_all()
+            except Exception:
+                pass
+
             logger.info("MyClaw stopped")
         except Exception as e:
             logger.error("Error during shutdown: %s", e, exc_info=True)

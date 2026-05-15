@@ -30,10 +30,26 @@ class MessageHandler:
             reply_fn,
             stream_fn,
         ):
+            from src.events import emit_async
+
             session_key = self._resolve_session_key(sender_id, chat_type, chat_id, session_scope)
             legacy_thread_id = f"{channel_prefix}:{session_key}"
             override = self._container.session_registry.get_current(legacy_thread_id)
             thread_id = override or legacy_thread_id
+
+            is_command = self._container.dispatcher.match(text) is not None
+
+            await emit_async(
+                "message.received",
+                text=text[:200],
+                sender_id=sender_id,
+                chat_id=chat_id,
+                chat_type=chat_type,
+                message_id=message_id,
+                channel=channel_prefix,
+                thread_id=thread_id,
+                is_command=is_command,
+            )
 
             self._container.session_tracker.touch(thread_id)
 
@@ -144,6 +160,15 @@ class MessageHandler:
                 logger.error("Agent error: %s", e, exc_info=True)
                 assistant_text = f"[error] {type(e).__name__}: {e}"
 
+                from src.events import emit_async
+                await emit_async(
+                    "agent.error",
+                    thread_id=thread_id,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    channel=channel_prefix,
+                )
+
             if assistant_text:
                 if getattr(self._container.config, "link_understanding", None) and self._container.config.link_understanding.enabled:
                     try:
@@ -185,6 +210,15 @@ class MessageHandler:
                     if channel_prefix == "feishu":
                         await self._container.typing.stop(message_id)
                 logger.info("Reply to %s: %.100s", session_key, display_text)
+
+                from src.events import emit_async
+                await emit_async(
+                    "message.replied",
+                    thread_id=thread_id,
+                    reply_length=len(display_text),
+                    channel=channel_prefix,
+                    session_key=session_key,
+                )
 
                 if identity_written:
                     try:
