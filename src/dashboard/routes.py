@@ -394,12 +394,19 @@ def register_dashboard(app: FastAPI, application):
     async def dashboard_skills(request: Request):
         _check_auth(request, app)
         skills = _app_ref.skills_cache or []
+        config = _app_ref.config
         return [
             {
                 "name": s.name,
                 "description": s.description[:120],
                 "source": s.source,
                 "user_invocable": s.metadata.user_invocable,
+                "disable_model_invocation": s.metadata.disable_model_invocation,
+                "disabled": s.name in config.skills.disabled,
+                "channel_disabled": {
+                    ch: s.name in chans
+                    for ch, chans in config.skills.channel_disabled.items()
+                },
             }
             for s in skills
         ]

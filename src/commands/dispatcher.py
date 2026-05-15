@@ -29,6 +29,12 @@ class CommandDispatcher:
                 self._skills[sanitized] = s
         logger.info("Registered %d skill commands", len(self._commands))
 
+    def _reload_skills(self, skills: list[Skill]) -> None:
+        """Reload skills after hot-reload, clearing old registry."""
+        self._commands.clear()
+        self._skills.clear()
+        self._register_skills(skills)
+
     def register_builtin(self, name: str, handler: Callable) -> None:
         self._builtins[name] = handler
 

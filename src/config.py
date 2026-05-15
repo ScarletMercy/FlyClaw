@@ -241,6 +241,8 @@ class SkillsConfig(BaseModel):
     extra_dirs: list[str] = Field(default_factory=list)
     budget_chars: int = 30000
     watch: bool = True
+    disabled: list[str] = Field(default_factory=list)
+    channel_disabled: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class PluginsConfig(BaseModel):
@@ -378,3 +380,13 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
     except Exception as e:
         _log.warning("Failed to load config from %s, using defaults: %s", path, e)
         return AppConfig()
+
+
+def save_config(config: AppConfig, path: str | Path = "config.yaml") -> None:
+    """Persist config to YAML file."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    data = config.model_dump(exclude_unset=False)
+    with open(p, "w", encoding="utf-8") as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+    _log.info("Config saved to %s", p)

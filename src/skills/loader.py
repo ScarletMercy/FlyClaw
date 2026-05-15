@@ -3,14 +3,27 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .types import Skill, SkillMetadata
+
+if TYPE_CHECKING:
+    from src.config import AppConfig
 
 logger = logging.getLogger("myclaw.skills")
 
 _MAX_SKILL_FILE_BYTES = 256 * 1024
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)", re.DOTALL)
+
+
+def is_skill_disabled(skill_name: str, config: "AppConfig", channel: str | None = None) -> bool:
+    """Check if a skill is disabled globally or for a specific channel."""
+    if skill_name in config.skills.disabled:
+        return True
+    if channel and channel in config.skills.channel_disabled:
+        if skill_name in config.skills.channel_disabled[channel]:
+            return True
+    return False
 
 
 def parse_frontmatter(content: str) -> tuple[dict, str]:
@@ -77,14 +90,19 @@ def load_skill(skill_dir: Path, source: str) -> Optional[Skill]:
     )
 
 
-def discover_skills(directories: list[tuple[str, Path]]) -> list[Skill]:
+def discover_skills(
+    directories: list[tuple[str, Path]],
+    config: "AppConfig",
+    channel: str | None = None,
+) -> list[Skill]:
     skills: dict[str, Skill] = {}
     for source_label, directory in directories:
         if not directory.exists():
             continue
         found = _scan_directory(directory, source_label)
         for skill in found:
-            skills[skill.name] = skill
+            if not is_skill_disabled(skill.name, config, channel):
+                skills[skill.name] = skill
     return list(skills.values())
 
 

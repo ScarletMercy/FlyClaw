@@ -69,13 +69,16 @@ class ReloadExecutor:
         await self._do_reload_tools()
         if self._app.agent_loop:
             from src.skills.loader import discover_skills
-
-            dirs = self._app._build_skill_directories()
-            skills = discover_skills(dirs)
-            self._app.skills_cache = skills
             from src.skills.prompt import build_skills_prompt
 
+            dirs = self._app._build_skill_directories()
+            skills = discover_skills(dirs, self._app.config)
+            self._app.skills_cache = skills
             self._app.agent_loop._skills_prompt = build_skills_prompt(skills)
+
+            # Update CommandDispatcher with new skills
+            if hasattr(self._app, 'dispatcher'):
+                self._app.dispatcher._reload_skills(skills)
 
     async def _do_reload_memory(self):
         pass

@@ -67,18 +67,22 @@ class ServiceContainer:
         dirs: list[tuple[str, Path]] = []
         workspace = Path(self.config.agents.workspace).expanduser().resolve()
 
-        bundled_skills = Path(__file__).parent.parent / "skills"
-        if bundled_skills.exists():
-            dirs.append(("bundled", bundled_skills))
+        # 1. user skills (~/.myclaw/skills/) - primary user location
+        user_skills = Path.home() / ".myclaw" / "skills"
+        user_skills.mkdir(parents=True, exist_ok=True)
+        dirs.append(("user", user_skills))
 
+        # 2. workspace skills (~/.myclaw/workspace/skills/)
         workspace_skills = workspace / "skills"
         if workspace_skills.exists():
             dirs.append(("workspace", workspace_skills))
 
+        # 3. agents-project skills (~/.myclaw/workspace/.agents/skills/)
         agents_skills = workspace / ".agents" / "skills"
         if agents_skills.exists():
             dirs.append(("agents-project", agents_skills))
 
+        # 4. extra dirs (from config)
         for extra in self.config.skills.extra_dirs or []:
             p = Path(extra).expanduser().resolve()
             if p.exists():
@@ -90,7 +94,7 @@ class ServiceContainer:
         from src.skills.types import Skill
 
         dirs = self._build_skill_directories()
-        self.skills_cache = discover_skills(dirs)
+        self.skills_cache = discover_skills(dirs, self.config)
         active = [s for s in self.skills_cache if not s.metadata.disable_model_invocation]
         if active:
             logger.info("Skills loaded: %d active, %d total", len(active), len(self.skills_cache))
@@ -114,6 +118,7 @@ class ServiceContainer:
             "src.tools.session_search_tools",
             "src.tools.web_tools",
             "src.tools.beads_tools",
+            "src.tools.skills_tools",
         ]
         if getattr(self.config.tools, "browser", None) and self.config.tools.browser.enabled:
             tool_modules.append("src.tools.browser.tools")
