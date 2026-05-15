@@ -97,7 +97,7 @@ def register_dashboard(app: FastAPI, application):
         uptime = time.monotonic() - _start_time
         hours, remainder = divmod(int(uptime), 3600)
         minutes, seconds = divmod(remainder, 60)
-        skills = _app_ref._skills_cache or []
+        skills = _app_ref.skills_cache or []
 
         # Collect tools list for SSR
         tools = []
@@ -277,7 +277,7 @@ def register_dashboard(app: FastAPI, application):
         hours, remainder = divmod(int(uptime), 3600)
         minutes, seconds = divmod(remainder, 60)
 
-        skills = _app_ref._skills_cache or []
+        skills = _app_ref.skills_cache or []
         status = {
             "version": "0.1.0",
             "uptime": f"{hours}h {minutes}m {seconds}s",
@@ -393,7 +393,7 @@ def register_dashboard(app: FastAPI, application):
     @router.get("/api/dashboard/skills")
     async def dashboard_skills(request: Request):
         _check_auth(request, app)
-        skills = _app_ref._skills_cache or []
+        skills = _app_ref.skills_cache or []
         return [
             {
                 "name": s.name,
@@ -545,7 +545,7 @@ def register_dashboard(app: FastAPI, application):
             "uptime": f"{hours}h {minutes}m {seconds}s",
             "uptime_seconds": int(uptime),
             "session_count": _app_ref.session_tracker.active_count if _app_ref.session_tracker else 0,
-            "skill_count": len(_app_ref._skills_cache or []),
+            "skill_count": len(_app_ref.skills_cache or []),
         }
         # Sessions (active + historical from checkpointer, chat only)
         import re as _re

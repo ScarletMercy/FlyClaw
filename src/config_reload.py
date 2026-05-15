@@ -6,13 +6,13 @@ from typing import TYPE_CHECKING
 from src.config_watcher import ReloadPlan
 
 if TYPE_CHECKING:
-    from src.main import Application
+    from src.app import ServiceContainer
 
 logger = logging.getLogger("myclaw.config_reload")
 
 
 class ReloadExecutor:
-    def __init__(self, app: Application):
+    def __init__(self, app: ServiceContainer):
         self._app = app
 
     async def execute(self, plan: ReloadPlan) -> None:
@@ -65,14 +65,14 @@ class ReloadExecutor:
             self._app.agent_loop._tool_map = {t.name: t for t in tools}
 
     async def _do_reload_skills(self):
-        self._app._skills_cache = []
+        self._app.skills_cache = []
         await self._do_reload_tools()
         if self._app.agent_loop:
             from src.skills.loader import discover_skills
 
             dirs = self._app._build_skill_directories()
             skills = discover_skills(dirs)
-            self._app._skills_cache = skills
+            self._app.skills_cache = skills
             from src.skills.prompt import build_skills_prompt
 
             self._app.agent_loop._skills_prompt = build_skills_prompt(skills)

@@ -60,22 +60,19 @@ class TestQQChannelInit:
 
 class TestSessionKeyResolution:
     def test_per_sender_p2p(self):
-        from src.main import Application
+        from src.message import MessageHandler
 
-        app = Application.__new__(Application)
-        assert app._resolve_session_key("user1", "p2p", "chat1", "per_sender") == "user:user1"
+        assert MessageHandler._resolve_session_key("user1", "p2p", "chat1", "per_sender") == "user:user1"
 
     def test_per_sender_group(self):
-        from src.main import Application
+        from src.message import MessageHandler
 
-        app = Application.__new__(Application)
-        assert app._resolve_session_key("user1", "group", "chat1", "per_sender") == "group:chat1"
+        assert MessageHandler._resolve_session_key("user1", "group", "chat1", "per_sender") == "group:chat1"
 
     def test_global_scope(self):
-        from src.main import Application
+        from src.message import MessageHandler
 
-        app = Application.__new__(Application)
-        assert app._resolve_session_key("user1", "p2p", "chat1", "global") == "global"
+        assert MessageHandler._resolve_session_key("user1", "p2p", "chat1", "global") == "global"
 
 
 class TestTypingIndicator:
