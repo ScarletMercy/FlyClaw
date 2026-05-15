@@ -65,8 +65,7 @@ class SessionTracker:
                         state = await state_store.aload(tid)
                         message_count_before = len(state.messages) if state else 0
                         if state and state.messages:
-                            # Emit session reset event BEFORE clearing messages
-                            # This allows subscribers (like learning loop) to access messages
+                            # Emit session reset event — subscribers load messages from checkpointer.db
                             try:
                                 from src.events import emit_async
                                 await emit_async(
@@ -74,15 +73,11 @@ class SessionTracker:
                                     thread_id=tid,
                                     reason="idle_timeout",
                                     message_count_before_reset=message_count_before,
-                                    messages=state.messages,
                                 )
                             except Exception:
                                 pass
 
-                            empty_state = state.copy()
-                            empty_state.messages = []
-                            await state_store.save(tid, empty_state)
-                            logger.info("Session reset (idle): %s", tid)
+                            # Mark session as inactive in search index (do NOT clear messages)
                             try:
                                 from src.session_index.store import get_session_index
 
@@ -91,6 +86,8 @@ class SessionTracker:
                                     idx.mark_inactive(tid)
                             except Exception:
                                 pass
+
+                            logger.info("Session reset (idle): %s (%d messages preserved)", tid, message_count_before)
                         self.remove(tid)
                     except Exception as e:
                         logger.debug("Session reset failed for %s: %s", tid, e)

@@ -475,12 +475,19 @@ class ServiceContainer:
             learning_loop = LearningLoop(self.config)
 
             async def _on_session_reset(event, **ctx):
-                messages = ctx.get("messages", [])
-                if messages:
+                tid = ctx.get("thread_id", "")
+                if not tid:
+                    return
+                # Load messages from authoritative checkpointer.db
+                try:
+                    state = await self.state_store.aload(tid)
+                except Exception:
+                    state = None
+                if state and state.messages:
                     try:
-                        result = await learning_loop.on_session_end(messages)
+                        result = await learning_loop.on_session_end(state.messages)
                         if result.get("memories_extracted", 0) > 0:
-                            logger.info("Learning loop: extracted %d memories", result["memories_extracted"])
+                            logger.info("Learning loop: extracted %d memories from %s", result["memories_extracted"], tid)
                     except Exception as e:
                         logger.debug("Learning loop session-end failed: %s", e)
 
