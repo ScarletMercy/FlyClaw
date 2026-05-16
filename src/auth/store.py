@@ -52,7 +52,7 @@ CREATE INDEX IF NOT EXISTS idx_pairing_expires ON pairing_codes(expires_at);
 
 class AuthStore:
     def __init__(self, db_path: str = "~/.myclaw/data/auth.db"):
-        self._path = Path(db_path)
+        self._path = Path(db_path).expanduser().resolve()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)

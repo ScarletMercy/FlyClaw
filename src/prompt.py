@@ -235,7 +235,9 @@ def build_system_prompt(
     lines.extend(_build_workspace(workspace_dir))
     if context_files:
         lines.extend(_build_bootstrap_context(context_files))
-    lines.extend(_build_datetime(tz_name or None))
-    lines.extend(_build_runtime_info(config))
+
+    # REMOVED: Dynamic sections for KV prefix cache stability
+    # - _build_datetime(): changes every second, invalidates cache
+    # - _build_runtime_info(): static info, not needed per-round
 
     return "\n".join(lines)

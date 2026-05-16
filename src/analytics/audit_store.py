@@ -35,7 +35,7 @@ class AuditStore:
     """SQLite-backed audit log store."""
 
     def __init__(self, db_path: str = "~/.myclaw/data/audit.db"):
-        self.db_path = Path(db_path)
+        self.db_path = Path(db_path).expanduser().resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 

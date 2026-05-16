@@ -54,7 +54,21 @@ class ChatClient:
         kwargs.update(extra)
 
         resp = await self._client.chat.completions.create(**kwargs)
+        if not resp.choices:
+            raw = resp.model_dump()
+            error_info = raw.get("error", {})
+            if isinstance(error_info, dict):
+                msg = error_info.get("message", "")
+            elif isinstance(error_info, str):
+                msg = error_info
+            else:
+                msg = raw.get("message", "")
+            if msg:
+                raise ValueError(f"Model {self.model} API error: {msg}")
+            raise ValueError(f"Model {self.model} returned no choices (empty response)")
         choice = resp.choices[0].message
+        if choice is None:
+            raise ValueError(f"Model {self.model} returned empty message")
         return ChatResponse(
             content=choice.content or "",
             tool_calls=choice.tool_calls or [],
@@ -105,6 +119,10 @@ class FallbackChain:
                 errors.append((i, e))
                 err_lower = str(e).lower()
                 cooldown = 0
+                # Don't fallback on empty response - it's a message format issue
+                if "no choices" in err_lower or "empty message" in err_lower or "api error" in err_lower:
+                    logger.error("Model %d returned empty/API error - NOT falling back (message format issue)", i)
+                    raise e
                 if "rate" in err_lower or "429" in err_lower:
                     cooldown = 30
                 elif "overload" in err_lower or "503" in err_lower or "529" in err_lower:

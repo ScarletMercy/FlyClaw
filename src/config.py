@@ -121,6 +121,11 @@ class ChannelsConfig(BaseModel):
 class SessionConfig(BaseModel):
     scope: Literal["per_sender", "global"] = "per_sender"
     idle_reset_minutes: int = 120
+    # Session pruning configuration (opt-in, default off)
+    auto_prune: bool = False
+    retention_days: int = 90
+    vacuum_after_prune: bool = True
+    min_interval_hours: int = 24
 
 
 class ExecToolConfig(BaseModel):
@@ -376,6 +381,28 @@ class AppConfig(BaseModel):
     owner_id: str = ""
 
 
+
+def _expand_paths(config: AppConfig) -> AppConfig:
+    """Expand ~ in all path fields to absolute paths."""
+    # Checkpointer
+    config.checkpointer.path = str(Path(config.checkpointer.path).expanduser().resolve())
+    
+    # Cron
+    config.cron.store_path = str(Path(config.cron.store_path).expanduser().resolve())
+    
+    # Memory
+    config.memory.db_path = str(Path(config.memory.db_path).expanduser().resolve())
+    config.memory.lancedb_uri = str(Path(config.memory.lancedb_uri).expanduser().resolve())
+    
+    # Auth
+    config.auth.db_path = str(Path(config.auth.db_path).expanduser().resolve())
+    
+    # Session search
+    config.session_search.index_path = str(Path(config.session_search.index_path).expanduser().resolve())
+    
+    return config
+
+
 def load_config(path: str | Path = "config.yaml") -> AppConfig:
     p = Path(path)
     if not p.exists():
@@ -386,7 +413,8 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         if not raw:
             return AppConfig()
         substituted = _substitute_recursive(raw)
-        return AppConfig(**substituted)
+        config = AppConfig(**substituted)
+        return _expand_paths(config)
     except ValidationError as e:
         _log.warning("Config validation failed for %s, using defaults: %s", path, e)
         return AppConfig()

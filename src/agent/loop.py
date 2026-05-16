@@ -89,6 +89,10 @@ class AgentLoop:
         self._cached_history: list[dict] | None = None
         self._cached_history_count: int = 0
 
+        # KV cache optimization: pre-build static system prompt
+        self._static_system_prompt: str = ""
+        self._static_system_built: bool = False
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -333,6 +337,9 @@ class AgentLoop:
         # Always truncate large tool outputs (cheap, no LLM)
         history = self._truncate_large_outputs(history)
 
+        # Validate and fix tool_calls arguments (LongCat returns 200 with empty choices on bad JSON)
+        history = self._fix_tool_calls_args(history)
+
         # Proactive compression check
         if self._compressor is not None and self._compressor.should_compress(history):
             history = await self._compressor.compress(history, self._ctx_window_tokens)
@@ -356,6 +363,25 @@ class AgentLoop:
                     continue
             result.append(m)
         return result
+
+    def _fix_tool_calls_args(self, messages: list[dict]) -> list[dict]:
+        """Validate tool_calls arguments (data should be fixed at save time).
+
+        Arguments are now repaired in _build_assistant_msg() before saving to DB,
+        so this method only checks for remaining issues (defensive programming).
+        """
+        for m in messages:
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                for tc in m["tool_calls"]:
+                    fn = tc.get("function", {})
+                    args_str = fn.get("arguments", "")
+                    try:
+                        json.loads(args_str)
+                    except (json.JSONDecodeError, TypeError):
+                        # Should not happen if save-time fix is working
+                        logger.error("Invalid arguments for %s - save-time fix may have a bug",
+                                   fn.get("name", "unknown"))
+        return messages
 
     def _static_fallback(self, messages: list[dict]) -> list[dict]:
         """Emergency static truncation when no compressor is configured."""
@@ -458,29 +484,48 @@ class AgentLoop:
         return None
 
     def _build_system_prompt(self, state: AgentState, active_tools: list[ToolDef]) -> str:
-        from src.prompt import build_system_prompt
-        return build_system_prompt(
-            config=self._config,
-            tools=active_tools,
-            skills_prompt=self._skills_prompt,
-            context_files=self._context_files,
-            extra_system_prompt=state.system_prompt,
-        )
+        """Build static system prompt (cached for KV prefix cache stability)."""
+        if not self._static_system_built:
+            from src.prompt import build_system_prompt
+            self._static_system_prompt = build_system_prompt(
+                config=self._config,
+                tools=active_tools,
+                skills_prompt=self._skills_prompt,
+                context_files=self._context_files,
+                extra_system_prompt=state.system_prompt,
+            )
+            self._static_system_built = True
+        return self._static_system_prompt
 
     def _build_assistant_msg(self, response: ChatResponse) -> dict:
         msg: dict[str, Any] = {"role": "assistant", "content": response.content}
         if response.tool_calls:
-            msg["tool_calls"] = [
-                {
+            fixed_calls = []
+            for tc in response.tool_calls:
+                args_str = tc.function.arguments
+                # Fix truncated JSON before saving to DB
+                try:
+                    json.loads(args_str)
+                except (json.JSONDecodeError, TypeError):
+                    if args_str and args_str[-1] not in ("}", "]"):
+                        try:
+                            json.loads(args_str + "}")
+                            args_str = args_str + "}"
+                            logger.warning("Fixed truncated arguments for %s", tc.function.name)
+                        except (json.JSONDecodeError, TypeError):
+                            args_str = "{}"
+                    else:
+                        args_str = "{}"
+
+                fixed_calls.append({
                     "id": tc.id,
                     "type": "function",
                     "function": {
                         "name": tc.function.name,
-                        "arguments": tc.function.arguments,
+                        "arguments": args_str,
                     },
-                }
-                for tc in response.tool_calls
-            ]
+                })
+            msg["tool_calls"] = fixed_calls
         return msg
 
     def _redact_last_assistant(self, state: AgentState) -> None:

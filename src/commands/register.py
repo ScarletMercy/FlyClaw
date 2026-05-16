@@ -227,6 +227,53 @@ def register_builtin_commands(dispatcher, container, tools, skills):
     dispatcher.register_builtin("old", cmd_old)
     dispatcher.register_builtin("re", cmd_re)
 
+    async def cmd_prune(args: str, ctx: dict) -> str:
+        """Prune old sessions manually."""
+        from src.session.pruner import prune_sessions, vacuum_database
+        
+        parts = args.strip().split()
+        older_than_days = container.config.session.retention_days
+        do_vacuum = container.config.session.vacuum_after_prune
+        
+        i = 0
+        while i < len(parts):
+            if parts[i] == "--older-than" and i + 1 < len(parts):
+                try:
+                    older_than_days = int(parts[i + 1])
+                    i += 2
+                    continue
+                except ValueError:
+                    pass
+            if parts[i] == "--vacuum":
+                do_vacuum = True
+                i += 1
+                continue
+            if parts[i] == "--no-vacuum":
+                do_vacuum = False
+                i += 1
+                continue
+            i += 1
+        
+        cp_path = container.config.checkpointer.path
+        si_path = container.config.session_search.index_path if container.config.session_search.enabled else None
+        stats = prune_sessions(cp_path, older_than_days=older_than_days, session_index_path=si_path)
+        
+        lines = [
+            "Prune complete (older than " + str(older_than_days) + " days):",
+            "  Total sessions: " + str(stats["total_sessions"]),
+            "  Checkpoints removed: " + str(stats["sessions_removed"]),
+        ]
+        if stats.get("index_sessions_removed", 0) > 0:
+            lines.append("  Index removed: " + str(stats["index_sessions_removed"]))
+        
+        if do_vacuum and stats["sessions_removed"] > 0:
+            new_size = vacuum_database(cp_path)
+            lines.append("  Database size after cleanup: " + str(new_size) + " bytes")
+        
+        return "\n".join(lines)
+
+    dispatcher.register_builtin("prune", cmd_prune)
+
     if container.config.auth.enabled and container.rbac:
         register_auth_commands(dispatcher, container)
 

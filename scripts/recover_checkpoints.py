@@ -63,54 +63,82 @@ def get_default_paths():
     }
 
 
-def convert_message_to_openai_format(msg_row) -> dict:
-    """将 session_index 的消息格式转换为 OpenAI chat format。
+def convert_messages_to_openai_format(messages_rows) -> list[dict]:
+    """将 session_index 的消息列表转换为 OpenAI chat format。
 
-    session_index 格式：
-        (thread_id, message_id, role, content, tool_name, tool_calls, timestamp)
-
-    OpenAI format：
-        user: {"role": "user", "content": "..."}
-        assistant: {"role": "assistant", "content": "...", "tool_calls": [...]}
-        tool: {"role": "tool", "content": "...", "tool_call_id": "...", "name": "..."}
+    使用两遍扫描：
+    1. 第一遍：识别所有 assistant 消息的 tool_calls，生成 tool_call_id 队列
+    2. 第二遍：按顺序为 tool 消息分配 tool_call_id
     """
-    thread_id, message_id, role, content, tool_name, tool_calls, timestamp = msg_row
+    # 第一遍：收集所有 tool_calls 的 ID
+    pending_tool_calls = []  # 队列：(tc_id, tc_name, tc_args)
 
-    openai_role = ROLE_MAP.get(role, "user")
+    for msg_row in messages_rows:
+        thread_id, message_id, role, content, tool_name, tool_calls, timestamp = msg_row
+        openai_role = ROLE_MAP.get(role, "user")
 
-    msg = {"role": openai_role}
-
-    if openai_role == "tool":
-        # tool 消息需要 tool_call_id 和 name
-        msg["content"] = content or ""
-        msg["tool_call_id"] = message_id  # 用 message_id 作为 tool_call_id
-        if tool_name:
-            msg["name"] = tool_name
-    elif openai_role == "assistant":
-        msg["content"] = content or ""
-        # 恢复 tool_calls
-        if tool_calls:
+        if openai_role == "assistant" and tool_calls:
             try:
-                # session_index 存储的是简化格式，需要转换回 OpenAI 格式
                 simplified = json.loads(tool_calls)
-                msg["tool_calls"] = [
-                    {
-                        "id": f"call_{message_id}_{i}",
-                        "type": "function",
-                        "function": {
-                            "name": tc.get("name", "unknown"),
-                            "arguments": tc.get("args", "{}"),
-                        },
-                    }
-                    for i, tc in enumerate(simplified)
-                ]
+                for tc_idx, tc in enumerate(simplified):
+                    tc_id = f"call_{message_id}_{tc_idx}"
+                    pending_tool_calls.append({
+                        "id": tc_id,
+                        "name": tc.get("name", "unknown"),
+                        "args": tc.get("args", "{}"),
+                    })
             except (json.JSONDecodeError, TypeError):
                 pass
-    else:
-        # user / system
-        msg["content"] = content or ""
 
-    return msg
+    # 第二遍：转换消息
+    openai_messages = []
+    pending_idx = 0
+
+    for msg_row in messages_rows:
+        thread_id, message_id, role, content, tool_name, tool_calls, timestamp = msg_row
+        openai_role = ROLE_MAP.get(role, "user")
+
+        msg = {"role": openai_role}
+
+        if openai_role == "tool":
+            # 从队列中分配 tool_call_id
+            if pending_idx < len(pending_tool_calls):
+                tc_info = pending_tool_calls[pending_idx]
+                msg["tool_call_id"] = tc_info["id"]
+                pending_idx += 1
+            else:
+                # 如果没有匹配的 tool_call，生成一个
+                msg["tool_call_id"] = f"call_{message_id}"
+
+            msg["content"] = content or ""
+            if tool_name:
+                msg["name"] = tool_name
+
+        elif openai_role == "assistant":
+            msg["content"] = content or ""
+            if tool_calls:
+                try:
+                    simplified = json.loads(tool_calls)
+                    msg["tool_calls"] = [
+                        {
+                            "id": f"call_{message_id}_{i}",
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("name", "unknown"),
+                                "arguments": tc.get("args", "{}"),
+                            },
+                        }
+                        for i, tc in enumerate(simplified)
+                    ]
+                except (json.JSONDecodeError, TypeError):
+                    pass
+        else:
+            # user / system
+            msg["content"] = content or ""
+
+        openai_messages.append(msg)
+
+    return openai_messages
 
 
 def recover_checkpoints(index_path: str, checkpoints_path: str, dry_run: bool = False) -> dict:
@@ -194,15 +222,8 @@ def recover_checkpoints(index_path: str, checkpoints_path: str, dry_run: bool = 
                 logger.debug("跳过空会话: %s", thread_id)
                 continue
 
-            # 转换消息格式
-            openai_messages = []
-            for msg_row in messages:
-                try:
-                    openai_msg = convert_message_to_openai_format(msg_row)
-                    openai_messages.append(openai_msg)
-                except Exception as e:
-                    stats["errors"].append(f"消息转换失败 {msg_row[1]}: {e}")
-                    logger.warning("消息转换失败 %s: %s", msg_row[1], e)
+            # 转换消息格式（使用新的两遍扫描方法）
+            openai_messages = convert_messages_to_openai_format(messages)
 
             if not openai_messages:
                 continue
@@ -294,3 +315,4 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+

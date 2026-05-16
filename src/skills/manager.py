@@ -187,11 +187,13 @@ class SkillManager:
     def list_skills(self) -> list[Skill]:
         """列出所有用户技能。"""
         from src.skills.loader import discover_skills
+        from src._container import get_container
 
         if not self.skills_dir.exists():
             return []
 
-        skills = discover_skills([("user", self.skills_dir)])
+        container = get_container()
+        skills = discover_skills([("user", self.skills_dir)], container.config)
         return skills
 
     def _record_usage(self, skill_name: str, action: str = "created", created_by: str = "agent") -> None:
@@ -251,7 +253,7 @@ class SkillManager:
 
 
 def get_tools() -> list:
-    """返回技能管理工具。"""
+    """返回统一的技能管理工具。"""
     from src.agent.tooldef import ToolDef
 
     manager = SkillManager()
@@ -262,17 +264,63 @@ def get_tools() -> list:
         content: str = "",
         description: str = "",
         category: str = "",
+        enabled: bool = True,
+        channel: str = "",
+        source: str = "",
     ) -> str:
-        """管理技能（创建/编辑/删除/查看）。
-        
+        """管理技能（查看/创建/编辑/删除/安装/卸载/启用/禁用/统计）。
+
         Args:
-            action: 操作类型 (create, edit, delete, list, usage)
+            action: 操作类型 (list, view, create, edit, delete, usage, toggle, install, uninstall)
             name: 技能名称
-            content: 技能内容
+            content: 技能内容（create/edit 时需要）
             description: 技能描述
             category: 技能分类
+            enabled: 是否启用（toggle 时需要）
+            channel: 渠道名称（toggle 时可选，如 feishu/qq）
+            source: 安装来源（install 时需要，URL 或本地路径）
         """
-        if action == "create":
+        if action == "list":
+            from src._container import get_container
+            container = get_container()
+            skills = container.skills_cache or []
+            config = container.config
+            result = []
+            for s in skills:
+                is_disabled = s.name in config.skills.disabled
+                channel_disabled = {}
+                for ch, chans in config.skills.channel_disabled.items():
+                    if s.name in chans:
+                        channel_disabled[ch] = True
+                result.append({
+                    "name": s.name,
+                    "description": s.description,
+                    "source": s.source,
+                    "user_invocable": s.metadata.user_invocable,
+                    "disable_model_invocation": s.metadata.disable_model_invocation,
+                    "disabled": is_disabled,
+                    "channel_disabled": channel_disabled,
+                })
+            return json.dumps({"skills": result}, ensure_ascii=False, indent=2)
+
+        elif action == "view":
+            if not name:
+                return json.dumps({"error": "name is required for view"})
+            from src._container import get_container
+            container = get_container()
+            skills = container.skills_cache or []
+            for s in skills:
+                if s.name == name:
+                    return json.dumps({
+                        "name": s.name,
+                        "description": s.description,
+                        "source": s.source,
+                        "file_path": str(s.file_path),
+                        "body": s.body,
+                    }, ensure_ascii=False, indent=2)
+            return json.dumps({"error": f"Skill not found: {name}"})
+
+        elif action == "create":
             if not name or not content:
                 return json.dumps({"error": "name and content are required for create"})
             skill, error = manager.create_skill(name, description or name, content, category)
@@ -281,11 +329,7 @@ def get_tools() -> list:
             return json.dumps({
                 "success": True,
                 "action": "created",
-                "skill": {
-                    "name": skill.name,
-                    "description": skill.description,
-                    "source": skill.source,
-                },
+                "skill": {"name": skill.name, "description": skill.description, "source": skill.source},
             }, ensure_ascii=False)
 
         elif action == "edit":
@@ -297,10 +341,7 @@ def get_tools() -> list:
             return json.dumps({
                 "success": True,
                 "action": "edited",
-                "skill": {
-                    "name": skill.name,
-                    "description": skill.description,
-                },
+                "skill": {"name": skill.name, "description": skill.description},
             }, ensure_ascii=False)
 
         elif action == "delete":
@@ -311,19 +352,6 @@ def get_tools() -> list:
                 return json.dumps({"error": error})
             return json.dumps({"success": True, "action": "deleted", "skill": name})
 
-        elif action == "list":
-            skills = manager.list_skills()
-            return json.dumps({
-                "skills": [
-                    {
-                        "name": s.name,
-                        "description": s.description,
-                        "source": s.source,
-                    }
-                    for s in skills
-                ]
-            }, ensure_ascii=False)
-
         elif action == "usage":
             if not name:
                 return json.dumps({"error": "name is required for usage"})
@@ -332,9 +360,181 @@ def get_tools() -> list:
                 return json.dumps({"skill": name, "usage": usage})
             return json.dumps({"skill": name, "usage": None})
 
+        elif action == "toggle":
+            if not name:
+                return json.dumps({"error": "name is required for toggle"})
+            from src._container import get_container
+            from src.config import save_config
+            container = get_container()
+            skills = container.skills_cache or []
+            if not any(s.name == name for s in skills):
+                return json.dumps({"error": f"Skill not found: {name}"})
+            config = container.config
+            action_result = "no change"
+            if channel:
+                if channel not in config.skills.channel_disabled:
+                    config.skills.channel_disabled[channel] = []
+                disabled_list = config.skills.channel_disabled[channel]
+                if enabled and name in disabled_list:
+                    disabled_list.remove(name)
+                    action_result = "enabled"
+                elif not enabled and name not in disabled_list:
+                    disabled_list.append(name)
+                    action_result = "disabled"
+            else:
+                if enabled and name in config.skills.disabled:
+                    config.skills.disabled.remove(name)
+                    action_result = "enabled"
+                elif not enabled and name not in config.skills.disabled:
+                    config.skills.disabled.append(name)
+                    action_result = "disabled"
+            try:
+                save_config(config)
+                _reload_skills(container)
+            except Exception as e:
+                return json.dumps({"error": f"Failed to save config: {str(e)}"})
+            return json.dumps({
+                "success": True,
+                "skill": name,
+                "action": action_result,
+                "channel": channel or "global",
+            })
+
+        elif action == "install":
+            if not source:
+                return json.dumps({"error": "source (URL or path) is required for install"})
+            try:
+                if source.startswith(("http://", "https://")):
+                    return _install_from_url(source)
+                else:
+                    return _install_from_path(source)
+            except Exception as e:
+                logger.error("Skill install failed: %s", e)
+                return json.dumps({"error": f"Install failed: {str(e)}"})
+
+        elif action == "uninstall":
+            if not name:
+                return json.dumps({"error": "name is required for uninstall"})
+            from src._container import get_container
+            from src.config import save_config
+            container = get_container()
+            skills = container.skills_cache or []
+            skill_dir = None
+            for s in skills:
+                if s.name == name:
+                    skill_dir = s.base_dir
+                    break
+            if not skill_dir:
+                return json.dumps({"error": f"Skill not found: {name}"})
+            if not str(skill_dir).startswith(str(manager.skills_dir)):
+                return json.dumps({"error": f"Can only uninstall user skills in {manager.skills_dir}"})
+            try:
+                import shutil
+                shutil.rmtree(skill_dir)
+            except Exception as e:
+                return json.dumps({"error": f"Failed to remove skill directory: {str(e)}"})
+            config = container.config
+            if name in config.skills.disabled:
+                config.skills.disabled.remove(name)
+            for ch in config.skills.channel_disabled:
+                if name in config.skills.channel_disabled[ch]:
+                    config.skills.channel_disabled[ch].remove(name)
+            try:
+                save_config(config)
+                _reload_skills(container)
+            except Exception as e:
+                return json.dumps({"error": f"Failed to save config: {str(e)}"})
+            return json.dumps({"success": True, "uninstalled": name})
+
         else:
-            return json.dumps({"error": f"Unknown action: {action}"})
+            return json.dumps({"error": f"Unknown action: {action}. Valid actions: list, view, create, edit, delete, usage, toggle, install, uninstall"})
 
     return [
         ToolDef.from_function(skill_manage),
     ]
+
+
+def _reload_skills(container) -> None:
+    """Reload skills and update all dependent components."""
+    from src.skills.loader import discover_skills
+    from src.skills.prompt import build_skills_prompt
+    dirs = container._build_skill_directories()
+    skills = discover_skills(dirs, container.config)
+    container.skills_cache = skills
+    container.agent_loop._skills_prompt = build_skills_prompt(skills)
+    dispatcher = getattr(container, 'dispatcher', None)
+    if dispatcher is not None:
+        dispatcher._reload_skills(skills)
+
+
+def _install_from_url(url: str) -> str:
+    """Install a skill from a URL (zip file)."""
+    import tempfile
+    import zipfile
+    from urllib.parse import urlparse
+    import httpx
+    parsed = urlparse(url)
+    filename = Path(parsed.path).name
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp_path = Path(tmpdir) / filename
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.get(url, follow_redirects=True)
+            resp.raise_for_status()
+            tmp_path.write_bytes(resp.content)
+        if filename.endswith(".zip"):
+            return _install_from_zip(tmp_path)
+        else:
+            return json.dumps({"error": "URL must point to a .zip file"})
+
+
+def _install_from_path(path: str) -> str:
+    """Install a skill from a local path (directory or zip)."""
+    import shutil
+    import zipfile
+    p = Path(path).expanduser().resolve()
+    if not p.exists():
+        return json.dumps({"error": f"Path not found: {path}"})
+    if p.is_dir():
+        skill_md = p / "SKILL.md"
+        if not skill_md.exists():
+            return json.dumps({"error": f"Directory does not contain SKILL.md: {p}"})
+        dest = _USER_SKILLS_DIR / p.name
+        if dest.exists():
+            return json.dumps({"error": f"Skill already exists: {dest}"})
+        shutil.copytree(p, dest)
+        _reload_skills_from_manager()
+        return json.dumps({"success": True, "installed": str(dest)})
+    elif p.suffix == ".zip":
+        return _install_from_zip(p)
+    else:
+        return json.dumps({"error": "Path must be a directory or .zip file"})
+
+
+def _install_from_zip(zip_path: Path) -> str:
+    """Install a skill from a zip file."""
+    import zipfile
+    if not zipfile.is_zipfile(zip_path):
+        return json.dumps({"error": f"Not a valid zip file: {zip_path}"})
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        names = zf.namelist()
+        skill_md_in_zip = [n for n in names if n.endswith("/SKILL.md") or n == "SKILL.md"]
+        if not skill_md_in_zip:
+            return json.dumps({"error": "Zip file does not contain SKILL.md"})
+        first_skill = skill_md_in_zip[0]
+        skill_dir_name = first_skill.split("/")[0] if "/" in first_skill else Path(zip_path).stem
+        dest = _USER_SKILLS_DIR / skill_dir_name
+        if dest.exists():
+            return json.dumps({"error": f"Skill already exists: {dest}"})
+        zf.extractall(dest)
+    _reload_skills_from_manager()
+    return json.dumps({"success": True, "installed": str(dest)})
+
+
+def _reload_skills_from_manager() -> None:
+    """Reload skills (used by install functions that don't have container access)."""
+    try:
+        from src._container import get_container
+        container = get_container()
+        _reload_skills(container)
+    except Exception:
+        pass

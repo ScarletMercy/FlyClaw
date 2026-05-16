@@ -304,7 +304,7 @@ class ServiceContainer:
         if skills:
             skills_prompt = build_skills_prompt(skills)
 
-        cp_path = Path(self.config.checkpointer.path)
+        cp_path = Path(self.config.checkpointer.path).expanduser().resolve()
         cp_path.parent.mkdir(parents=True, exist_ok=True)
         self.state_store = StateStore(str(cp_path))
 
@@ -536,6 +536,34 @@ class ServiceContainer:
                 await start_canvas_watcher(canvas_root)
 
         await self.session_tracker.start_periodic_cleanup(self.state_store)
+
+        # Auto-prune old sessions if enabled
+        if self.config.session.auto_prune and self.state_store:
+            try:
+                from src.session.pruner import should_prune_now, prune_sessions, vacuum_database
+                
+                cp_path = self.config.checkpointer.path
+                si_path = self.config.session_search.index_path if self.config.session_search.enabled else None
+                if should_prune_now(cp_path, self.config.session.min_interval_hours):
+                    logger.info(
+                        "Auto-prune: checking for sessions older than %d days",
+                        self.config.session.retention_days,
+                    )
+                    stats = prune_sessions(
+                        cp_path,
+                        older_than_days=self.config.session.retention_days,
+                        session_index_path=si_path,
+                    )
+                    if stats["sessions_removed"] > 0 and self.config.session.vacuum_after_prune:
+                        vacuum_database(cp_path)
+                        logger.info(
+                            "Auto-prune complete: removed %d sessions",
+                            stats["sessions_removed"],
+                        )
+                else:
+                    logger.debug("Auto-prune: skipping (within min_interval_hours)")
+            except Exception as e:
+                logger.warning("Auto-prune failed: %s", e)
 
         if self.memory_searcher and getattr(self.config.memory, "watch", False):
             try:
