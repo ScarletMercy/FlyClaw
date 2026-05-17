@@ -22,16 +22,18 @@ def set_workspace(path: str):
 
 
 def _resolve_path(path: str) -> str:
-    """Resolve path relative to workspace and prevent escape (including symlinks)."""
+    """Resolve path relative to workspace. Enforces sandbox when enabled."""
     p = Path(path)
     if not p.is_absolute():
         p = Path(_BASE_DIR) / p
-    base = Path(_BASE_DIR).resolve()
-    # Check the pre-resolve path isn't a symlink pointing outside workspace
     try:
         real = p.resolve(strict=False)
     except Exception:
         raise ValueError(f"Path '{path}' could not be resolved")
+    from src.tools.exec import is_sandbox_enabled
+    if not is_sandbox_enabled():
+        return str(real)
+    base = Path(_BASE_DIR).resolve()
     try:
         real.relative_to(base)
     except ValueError:

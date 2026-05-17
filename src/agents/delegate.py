@@ -30,7 +30,7 @@ async def delegate_task(agent_name: str, task: str) -> str:
         get_run_registry,
     )
     from src.agent.state import AgentState, MemoryStateStore
-    from src.agent.loop import AgentLoop
+    from src.agent.litegraph_loop import LiteGraphAgentLoop
     from src.agent.client import create_client, create_chain
     from src.config import load_config
 
@@ -47,6 +47,7 @@ async def delegate_task(agent_name: str, task: str) -> str:
         return f"Sub-agent depth limit reached ({current_depth}/{max_depth}). Cannot delegate further."
 
     run_id = None
+    agent_loop = None
     run_registry = get_run_registry()
     set_current_depth(current_depth + 1)
 
@@ -73,7 +74,7 @@ async def delegate_task(agent_name: str, task: str) -> str:
             client = create_chain(config)
 
         state_store = MemoryStateStore()
-        agent_loop = AgentLoop(
+        agent_loop = LiteGraphAgentLoop(
             client=client,
             tools=all_tools,
             state_store=state_store,
@@ -124,4 +125,6 @@ async def delegate_task(agent_name: str, task: str) -> str:
             await run_registry.fail_run(run_id, error=str(e))
         return f"[error] Delegation to '{agent_name}' failed: {type(e).__name__}: {e}"
     finally:
+        if agent_loop:
+            agent_loop.close()
         set_current_depth(current_depth)

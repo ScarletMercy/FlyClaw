@@ -37,7 +37,7 @@ class MessageHandler:
             override = self._container.session_registry.get_current(legacy_thread_id)
             thread_id = override or legacy_thread_id
 
-            is_command = self._container.dispatcher.match(text) is not None
+            is_command = text.strip().startswith("/")
 
             await emit_async(
                 "message.received",
@@ -76,6 +76,11 @@ class MessageHandler:
                 await reply_fn(result)
                 return
 
+            # "/" prefix but not a registered command — reply directly, skip model
+            if text.strip().startswith("/"):
+                await reply_fn("未知命令。输入 /help 查看可用命令。")
+                return
+
             if channel_prefix == "feishu":
                 await self._container.typing.start(message_id)
 
@@ -110,6 +115,46 @@ class MessageHandler:
             assistant_text = None
             identity_written = False
             pre_msg_count = len(input_state.messages)
+
+            # Subscribe to tool events for progress reporting
+            zh = self._container.config.agents.language == "zh"
+            active_chat_id = chat_id
+            channel = channel_prefix
+            _progress_unsub = None
+
+            async def _on_tool_event(event: str, **kwargs):
+                tid = kwargs.get("thread_id", "")
+                if tid != thread_id:
+                    return
+                try:
+                    if event == "tool.exec_started":
+                        tool = kwargs.get("tool_name", "")
+                        args_preview = kwargs.get("args_preview", "")[:60]
+                        if zh:
+                            msg = f"🔧 {tool}: {args_preview}" if args_preview else f"🔧 执行 {tool}..."
+                        else:
+                            msg = f"🔧 {tool}: {args_preview}" if args_preview else f"🔧 Running {tool}..."
+                        if channel == "feishu" and self._container.feishu:
+                            await self._container.feishu.send_text(active_chat_id, msg)
+                        elif channel == "qq" and self._container.qq:
+                            await self._container.qq.send_text(active_chat_id, msg)
+                    elif event == "tool.exec_failed":
+                        tool = kwargs.get("tool_name", "")
+                        err = kwargs.get("error", "")[:80]
+                        if zh:
+                            msg = f"❌ {tool} 失败: {err}"
+                        else:
+                            msg = f"❌ {tool} failed: {err}"
+                        if channel == "feishu" and self._container.feishu:
+                            await self._container.feishu.send_text(active_chat_id, msg)
+                        elif channel == "qq" and self._container.qq:
+                            await self._container.qq.send_text(active_chat_id, msg)
+                except Exception:
+                    pass
+
+            from src.events import subscribe_async, unsubscribe
+            _progress_unsub = subscribe_async("tool.*", _on_tool_event)
+
             try:
                 logger.debug("[flow] agent_loop run start, state has %d messages", pre_msg_count)
 
@@ -168,6 +213,9 @@ class MessageHandler:
                     error_type=type(e).__name__,
                     channel=channel_prefix,
                 )
+            finally:
+                if _progress_unsub:
+                    unsubscribe("tool.*", _on_tool_event)
 
             if assistant_text:
                 if getattr(self._container.config, "link_understanding", None) and self._container.config.link_understanding.enabled:
@@ -283,6 +331,9 @@ class MessageHandler:
 
         try:
             mgr = get_approval_manager()
+            approval_timeout = getattr(exc, "timeout", None) or 120
+            auto_deny = getattr(exc, "auto_deny", False)
+            zh = self._container.config.agents.language == "zh"
 
             if chat_id.startswith(("c2c:", "group:", "channel:", "dm:")):
                 warn = "DANGEROUS" if exc.denylisted else "requires approval"
@@ -291,7 +342,12 @@ class MessageHandler:
                     f"**Approval Required** ({warn})\n```\n{exc.command_preview}\n```\n"
                     f"Reply 'yes' to allow or 'no' to deny. (request: {exc.request_id})",
                 )
-                decision = await mgr.await_approval(exc.request_id, timeout=120)
+                decision = await mgr.await_approval(exc.request_id, timeout=approval_timeout)
+                if decision == "timeout":
+                    if auto_deny:
+                        msg = "操作超时，已自动拒绝。" if zh else "Operation timed out, auto-denied."
+                        await self._container.qq.send_text(chat_id, msg)
+                    decision = "deny"
                 result_state = await self._container.agent_loop.resume(exc.thread_id, decision)
                 assistant_text = ""
                 for msg in reversed(result_state.messages):
@@ -309,7 +365,12 @@ class MessageHandler:
                     denylisted=exc.denylisted,
                 )
 
-            decision = await mgr.await_approval(exc.request_id)
+            decision = await mgr.await_approval(exc.request_id, timeout=approval_timeout)
+            if decision == "timeout":
+                if auto_deny:
+                    msg = "操作超时，已自动拒绝。" if zh else "Operation timed out, auto-denied."
+                    await self._container.feishu.send_text(chat_id, msg)
+                decision = "deny"
             result_state = await self._container.agent_loop.resume(exc.thread_id, decision)
             assistant_text = ""
             for msg in reversed(result_state.messages):

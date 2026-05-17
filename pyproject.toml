@@ -22,6 +22,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "jinja2>=3.0",
     "markdownify>=0.14",
+    "litegraph",
 ]
 
 [project.optional-dependencies]
@@ -55,6 +56,9 @@ include = ["src*"]
 [[tool.uv.index]]
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 default = true
+
+[tool.uv.sources]
+litegraph = { path = "../LiteGraph" }
 
 [project.scripts]
 myclaw = "src.cli:cli_main"

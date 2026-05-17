@@ -41,12 +41,14 @@ def _estimate_tokens_simple(messages: list[dict]) -> int:
 class ApprovalPending(Exception):
     """Raised when a tool needs user approval. Loop pauses, caller resumes."""
 
-    def __init__(self, thread_id: str, request_id: str, tool_name: str, command_preview: str, denylisted: bool = False):
+    def __init__(self, thread_id: str, request_id: str, tool_name: str, command_preview: str, denylisted: bool = False, timeout: int | None = None, auto_deny: bool = False):
         self.thread_id = thread_id
         self.request_id = request_id
         self.tool_name = tool_name
         self.command_preview = command_preview
         self.denylisted = denylisted
+        self.timeout = timeout
+        self.auto_deny = auto_deny
         super().__init__(f"Approval needed: {tool_name} — {command_preview[:80]}")
 
 

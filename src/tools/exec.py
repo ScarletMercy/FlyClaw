@@ -31,17 +31,43 @@ def reset_config_cache():
     _exec_semaphore = None
 
 
+def set_sandbox_enabled(enabled: bool) -> None:
+    """Toggle sandbox at runtime — updates in-memory config and persists to YAML."""
+    cfg = _get_config()
+    if cfg is None:
+        return
+    cfg.tools.exec.sandbox_enabled = enabled
+    try:
+        from src.config import save_config
+
+        save_config(cfg)
+    except Exception as e:
+        logger.warning("Failed to persist sandbox config: %s", e)
+
+
+def is_sandbox_enabled() -> bool:
+    cfg = _get_config()
+    return cfg.tools.exec.sandbox_enabled if cfg else True
+
+
 class ApprovalNeededError(Exception):
-    def __init__(self, command: str, denylisted: bool):
+    def __init__(self, command: str, denylisted: bool, timeout: int | None = None, auto_deny: bool = False):
         self.command = command
         self.denylisted = denylisted
+        self.timeout = timeout
+        self.auto_deny = auto_deny
         super().__init__(f"Approval needed for: {command[:100]}")
 
 
 _DEFAULT_DENY_PATTERNS = [
-    "rm -rf /",
-    "rm -rf /*",
-    "rm -rf .*",
+    # Recursive delete — always blocked
+    "rm -rf",
+    "rm -r",
+    "rm -R",
+    "rmdir /s",
+    "rd /s",
+    "shutil.rmtree",
+    # System destruction
     "mkfs*",
     "dd if=*of=/dev/*",
     "> /dev/sd*",
@@ -57,8 +83,6 @@ _DEFAULT_DENY_PATTERNS = [
     "chown -R * /",
     "curl*|*sh",
     "wget*|*sh",
-    "python -c*import os*",
-    "python3 -c*import os*",
     "nc -l*",
     "ncat*",
     "/etc/passwd",
@@ -67,13 +91,20 @@ _DEFAULT_DENY_PATTERNS = [
     "crontab*",
 ]
 
+# Non-recursive delete — always requires approval (even if approval_mode=off)
+_DELETE_APPROVAL_PATTERNS = [
+    "rm ",
+    "del ",
+    "rmdir ",
+    "os.remove",
+    "os.unlink",
+]
+
 # Patterns that indicate shell features used to bypass denylists
 _SHELL_BYPASS_PATTERNS = [
     ("sh -c", "sh -c"),
     ("bash -c", "bash -c"),
     ("zsh -c", "zsh -c"),
-    ("python -c", "python -c"),
-    ("python3 -c", "python3 -c"),
     ("perl -e", "perl -e"),
     ("ruby -e", "ruby -e"),
     ("node -e", "node -e"),
@@ -313,6 +344,16 @@ async def exec_command(
     if blocked:
         logger.warning("[exec-audit] DENIED command matches pattern '%s': %.200s", matched, command)
         raise ToolExecutionError(f"Command blocked by denylist (matched: {matched})")
+
+    # Non-recursive delete — always requires approval (30s timeout, auto-deny)
+    delete_match, delete_pattern = _is_denylisted(command, _DELETE_APPROVAL_PATTERNS)
+    if delete_match:
+        from src.tools.approval import get_approval_manager
+
+        mgr = get_approval_manager()
+        if not mgr.has_durable_approval("exec_command", command):
+            logger.info("[exec-audit] Delete operation requires approval ('%s'): %.200s", delete_pattern, command)
+            raise ApprovalNeededError(command, False, timeout=30, auto_deny=True)
 
     bypass, bypass_detail = _has_shell_bypass(command)
     if bypass and approval_mode == "off":

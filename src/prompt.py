@@ -42,6 +42,12 @@ def _build_tooling(tools: list) -> list[str]:
         "When a first-class tool exists for an action, use the tool directly "
         "instead of asking the user to run equivalent CLI or shell commands.",
         "",
+        "## File Editing Rules",
+        "ALWAYS read a file first (with read_file) to confirm its current content "
+        "before calling edit_file. Never guess or assume what the file contains — "
+        "edit_file requires exact old_string matches and will fail if the text "
+        "doesn't exist in the file.",
+        "",
     ]
     return lines
 

@@ -82,6 +82,7 @@ class AgentConfig(BaseModel):
     subagents: dict[str, AgentSubconfig] = Field(default_factory=dict)
     subagent_max_depth: int = 2  # Max nesting depth for sub-agent calls
     timezone: str = "Asia/Shanghai"
+    language: Literal["zh", "en"] = "zh"
     bootstrap_files: list[str] = Field(
         default_factory=lambda: ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md"]
     )
@@ -197,6 +198,7 @@ class ToolsPolicyConfig(BaseModel):
 class SecurityConfig(BaseModel):
     enabled: bool = True
     audit_on_startup: bool = True
+    allow_private_urls: bool = False
 
 
 class LinkUnderstandingConfig(BaseModel):

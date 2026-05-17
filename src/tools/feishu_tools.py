@@ -320,7 +320,11 @@ async def feishu_drive_upload(file_path: str, folder_token: str = "") -> str:
     import hashlib
     import os
 
-    abs_path = os.path.abspath(file_path)
+    try:
+        from src.tools.file_tools import _resolve_path
+        abs_path = _resolve_path(file_path)
+    except ValueError as e:
+        return f"[error] {e}"
     if not os.path.isfile(abs_path):
         return f"[error] File not found: {abs_path}"
     try:
@@ -1703,6 +1707,11 @@ async def feishu_doc_upload_image(doc_token: str, file_path: str) -> str:
         return "[error] Feishu client not initialized"
     try:
         import os
+        try:
+            from src.tools.file_tools import _resolve_path
+            abs_path = _resolve_path(file_path)
+        except ValueError as e:
+            return f"[error] {e}"
         from lark_oapi.api.drive.v1 import UploadAllMediaRequest, UploadAllMediaRequestBody
         from lark_oapi.api.docx.v1 import (
             CreateDocumentBlockChildrenRequest,
@@ -1711,7 +1720,6 @@ async def feishu_doc_upload_image(doc_token: str, file_path: str) -> str:
             Image,
         )
 
-        abs_path = os.path.abspath(file_path)
         if not os.path.exists(abs_path):
             return f"[error] File not found: {abs_path}"
 

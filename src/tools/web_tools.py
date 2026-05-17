@@ -90,6 +90,13 @@ async def web_fetch(url: str) -> str:
     except Exception:
         return f"Invalid URL: {url}"
 
+    # SSRF protection
+    from src.security.url_safety import is_safe_url
+    safe, reason = is_safe_url(url)
+    if not safe:
+        logger.warning("Blocked URL fetch (SSRF): %s — %s", url, reason)
+        return f"Blocked: {reason}"
+
     # Prefer HTTPS
     if parsed.scheme == "http":
         url = url.replace("http://", "https://", 1)
