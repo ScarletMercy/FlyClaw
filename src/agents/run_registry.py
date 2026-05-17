@@ -23,10 +23,11 @@ class SubagentRun(TypedDict):
     task: str
     parent_id: Optional[str]
     depth: int
-    status: Literal["pending", "running", "completed", "error"]
+    status: Literal["pending", "running", "completed", "error", "timeout", "interrupted"]
     started_at: float
     completed_at: Optional[float]
     result: Optional[str]
+    interrupt_requested: bool
 
 
 _current_depth: ContextVar[int] = ContextVar("_current_depth", default=0)
@@ -58,6 +59,7 @@ class RunRegistry:
             "started_at": time.time(),
             "completed_at": None,
             "result": None,
+            "interrupt_requested": False,
         }
         async with self._lock:
             self._runs[run_id] = run
@@ -94,7 +96,42 @@ class RunRegistry:
         async with self._lock:
             return sum(1 for r in self._runs.values() if r["status"] == "running")
 
-    async def _evict(self):
+    async def get_active_tree(self) -> list[dict]:
+        """Return currently running sub-agents with elapsed time."""
+        async with self._lock:
+            now = time.time()
+            active = []
+            for r in self._runs.values():
+                if r["status"] in ("running", "pending"):
+                    active.append({
+                        "id": r["id"],
+                        "agent_name": r["agent_name"],
+                        "task": r["task"][:100],
+                        "depth": r["depth"],
+                        "status": r["status"],
+                        "started_at": r["started_at"],
+                        "elapsed": round(now - r["started_at"], 1),
+                        "interrupt_requested": r.get("interrupt_requested", False),
+                    })
+            return sorted(active, key=lambda x: x["started_at"])
+
+    async def request_interrupt(self, run_id: str) -> bool:
+        """Request interruption of a running sub-agent. Returns True if found."""
+        async with self._lock:
+            run = self._runs.get(run_id)
+            if run and run["status"] in ("running", "pending"):
+                run["interrupt_requested"] = True
+                return True
+            return False
+
+    def is_interrupt_requested(self, run_id: str) -> bool:
+        """Non-async check if interrupt was requested (called from sync code)."""
+        run = self._runs.get(run_id)
+        if run:
+            return run.get("interrupt_requested", False)
+        return False
+
+    async def _evict(self) -> None:
         """Remove oldest completed runs beyond max_history."""
         if len(self._runs) <= self._max_history:
             return

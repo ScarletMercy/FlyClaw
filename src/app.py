@@ -152,6 +152,8 @@ class ServiceContainer:
             "src.skills.manager",
             "src.skills.curator",
             "src.agent.learning",
+            "src.agents.delegate",
+            "src.memory.procedures",
         ]
         if getattr(self.config.tools, "browser", None) and self.config.tools.browser.enabled:
             tool_modules.append("src.tools.browser.tools")
@@ -432,6 +434,13 @@ class ServiceContainer:
 
         reset_config_cache()
 
+        if self.config.procedural_memory.enabled and self.config.procedural_memory.auto_learn:
+            try:
+                from src.memory.procedures import register_extraction_listener
+                register_extraction_listener()
+            except Exception as e:
+                logger.warning("Failed to register procedure extraction listener: %s", e)
+
         return tools, skills
 
     async def _run_startup_sync(self, store):
@@ -636,6 +645,15 @@ class ServiceContainer:
                 self.session_index = None
             if self.browser_manager:
                 await self.browser_manager.close_all()
+
+            # Close procedure store
+            try:
+                from src.memory.procedures import get_procedure_store, reset_procedure_store
+                store = await get_procedure_store()
+                await store.close()
+                reset_procedure_store()
+            except Exception:
+                pass
 
             # Emit shutdown event
             try:

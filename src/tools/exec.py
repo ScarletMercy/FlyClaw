@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import fnmatch
+import json
 import logging
 import time
 from typing import Optional
@@ -87,7 +88,6 @@ _DEFAULT_DENY_PATTERNS = [
     "ncat*",
     "/etc/passwd",
     "/etc/shadow",
-    "nohup*",
     "crontab*",
 ]
 
@@ -302,6 +302,7 @@ async def exec_command(
     command: str,
     timeout: Optional[int] = 30,
     workdir: Optional[str] = None,
+    background: bool = False,
 ) -> str:
     """Execute a shell command and return its output.
 
@@ -309,6 +310,7 @@ async def exec_command(
         command: The shell command to execute.
         timeout: Timeout in seconds. Default 30.
         workdir: Working directory. Defaults to current directory.
+        background: Run in background. Returns session ID immediately.
     """
     cfg = _get_config()
 
@@ -338,6 +340,27 @@ async def exec_command(
         allowed = [workspace.resolve()] + [Path(d).expanduser().resolve() for d in sandbox_allowed_dirs]
         if not any(str(wd).startswith(str(a)) for a in allowed):
             raise ToolExecutionError(f"Working directory not allowed by sandbox: {wd}")
+
+    # Background mode: spawn via ProcessRegistry and return immediately
+    if background:
+        from src.tools.process import get_process_registry
+
+        blocked_bg, matched_bg = _is_denylisted(command, deny_patterns)
+        if blocked_bg:
+            raise ToolExecutionError(f"Command blocked by denylist (matched: {matched_bg})")
+
+        env = None
+        if sandbox_enabled:
+            import os
+            env = {k: os.environ[k] for k in sandbox_env_whitelist if k in os.environ}
+
+        registry = get_process_registry()
+        session_id = await registry.spawn(command, workdir=workdir, env=env)
+        return json.dumps({
+            "session_id": session_id,
+            "status": "running",
+            "command": command[:200],
+        })
 
     blocked, matched = _is_denylisted(command, deny_patterns)
 
@@ -458,8 +481,61 @@ async def exec_command(
             raise ToolExecutionError(f"{type(e).__name__}: {e}")
 
 
+async def process_status(action: str, session_id: str = "", timeout: int = 300, offset: int = 0, limit: int = 200) -> str:
+    """Manage background processes started with exec_command(background=true).
+
+    Args:
+        action: One of: list, poll, wait, kill, log.
+        session_id: Process session ID (required for poll/wait/kill/log).
+        timeout: Timeout in seconds for wait action. Default 300.
+        offset: Line offset for log action. Default 0.
+        limit: Max lines for log action. Default 200.
+    """
+    from src.tools.process import get_process_registry
+
+    registry = get_process_registry()
+    action = action.strip().lower()
+
+    if action == "list":
+        sessions = registry.list_sessions()
+        if not sessions:
+            return "No background processes."
+        lines = []
+        for s in sessions:
+            status_icon = "\U0001f504" if s["status"] == "running" else "✅" if s["exit_code"] == 0 else "❌"
+            lines.append(
+                f"  {status_icon} [{s['id']}] pid={s['pid']} ({s['elapsed']}s) {s['command']}"
+            )
+        return "\n".join(lines)
+
+    if action == "poll":
+        if not session_id:
+            return "Error: session_id required for poll."
+        result = await registry.poll(session_id)
+        return json.dumps(result, ensure_ascii=False)
+
+    if action == "wait":
+        if not session_id:
+            return "Error: session_id required for wait."
+        result = await registry.wait(session_id, timeout=timeout)
+        return json.dumps(result, ensure_ascii=False)
+
+    if action == "kill":
+        if not session_id:
+            return "Error: session_id required for kill."
+        return await registry.kill(session_id)
+
+    if action == "log":
+        if not session_id:
+            return "Error: session_id required for log."
+        return await registry.log(session_id, offset=offset, limit=limit)
+
+    return f"Unknown action: '{action}'. Use: list, poll, wait, kill, log."
+
+
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef
     return [
         ToolDef.from_function(exec_command),
+        ToolDef.from_function(process_status),
     ]

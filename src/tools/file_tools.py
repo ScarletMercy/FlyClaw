@@ -85,6 +85,8 @@ def write_file(path: str, content: str) -> str:
         resolved = _resolve_path(path)
     except ValueError as e:
         return f"Error: {e}"
+    from src.tools.snapshot import snapshot_before_write
+    snapshot_before_write(_BASE_DIR)
     with _edit_condition:
         try:
             parent = os.path.dirname(resolved)
@@ -115,6 +117,8 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
         resolved = _resolve_path(path)
     except ValueError as e:
         return f"Error: {e}"
+    from src.tools.snapshot import snapshot_before_write
+    snapshot_before_write(_BASE_DIR)
     with _edit_condition:
         if not _edit_condition.wait_for(lambda: os.path.exists(resolved), timeout=10.0):
             return f"Error: file not found: {path} (resolved to: {resolved}, workspace: {_BASE_DIR})"

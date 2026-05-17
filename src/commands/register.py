@@ -118,6 +118,19 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 "/timezone <tz>                  — 时区设置",
                 "/lang zh|en                     — 中英文切换",
                 "",
+                "== 快照 ==",
+                "/snapshots [id]  — 查看/列出快照",
+                "/rollback <id> [文件] — 回滚到快照",
+                "",
+                "== 子 Agent ==",
+                "/agents [stop <id>] — 查看/管理子 Agent",
+                "",
+                "== 后台进程 ==",
+                "/ps [kill <id>] — 后台进程管理",
+                "",
+                "== 程序性记忆 ==",
+                "/procedures [search X|learn] — 工作流模式管理",
+                "",
                 "== 其他 ==",
                 "/skills  — 技能列表",
                 "/search  — 搜索会话",
@@ -143,6 +156,19 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 "/compress on|off                — Compression toggle",
                 "/timezone <tz>                  — Timezone",
                 "/lang zh|en                     — Language switch",
+                "",
+                "== Snapshots ==",
+                "/snapshots [id]  — List/view snapshot diff",
+                "/rollback <id> [file] — Rollback to snapshot",
+                "",
+                "== Sub-agents ==",
+                "/agents [stop <id>] — View/manage sub-agents",
+                "",
+                "== Background ==",
+                "/ps [kill <id>] — Background process management",
+                "",
+                "== Procedural Memory ==",
+                "/procedures [search X|learn] — Workflow pattern management",
                 "",
                 "== Other ==",
                 "/skills  — Skill list",
@@ -678,6 +704,292 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         return f"语言: {'中文 (zh)' if current == 'zh' else 'English (en)'}\n用法: /lang zh|en"
 
     dispatcher.register_builtin("lang", cmd_lang)
+
+    # ── Snapshot commands ──
+
+    async def cmd_snapshots(args: str, ctx: dict) -> str:
+        zh = container.config.agents.language == "zh"
+        from src.tools.snapshot import get_snapshot_manager
+        mgr = get_snapshot_manager()
+        if mgr is None:
+            return "快照功能未启用。" if zh else "Snapshots not enabled."
+
+        import os
+        from src.tools.file_tools import _BASE_DIR
+        work_dir = _BASE_DIR
+
+        arg = args.strip()
+        if arg:
+            # Show diff for a specific snapshot
+            diff_text = mgr.diff(work_dir, arg)
+            if diff_text.startswith("Error"):
+                return diff_text
+            header = f"快照 {arg} 与当前差异:" if zh else f"Diff from snapshot {arg}:"
+            return f"{header}\n{diff_text}"
+
+        snapshots = mgr.list_snapshots(work_dir)
+        if not snapshots:
+            return "暂无快照。" if zh else "No snapshots yet."
+
+        lines = []
+        if zh:
+            lines.append(f"快照列表 ({len(snapshots)}):")
+        else:
+            lines.append(f"Snapshots ({len(snapshots)}):")
+        for s in snapshots:
+            lines.append(f"  {s['id']}  {s['date']}  {s['message']}")
+        if zh:
+            lines.append("")
+            lines.append("用法:")
+            lines.append("  /snapshots <id>  — 查看快照差异")
+            lines.append("  /rollback <id>   — 回滚到快照")
+            lines.append("  /rollback <id> <文件> — 回滚单个文件")
+        else:
+            lines.append("")
+            lines.append("Usage:")
+            lines.append("  /snapshots <id>  — view snapshot diff")
+            lines.append("  /rollback <id>   — rollback to snapshot")
+            lines.append("  /rollback <id> <file> — rollback single file")
+        return "\n".join(lines)
+
+    dispatcher.register_builtin("snapshots", cmd_snapshots)
+
+    async def cmd_rollback(args: str, ctx: dict) -> str:
+        zh = container.config.agents.language == "zh"
+        parts = args.strip().split(None, 1)
+        if not parts:
+            if zh:
+                return "用法: /rollback <快照ID> [文件路径]"
+            return "Usage: /rollback <snapshot_id> [file_path]"
+
+        from src.tools.snapshot import get_snapshot_manager
+        mgr = get_snapshot_manager()
+        if mgr is None:
+            return "快照功能未启用。" if zh else "Snapshots not enabled."
+
+        import os
+        from src.tools.file_tools import _BASE_DIR
+        work_dir = _BASE_DIR
+
+        snap_id = parts[0]
+        file_path = parts[1].strip() if len(parts) > 1 else ""
+
+        if file_path:
+            result = mgr.restore_file(work_dir, snap_id, file_path)
+        else:
+            result = mgr.restore(work_dir, snap_id)
+
+        if result.startswith("Restore failed") or result.startswith("No snapshot"):
+            return result
+        if file_path:
+            if zh:
+                return f"已从快照 {snap_id} 恢复文件 {file_path}"
+            return result
+        if zh:
+            return f"已回滚到快照 {snap_id}"
+        return result
+
+    dispatcher.register_builtin("rollback", cmd_rollback)
+
+    # ── Sub-agent commands ──
+
+    async def cmd_agents(args: str, ctx: dict) -> str:
+        zh = container.config.agents.language == "zh"
+        from src.agents.run_registry import get_run_registry
+        run_registry = get_run_registry()
+
+        parts = args.strip().split(None, 1)
+        if parts and parts[0].lower() == "stop" and len(parts) > 1:
+            target_id = parts[1].strip()
+            ok = await run_registry.request_interrupt(target_id)
+            if ok:
+                return f"已请求中断子 Agent {target_id}。" if zh else f"Interrupt requested for sub-agent {target_id}."
+            return f"未找到运行中的子 Agent: {target_id}" if zh else f"No running sub-agent found: {target_id}"
+
+        active = await run_registry.get_active_tree()
+        recent = await run_registry.list_runs(limit=5)
+
+        lines = []
+        if zh:
+            lines.append("== 子 Agent 状态 ==")
+        else:
+            lines.append("== Sub-agents ==")
+
+        if active:
+            for a in active:
+                status_icon = "\U0001f504" if a["status"] == "running" else "⏳"
+                interrupt_tag = " [中断中]" if a.get("interrupt_requested") else ""
+                lines.append(
+                    f"  {status_icon} [{a['id']}] {a['agent_name']} — "
+                    f"\"{a['task'][:50]}\" ({a['elapsed']}s){interrupt_tag}"
+                )
+        else:
+            lines.append("  " + ("（无运行中）" if zh else "(none running)"))
+
+        # Show recent completed
+        done = [r for r in recent if r["status"] in ("completed", "error", "timeout", "interrupted")]
+        if done:
+            lines.append("")
+            if zh:
+                lines.append("最近完成:")
+            else:
+                lines.append("Recent:")
+            for r in done[:5]:
+                icon = {"completed": "✅", "error": "❌", "timeout": "⏰", "interrupted": "⚡"}.get(r["status"], "?")
+                dur = round((r.get("completed_at") or 0) - r["started_at"], 1) if r.get("completed_at") else "?"
+                result_preview = (r.get("result") or "")[:40]
+                lines.append(f"  {icon} [{r['id']}] {r['agent_name']} ({dur}s) {result_preview}")
+
+        if active:
+            lines.append("")
+            if zh:
+                lines.append("用法: /agents stop <id> — 中断子 Agent")
+            else:
+                lines.append("Usage: /agents stop <id> — interrupt sub-agent")
+
+        return "\n".join(lines)
+
+    dispatcher.register_builtin("agents", cmd_agents)
+
+    # ── Background process commands ──
+
+    async def cmd_ps(args: str, ctx: dict) -> str:
+        zh = container.config.agents.language == "zh"
+        from src.tools.process import get_process_registry
+        registry = get_process_registry()
+
+        parts = args.strip().split(None, 1)
+
+        # /ps kill <id>
+        if parts and parts[0].lower() == "kill" and len(parts) > 1:
+            result = await registry.kill(parts[1].strip())
+            return result
+
+        # /ps <id> — show detail
+        if parts and parts[0].lower() not in ("", "list"):
+            sid = parts[0].strip()
+            info = await registry.poll(sid)
+            if info.get("status") == "not_found":
+                return f"进程 {sid} 不存在。" if zh else f"Process {sid} not found."
+            lines = []
+            if zh:
+                lines.append(f"进程 [{sid}]")
+                lines.append(f"  命令: {info.get('command', '')}")
+                lines.append(f"  状态: {info['status']}")
+                if info.get("exit_code") is not None:
+                    lines.append(f"  退出码: {info['exit_code']}")
+                lines.append(f"  运行时间: {info['elapsed']}s")
+            else:
+                lines.append(f"Process [{sid}]")
+                lines.append(f"  Command: {info.get('command', '')}")
+                lines.append(f"  Status: {info['status']}")
+                if info.get("exit_code") is not None:
+                    lines.append(f"  Exit code: {info['exit_code']}")
+                lines.append(f"  Elapsed: {info['elapsed']}s")
+            tail = info.get("output_tail", "")
+            if tail:
+                lines.append("")
+                lines.append("--- output tail ---")
+                lines.append(tail[-2000:])
+            return "\n".join(lines)
+
+        # /ps — list all
+        sessions = registry.list_sessions()
+        if not sessions:
+            return "没有后台进程。" if zh else "No background processes."
+
+        lines = []
+        if zh:
+            lines.append("== 后台进程 ==")
+        else:
+            lines.append("== Background Processes ==")
+        for s in sessions:
+            if s["status"] == "running":
+                icon = "\U0001f504"
+            elif s.get("exit_code") == 0:
+                icon = "✅"
+            else:
+                icon = "❌"
+            lines.append(
+                f"  {icon} [{s['id']}] pid={s['pid']} ({s['elapsed']}s) {s['command']}"
+            )
+        lines.append("")
+        if zh:
+            lines.append("用法: /ps <id> — 查看详情 | /ps kill <id> — 终止")
+        else:
+            lines.append("Usage: /ps <id> — detail | /ps kill <id> — terminate")
+        return "\n".join(lines)
+
+    dispatcher.register_builtin("ps", cmd_ps)
+
+    # ── /procedures ──────────────────────────────────────────
+    async def cmd_procedures(args: str, ctx: dict) -> str:
+        zh = container.config.agents.language == "zh"
+
+        parts = args.strip().split(None, 1)
+        sub = parts[0].lower() if parts else ""
+        sub_args = parts[1].strip() if len(parts) > 1 else ""
+
+        try:
+            from src.memory.procedures import get_procedure_store
+            store = await get_procedure_store()
+        except Exception as e:
+            return f"Failed to init procedure store: {e}"
+
+        if sub == "search" and sub_args:
+            results = await store.search(sub_args, max_results=5)
+            if not results:
+                return "未找到匹配的工作流。" if zh else "No matching procedures found."
+            lines = []
+            for r in results:
+                steps_text = " → ".join(s.get("tool", "?") for s in r["steps"])
+                lines.append(
+                    f"  [{r['id']}] {r['name']}\n"
+                    f"    {r['description'][:100]}\n"
+                    f"    Steps: {steps_text}\n"
+                    f"    Used {r['use_count']}x"
+                )
+            return "\n".join(lines)
+
+        if sub == "learn":
+            thread_id = ctx.get("thread_id", "")
+            if not thread_id:
+                return "无法获取当前会话。" if zh else "Cannot identify current session."
+
+            state = await container.state_store.aload(thread_id)
+            if not state or not state.messages:
+                return "当前会话无消息。" if zh else "No messages in current session."
+
+            from src.memory.procedures import _try_extract_procedure
+            await _try_extract_procedure(thread_id, state.messages)
+
+            # Check if something was learned
+            count_after = await store.count()
+            return f"学习完成。当前共 {count_after} 个工作流模式。" if zh else f"Learning done. {count_after} procedures total."
+
+        # Default: list all
+        procedures = await store.list_all(limit=20)
+        if not procedures:
+            return "暂无已学习的工作流模式。" if zh else "No procedures learned yet."
+
+        lines = []
+        if zh:
+            lines.append("== 工作流模式 ==")
+        else:
+            lines.append("== Workflow Patterns ==")
+        for p in procedures:
+            lines.append(
+                f"  [{p['id']}] {p['name']} — {p['description'][:60]} "
+                f"(used {p['use_count']}x, tags: {p['tags']})"
+            )
+        lines.append("")
+        if zh:
+            lines.append("用法: /procedures search <关键词> | /procedures learn")
+        else:
+            lines.append("Usage: /procedures search <query> | /procedures learn")
+        return "\n".join(lines)
+
+    dispatcher.register_builtin("procedures", cmd_procedures)
 
     if container.config.auth.enabled and container.rbac:
         register_auth_commands(dispatcher, container)

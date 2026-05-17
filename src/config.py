@@ -230,6 +230,37 @@ class ToolsConfig(BaseModel):
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
 
 
+class SnapshotConfig(BaseModel):
+    """File snapshot/rollback configuration (shadow git store)."""
+    enabled: bool = True
+    store_path: str = "~/.myclaw/data/snapshots"
+    max_per_dir: int = 20
+    max_file_size: int = 10_000_000  # 10MB
+
+
+class DelegationConfig(BaseModel):
+    """Sub-agent delegation configuration."""
+    enabled: bool = True
+    max_concurrent: int = 3
+    child_timeout_seconds: int = 300
+    max_iterations: int = 10
+    blocked_tools: list[str] = Field(
+        default_factory=lambda: ["delegate_task", "delegate_batch"]
+    )
+
+
+class ProceduralMemoryConfig(BaseModel):
+    """Procedural memory — learn reusable workflow patterns from sessions."""
+    enabled: bool = True
+    db_path: str = "~/.myclaw/data/procedures.db"
+    auto_learn: bool = True
+    min_tool_calls: int = 3
+    max_procedures: int = 200
+    learn_model: str = ""
+    learn_model_base_url: str = ""
+    learn_model_api_key: str = ""
+
+
 class CheckpointerConfig(BaseModel):
     type: Literal["sqlite", "memory"] = "sqlite"
     path: str = "~/.myclaw/data/checkpoints.db"
@@ -380,6 +411,9 @@ class AppConfig(BaseModel):
     compression: CompressionConfig = Field(default_factory=CompressionConfig)
     canvas: CanvasConfig = Field(default_factory=CanvasConfig)
     hooks: HooksConfig = Field(default_factory=HooksConfig)
+    snapshot: SnapshotConfig = Field(default_factory=SnapshotConfig)
+    delegation: DelegationConfig = Field(default_factory=DelegationConfig)
+    procedural_memory: ProceduralMemoryConfig = Field(default_factory=ProceduralMemoryConfig)
     owner_id: str = ""
 
 
@@ -401,7 +435,13 @@ def _expand_paths(config: AppConfig) -> AppConfig:
     
     # Session search
     config.session_search.index_path = str(Path(config.session_search.index_path).expanduser().resolve())
-    
+
+    # Snapshot store
+    config.snapshot.store_path = str(Path(config.snapshot.store_path).expanduser().resolve())
+
+    # Procedural memory
+    config.procedural_memory.db_path = str(Path(config.procedural_memory.db_path).expanduser().resolve())
+
     return config
 
 
