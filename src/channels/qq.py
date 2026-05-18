@@ -458,7 +458,10 @@ class QQChannel(Channel):
                 await asyncio.sleep(wait)
 
         self._token_manager.start_background_refresh()
-        self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+        self._http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0),
+            transport=httpx.AsyncHTTPTransport(retries=1),
+        )
 
         self._ws_client = _QQWebSocketClient(
             self.config.app_id,

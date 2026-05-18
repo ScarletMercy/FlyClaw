@@ -4,6 +4,7 @@ import asyncio
 import fnmatch
 import json
 import logging
+import threading
 import time
 from typing import Optional
 
@@ -29,7 +30,8 @@ def _get_config():
 def reset_config_cache():
     global _cached_config, _exec_semaphore
     _cached_config = None
-    _exec_semaphore = None
+    with _semaphore_lock:
+        _exec_semaphore = None
 
 
 def set_sandbox_enabled(enabled: bool) -> None:
@@ -116,6 +118,7 @@ _SHELL_BYPASS_PATTERNS = [
 ]
 
 _exec_semaphore: Optional[asyncio.Semaphore] = None
+_semaphore_lock = threading.Lock()
 
 
 async def _exec_streaming(
@@ -266,9 +269,10 @@ async def _exec_streaming(
 
 def _get_semaphore(max_concurrent: int) -> asyncio.Semaphore:
     global _exec_semaphore
-    if _exec_semaphore is None:
-        _exec_semaphore = asyncio.Semaphore(max_concurrent)
-    return _exec_semaphore
+    with _semaphore_lock:
+        if _exec_semaphore is None:
+            _exec_semaphore = asyncio.Semaphore(max_concurrent)
+        return _exec_semaphore
 
 
 def _is_denylisted(command: str, deny_patterns: list[str]) -> tuple[bool, str]:
@@ -278,8 +282,19 @@ def _is_denylisted(command: str, deny_patterns: list[str]) -> tuple[bool, str]:
         pattern_lower = pattern.lower()
         if fnmatch.fnmatch(cmd_normalized, pattern_lower):
             return True, pattern
-        if pattern_lower in cmd_normalized:
-            return True, pattern
+        # Substring check with word-boundary awareness to reduce false positives.
+        # For patterns that start/end with word chars (e.g., "rm -rf"), use \b
+        # to avoid matching inside other words (e.g., "crontab" matching "rm").
+        # For patterns with non-word boundaries (e.g., "/etc/passwd"), fall back
+        # to plain substring match.
+        start_boundary = r'\b' if pattern_lower[0:1].isalnum() or pattern_lower[0:1] == '_' else ''
+        end_boundary = r'\b' if pattern_lower[-1:].isalnum() or pattern_lower[-1:] == '_' else ''
+        try:
+            if re.search(start_boundary + re.escape(pattern_lower) + end_boundary, cmd_normalized):
+                return True, pattern
+        except re.error:
+            if pattern_lower in cmd_normalized:
+                return True, pattern
     return False, ""
 
 

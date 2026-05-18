@@ -8,6 +8,7 @@ import logging
 import time
 from collections import defaultdict
 from typing import Any, Callable
+from contextvars import ContextVar
 
 from src.events.types import EventContext, Subscription, WILDCARD_PATTERNS
 
@@ -15,6 +16,9 @@ logger = logging.getLogger("myclaw.events")
 
 _DEFAULT_TIMEOUT = 5.0
 _MAX_EMIT_DEPTH = 3
+
+# Per-task emit depth tracking — safe across concurrent coroutines
+_emit_depth_var: ContextVar[int] = ContextVar("_emit_depth_var", default=0)
 
 
 class EventBus:
@@ -39,7 +43,6 @@ class EventBus:
     def __init__(self, timeout: float = _DEFAULT_TIMEOUT):
         self._timeout = timeout
         self._subscriptions: dict[str, list[Subscription]] = defaultdict(list)
-        self._emit_depth = 0
 
     # ── Subscription ──────────────────────────────────────────────
 
@@ -113,7 +116,8 @@ class EventBus:
         Returns:
             EventContext with event name and context data
         """
-        if self._emit_depth >= _MAX_EMIT_DEPTH:
+        depth = _emit_depth_var.get(0)
+        if depth >= _MAX_EMIT_DEPTH:
             logger.warning("Emit depth limit reached for '%s', skipping to prevent recursion", event)
             return EventContext(event=event, context=context)
 
@@ -123,7 +127,7 @@ class EventBus:
         if not matching:
             return ctx
 
-        self._emit_depth += 1
+        _emit_depth_var.set(depth + 1)
         try:
             for sub in matching:
                 if not sub.active:
@@ -139,7 +143,7 @@ class EventBus:
                 else:
                     self._call_sync_handler(sub, ctx)
         finally:
-            self._emit_depth -= 1
+            _emit_depth_var.set(depth)
 
         return ctx
 
@@ -153,7 +157,8 @@ class EventBus:
         Returns:
             EventContext with event name and context data
         """
-        if self._emit_depth >= _MAX_EMIT_DEPTH:
+        depth = _emit_depth_var.get(0)
+        if depth >= _MAX_EMIT_DEPTH:
             logger.warning("Emit depth limit reached for '%s', skipping", event)
             return EventContext(event=event, context=context)
 
@@ -163,7 +168,7 @@ class EventBus:
         if not matching:
             return ctx
 
-        self._emit_depth += 1
+        _emit_depth_var.set(depth + 1)
         try:
             tasks = []
             for sub in matching:
@@ -178,7 +183,7 @@ class EventBus:
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
         finally:
-            self._emit_depth -= 1
+            _emit_depth_var.set(depth)
 
         return ctx
 

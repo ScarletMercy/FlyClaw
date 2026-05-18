@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -235,7 +236,6 @@ class ProcedureStore:
 
     @staticmethod
     def _format_fts_query(query: str) -> str:
-        import re
         parts = re.split(r'\s+', query)
         fts_reserved = {"AND", "OR", "NOT", "NEAR"}
         cleaned = []
@@ -270,24 +270,38 @@ class ProcedureStore:
             return
         excess = count - self.max_procedures
         cursor = await self._conn.execute(
-            "SELECT id FROM procedures ORDER BY use_count ASC, updated_at ASC LIMIT ?",
+            "SELECT rowid, id FROM procedures ORDER BY use_count ASC, updated_at ASC LIMIT ?",
             (excess,),
         )
         rows = await cursor.fetchall()
+        if not rows:
+            return
         for row in rows:
-            await self.delete(row["id"])
+            await self._conn.execute("DELETE FROM procedures WHERE id = ?", (row["id"],))
+            try:
+                await self._conn.execute("DELETE FROM procedures_fts WHERE rowid = ?", (row["rowid"],))
+            except Exception:
+                pass
+        await self._conn.commit()
 
 
 # ── Singleton ─────────────────────────────────────────────────────
 
 _store: Optional[ProcedureStore] = None
-_store_lock = asyncio.Lock()
+_store_lock: Optional[asyncio.Lock] = None
+
+
+def _get_store_lock() -> asyncio.Lock:
+    global _store_lock
+    if _store_lock is None:
+        _store_lock = asyncio.Lock()
+    return _store_lock
 
 
 async def get_procedure_store() -> ProcedureStore:
     global _store
     if _store is None:
-        async with _store_lock:
+        async with _get_store_lock():
             if _store is None:
                 from src.config import load_config
 
@@ -300,9 +314,15 @@ async def get_procedure_store() -> ProcedureStore:
     return _store
 
 
-def reset_procedure_store() -> None:
+async def reset_procedure_store() -> None:
     global _store
-    _store = None
+    async with _get_store_lock():
+        if _store is not None:
+            try:
+                await _store.close()
+            except Exception:
+                pass
+        _store = None
 
 
 # ── ProcedureExtractor ────────────────────────────────────────────
@@ -371,6 +391,7 @@ def _extract_tool_sequence(messages: list[dict]) -> list[dict]:
                     "tool": name,
                     "args_summary": args_preview,
                     "call_id": tc_id,
+                    "success": None,  # Will be set when result arrives
                 })
 
         elif msg.get("role") == "tool":
@@ -381,6 +402,11 @@ def _extract_tool_sequence(messages: list[dict]) -> list[dict]:
             idx = call_id_to_idx.get(tc_id)
             if idx is not None:
                 sequence[idx]["success"] = not is_error
+
+    # For calls without a result, assume success (no error result was seen)
+    for entry in sequence:
+        if entry["success"] is None:
+            entry["success"] = True
 
     return sequence
 
@@ -448,19 +474,26 @@ async def _try_extract_procedure(thread_id: str, messages: list[dict]) -> None:
         client = create_client(
             config.model.provider,
             model_name,
-            config.model.temperature,
+            0.0,
             base_url=base_url,
             api_key=api_key,
         )
 
-        response = await client.chat([{"role": "user", "content": prompt}])
+        try:
+            response = await client.chat([{"role": "user", "content": prompt}])
+        finally:
+            try:
+                await client.close()
+            except Exception:
+                pass
 
         content = response.content if hasattr(response, "content") else str(response)
         content = content.strip()
 
-        if content.startswith("```"):
-            lines = content.split("\n")
-            content = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
+        # Extract JSON from code fences if present
+        fence_match = re.search(r"```(?:json)?\s*\n(.*?)```", content, re.DOTALL)
+        if fence_match:
+            content = fence_match.group(1).strip()
 
         try:
             parsed = json.loads(content)

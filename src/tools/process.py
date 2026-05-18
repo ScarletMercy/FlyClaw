@@ -328,13 +328,22 @@ class ProcessRegistry:
             return f"Process already exited with code {session.exit_code}."
 
         try:
-            if os.name != "nt":
+            if os.name == "nt":
+                # Windows: use taskkill to kill the entire process tree
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "taskkill", "/T", "/F", "/PID", str(session.pid),
+                        stdout=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.DEVNULL,
+                    )
+                    await proc.wait()
+                except (FileNotFoundError, OSError):
+                    session.proc.kill()
+            else:
                 try:
                     os.killpg(os.getpgid(session.pid), signal.SIGTERM)
                 except (ProcessLookupError, OSError):
                     session.proc.kill()
-            else:
-                session.proc.kill()
             session.killed = True
             logger.info("[bg-process] killed session=%s pid=%d", session_id, session.pid)
             return f"Killed process {session_id} (pid {session.pid})."
@@ -373,7 +382,7 @@ class ProcessRegistry:
         return sorted(result, key=lambda x: x["started_at"], reverse=True)
 
     def _evict(self):
-        """Remove old finished sessions."""
+        """Remove old finished sessions and cancel their reader tasks."""
         now = time.monotonic()
         # Remove sessions past TTL
         expired = [
@@ -381,7 +390,9 @@ class ProcessRegistry:
             if s.finished_at and (now - s.finished_at) > self._finished_ttl
         ]
         for sid in expired:
-            self._sessions.pop(sid, None)
+            s = self._sessions.pop(sid, None)
+            if s and s._reader_task and not s._reader_task.done():
+                s._reader_task.cancel()
 
         # If still over limit, remove oldest finished
         if len(self._sessions) > self._max_sessions:
@@ -390,8 +401,10 @@ class ProcessRegistry:
                 key=lambda x: x[1].finished_at or 0,
             )
             to_remove = len(self._sessions) - self._max_sessions
-            for sid, _ in finished[:to_remove]:
+            for sid, s in finished[:to_remove]:
                 self._sessions.pop(sid, None)
+                if s._reader_task and not s._reader_task.done():
+                    s._reader_task.cancel()
 
 
 # ── Singleton ──

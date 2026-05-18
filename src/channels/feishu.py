@@ -140,6 +140,7 @@ class StreamingCardSession:
         self._token: Optional[str] = None
         self._token_expires: float = 0
         self._http_client: Optional[httpx.AsyncClient] = None
+        self._lock = asyncio.Lock()
 
     async def start(
         self,
@@ -149,7 +150,10 @@ class StreamingCardSession:
     ) -> Optional[str]:
         api_base = _resolve_api_base(self._domain)
         if not self._http_client:
-            self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+            self._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(30.0),
+                transport=httpx.AsyncHTTPTransport(retries=1),
+            )
         token = await _get_tenant_token(self._app_id, self._app_secret, self._domain)
         if token:
             self._token = token
@@ -239,7 +243,10 @@ class StreamingCardSession:
 
         self._pending_text = None
         self._last_update = now
-        await self._do_update(merged_input)
+        async with self._lock:
+            if self._closed:
+                return
+            await self._do_update(merged_input)
 
     async def _ensure_token(self) -> Optional[str]:
         now = _time.monotonic()
@@ -287,7 +294,8 @@ class StreamingCardSession:
     async def close(self, final_text: Optional[str] = None) -> None:
         if not self._card_id or self._closed:
             return
-        self._closed = True
+        async with self._lock:
+            self._closed = True
 
         pending = _merge_streaming_text(self._current_text, self._pending_text or "")
         text = _merge_streaming_text(pending, final_text) if final_text else pending

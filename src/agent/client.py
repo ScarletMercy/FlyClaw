@@ -78,6 +78,10 @@ class ChatClient:
         resp = await self.chat(messages, tools=None, **extra)
         return resp.content
 
+    async def close(self) -> None:
+        """Close the underlying HTTP connection pool."""
+        await self._client.close()
+
     def __repr__(self) -> str:
         return f"ChatClient(model={self.model!r}, base_url={self.base_url!r})"
 

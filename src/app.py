@@ -648,10 +648,8 @@ class ServiceContainer:
 
             # Close procedure store
             try:
-                from src.memory.procedures import get_procedure_store, reset_procedure_store
-                store = await get_procedure_store()
-                await store.close()
-                reset_procedure_store()
+                from src.memory.procedures import reset_procedure_store
+                await reset_procedure_store()
             except Exception:
                 pass
 

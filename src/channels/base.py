@@ -107,7 +107,7 @@ async def api_request_with_retry(
     for attempt in range(max_retries + 1):
         try:
             resp = await request_fn()
-        except (httpx.TimeoutException, httpx.ConnectError) as e:
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.RemoteProtocolError) as e:
             last_exc = e
             if attempt >= max_retries:
                 logger.warning("%s: network error persisted after %d retries: %s", description, max_retries, e)

@@ -631,11 +631,12 @@ class LiteGraphAgentLoop:
         max_rounds = self._get_max_tool_rounds()
         if max_rounds > 0:
             messages = state.get("messages", [])
+            recent = messages
             for i in range(len(messages) - 1, -1, -1):
                 if messages[i].get("role") == "user":
-                    messages = messages[i:]
+                    recent = messages[i:]
                     break
-            tool_count = sum(1 for m in messages if m.get("role") == "tool")
+            tool_count = sum(1 for m in recent if m.get("role") == "tool")
             if tool_count >= max_rounds:
                 logger.info("Max tool rounds (%d) reached, disabling tools", max_rounds)
                 return []
@@ -671,15 +672,21 @@ class LiteGraphAgentLoop:
                 try:
                     json.loads(args_str)
                 except (json.JSONDecodeError, TypeError):
-                    if args_str and args_str[-1] not in ("}", "]"):
-                        try:
-                            json.loads(args_str + "}")
-                            args_str = args_str + "}"
-                            logger.warning("Fixed truncated arguments for %s", tc.function.name)
-                        except (json.JSONDecodeError, TypeError):
-                            args_str = "{}"
-                    else:
-                        args_str = "{}"
+                    # Try common truncation repair patterns in order of likelihood
+                    repaired = None
+                    if args_str:
+                        suffixes = ["}", "]}", "\"}]", "\"}", "\"]}", "\"]"]
+                        for suffix in suffixes:
+                            candidate = args_str + suffix
+                            try:
+                                json.loads(candidate)
+                                repaired = candidate
+                                break
+                            except (json.JSONDecodeError, TypeError):
+                                continue
+                    args_str = repaired or "{}"
+                    if repaired:
+                        logger.warning("Fixed truncated arguments for %s", tc.function.name)
 
                 fixed_calls.append({
                     "id": tc.id,
@@ -743,7 +750,35 @@ class LiteGraphAgentLoop:
             tail_tokens += msg_tokens
         tail_msgs.reverse()
 
+        # Ensure tool-call linkage: if a tool result is in tail but its parent
+        # assistant message (with tool_calls) was pruned, expand the tail to
+        # include the parent. This avoids orphan tool results.
+        call_ids_in_tail: set[str] = {
+            m.get("tool_call_id", "")
+            for m in tail_msgs
+            if m.get("role") == "tool"
+        }
+        if call_ids_in_tail:
+            tail_ids = {id(m) for m in tail_msgs}
+            # Walk backward from the start of tail to find needed parents
+            tail_start = len(non_system) - len(tail_msgs)
+            insertions: list[dict] = []
+            for i in range(tail_start - 1, -1, -1):
+                m = non_system[i]
+                if m.get("role") == "assistant" and m.get("tool_calls"):
+                    has_matching = any(
+                        tc.get("id") in call_ids_in_tail for tc in m["tool_calls"]
+                    )
+                    if has_matching and id(m) not in tail_ids:
+                        insertions.append(m)
+            # Prepend in original order
+            for m in reversed(insertions):
+                tail_msgs.insert(0, m)
+
         pruned = non_system[:len(non_system) - len(tail_msgs)]
+        # Exclude messages that were pulled into tail from pruned
+        tail_obj_ids = {id(m) for m in tail_msgs}
+        pruned = [m for m in pruned if id(m) not in tail_obj_ids]
         if not pruned:
             return messages
 

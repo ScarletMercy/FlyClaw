@@ -59,6 +59,8 @@ class ReloadExecutor:
 
     async def _do_reload_tools(self):
         from src.tools.registry import get_tool_registry
+        from src.tools.exec import reset_config_cache
+        reset_config_cache()
         tools = list(get_tool_registry().collect())
         if self._app.agent_loop:
             self._app.agent_loop._tools = tools
