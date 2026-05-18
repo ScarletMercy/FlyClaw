@@ -148,7 +148,6 @@ class ServiceContainer:
             "src.tools.tts_tools",
             "src.tools.beads_tools",
             "src.memory.beads_sync",
-            "src.tools.skills_tools",
             "src.skills.manager",
             "src.skills.curator",
             "src.agent.learning",

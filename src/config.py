@@ -289,17 +289,6 @@ class PluginsConfig(BaseModel):
     extra_dirs: list[str] = Field(default_factory=list)
 
 
-class TtsConfig(BaseModel):
-    enabled: bool = False
-    provider: str = "openai"  # "openai" | "elevenlabs" | "azure"
-    model: str = "tts-1"
-    voice: str = "alloy"
-    auto_mode: Literal["off", "always", "tagged"] = "tagged"
-    max_chars: int = 2000
-    api_key: str = ""  # Empty = use main model api_key
-    base_url: str = ""  # Empty = use provider default; for Azure, set to region (e.g. "eastus")
-
-
 class MemoryConfig(BaseModel):
     enabled: bool = False
     backend: Literal["sqlite", "lancedb"] = "sqlite"
@@ -402,7 +391,6 @@ class AppConfig(BaseModel):
     plugins: PluginsConfig = Field(default_factory=PluginsConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     link_understanding: LinkUnderstandingConfig = Field(default_factory=LinkUnderstandingConfig)
-    tts: TtsConfig = Field(default_factory=TtsConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     timeouts: TimeoutsConfig = Field(default_factory=TimeoutsConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import re
@@ -13,12 +12,10 @@ import lark_oapi as lark
 from lark_oapi.api.im.v1 import (
     CreateMessageRequest,
     CreateMessageRequestBody,
-    CreateMessageResponseBody,
     ReplyMessageRequest,
 )
 from lark_oapi.ws.client import Client as WsClient
 from lark_oapi.event.dispatcher_handler import EventDispatcherHandlerBuilder
-from lark_oapi.api.im.v1.model.p2_im_message_receive_v1 import P2ImMessageReceiveV1
 
 from .base import Channel, api_request_with_retry
 from src.tools.feishu_tools import _lark_call_with_retry

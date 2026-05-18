@@ -81,10 +81,6 @@ def cmd_doctor(args):
     if config.memory.enabled:
         print(f"[OK] Memory enabled (db={config.memory.db_path})")
 
-    # Check TTS
-    if config.tts.enabled:
-        print(f"[OK] TTS enabled (provider={config.tts.provider})")
-
     # Check tools
     print(f"[OK] Exec: enabled={config.tools.exec.enabled}, approval={config.tools.exec.approval_mode}")
     print(f"[OK] Web search: enabled={config.tools.web_search.enabled}")
@@ -119,7 +115,6 @@ def cmd_status(args):
     print(f"Feishu:     {'enabled' if config.channels.feishu.enabled else 'disabled'}")
     print(f"Cron:       {'enabled' if config.cron.enabled else 'disabled'}")
     print(f"Memory:     {'enabled' if config.memory.enabled else 'disabled'}")
-    print(f"TTS:        {'enabled' if config.tts.enabled else 'disabled'}")
     print(f"Skills:     {'enabled' if config.skills.enabled else 'disabled'}")
     print(f"Plugins:    {'enabled' if config.plugins.enabled else 'disabled'}")
     print(f"Exec:       approval={config.tools.exec.approval_mode}")

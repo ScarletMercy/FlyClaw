@@ -233,18 +233,7 @@ class MessageHandler:
                     except Exception:
                         pass
 
-                tts_text = ""
-                if getattr(self._container.config, "tts", None) and self._container.config.tts.enabled and self._container.config.tts.auto_mode != "off":
-                    try:
-                        await self._handle_tts(assistant_text, chat_id, channel_prefix)
-                        if self._container.config.tts.auto_mode == "tagged":
-                            from src.tts.directives import strip_tts_directives
-
-                            tts_text = strip_tts_directives(assistant_text)
-                    except Exception as e:
-                        logger.warning("TTS processing failed: %s", e)
-
-                display_text = tts_text if tts_text else assistant_text
+                display_text = assistant_text
 
                 try:
                     from src.media_delivery import deliver_media
@@ -384,33 +373,6 @@ class MessageHandler:
                 await self._container.feishu.send_text(chat_id, assistant_text)
         except Exception:
             logger.exception("Error in _handle_approval_pending for request %s", exc.request_id)
-
-    async def _handle_tts(self, assistant_text: str, chat_id: str, channel_prefix: str = "feishu"):
-        if not self._container.config.tts.enabled:
-            return
-
-        tts_config = self._container.config.tts
-        from src.tts.provider import TtsProvider
-        from src.tts.directives import parse_tts_directives
-
-        provider = TtsProvider(tts_config, self._container.config.model)
-
-        async def _send_audio(audio_bytes: bytes):
-            if channel_prefix == "feishu" and self._container.feishu:
-                await self._container.feishu.send_audio(chat_id, audio_bytes)
-            elif channel_prefix == "qq" and self._container.qq:
-                await self._container.qq.send_audio(chat_id, audio_bytes)
-
-        if tts_config.auto_mode == "always":
-            audio = await provider.synthesize(assistant_text)
-            if audio:
-                await _send_audio(audio)
-        elif tts_config.auto_mode == "tagged":
-            directives = parse_tts_directives(assistant_text)
-            for directive in directives:
-                audio = await provider.synthesize(directive.text)
-                if audio:
-                    await _send_audio(audio)
 
     async def _beads_llm_judge(self, user_input: str, ai_response: str, reply_fn):
         try:

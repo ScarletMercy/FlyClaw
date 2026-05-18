@@ -39,7 +39,6 @@ ROLE_PERMISSIONS: dict[UserRole, dict[str, Any]] = {
             "web_fetch",
             "memory_search",
             "memory_add",
-            "memory_tools",
             "cron_tools",
             "file_read",
             "file_list",
