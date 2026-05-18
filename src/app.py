@@ -9,9 +9,7 @@ from src.agent.client import create_client, create_chain
 from src.agent.loop import AgentLoop
 from src.agent.state import StateStore
 from src.agent.tooldef import ToolDef
-from src.channels.feishu import FeishuChannel
 from src.channels.qq import QQChannel
-from src.channels.typing import TypingIndicator
 from src.config import load_config
 from src.cron.executor import execute_cron_job
 from src.cron.service import CronService
@@ -56,11 +54,9 @@ class ServiceContainer:
         self.agent_loop: AgentLoop | None = None
         self.state_store: StateStore | None = None
         self.model_ref = None
-        self.feishu: FeishuChannel | None = None
         self.qq: QQChannel | None = None
         self.session_tracker: SessionTracker | None = None
         self.session_registry: SessionRegistry | None = None
-        self.typing: TypingIndicator | None = None
         self.dispatcher: CommandDispatcher | None = None
         self.cron_service: CronService | None = None
         self.api = None
@@ -73,7 +69,6 @@ class ServiceContainer:
         self.run_registry = None
         self.mcp_manager = None
         self.tool_registry = None
-        self.card_callback_registry = None
         self.approval_manager = None
         self.browser_manager = None
         self.media_understanding_runner = None
@@ -137,7 +132,6 @@ class ServiceContainer:
         tool_modules = [
             "src.tools.exec",
             "src.tools.file_tools",
-            "src.tools.feishu_tools",
             "src.tools.qq_tools",
             "src.tools.ai_tools",
             "src.tools.cron_tools",
@@ -285,39 +279,22 @@ class ServiceContainer:
         self._startup_sync_task = asyncio.create_task(self._run_startup_sync(store))
 
     def _setup_channels_and_sessions(self, skills: list):
-        self.feishu = FeishuChannel(self.config.channels.feishu)
         self.session_tracker = SessionTracker(
             idle_reset_minutes=self.config.session.idle_reset_minutes,
         )
         self.session_registry = SessionRegistry()
         self.session_registry.init(str(_MYCLAW_DATA_DIR / "sessions.json"))
-        self.typing = TypingIndicator(self.feishu.client, enabled=self.config.channels.feishu.typing_indicator)
         self.dispatcher = CommandDispatcher(skills if skills else [], config=self.config)
 
     def _setup_registries(self):
         from src.tools.registry import ToolRegistry
-        from src.channels.cards import CardCallbackRegistry
         from src.tools.approval import ApprovalManager
         self.tool_registry = ToolRegistry()
-        self.card_callback_registry = CardCallbackRegistry()
         self.approval_manager = ApprovalManager(data_dir=str(_MYCLAW_DATA_DIR))
 
     def _setup_media_understanding(self):
         if not self.config.tools.media_understanding.enabled:
             return
-        try:
-            from src.media_understanding.runner import MediaUnderstandingRunner
-            from src.channels.feishu import set_media_understanding_runner
-            mu_runner = MediaUnderstandingRunner(
-                self.config.tools.media_understanding,
-                fallback_api_key=self.config.model.api_key or "",
-            )
-            self.media_understanding_runner = mu_runner
-            set_media_understanding_runner(mu_runner)
-            logger.info("Media understanding runner initialized for Feishu channel")
-        except Exception as e:
-            logger.warning("Failed to init media understanding: %s", e)
-
         if self.config.channels.qq.enabled:
             try:
                 from src.media_understanding.runner import MediaUnderstandingRunner
@@ -325,6 +302,7 @@ class ServiceContainer:
                     self.config.tools.media_understanding,
                     fallback_api_key=self.config.model.api_key or "",
                 )
+                self.media_understanding_runner = self._qq_mu_runner
             except Exception as e:
                 logger.warning("Failed to init QQ media understanding: %s", e)
 
@@ -344,9 +322,9 @@ class ServiceContainer:
         cron_store = CronStore(self.config.cron.store_path)
 
         async def cron_execute(job):
-            return await execute_cron_job(job, self.agent_loop, self.config, self.feishu)
+            return await execute_cron_job(job, self.agent_loop, self.config, self.qq)
 
-        self.cron_service = CronService(cron_store, cron_execute, config=self.config, feishu_channel=self.feishu)
+        self.cron_service = CronService(cron_store, cron_execute, config=self.config, channel=self.qq)
         logger.info("Cron service initialized")
 
     def _setup_workspace(self):
@@ -371,7 +349,7 @@ class ServiceContainer:
     def _setup_gateway(self):
         from src.gateway import create_gateway
         import src.gateway as _gw_mod
-        self.api = create_gateway(self.config, self.agent_loop, self.feishu, self.cron_service)
+        self.api = create_gateway(self.config, self.agent_loop, self.cron_service)
         _gw_mod._app_ref = self
 
     # ── Setup: main orchestrator ─────────────────────────────────────
@@ -479,7 +457,7 @@ class ServiceContainer:
             model=f"{self.config.model.provider}/{self.config.model.name}",
             tools_count=len(self.agent_loop._tools) if self.agent_loop else 0,
             skills_count=len(self.skills_cache),
-            channels_enabled=[ch for ch in ["feishu", "qq"] if getattr(getattr(self.config.channels, ch, None), "enabled", False)],
+            channels_enabled=[ch for ch in ["qq"] if getattr(getattr(self.config.channels, ch, None), "enabled", False)],
         )
 
         try:
@@ -593,7 +571,6 @@ class ServiceContainer:
             logger.warning("Failed to start memory watcher: %s", e)
 
     async def _start_channels(self):
-        await self.feishu.start()
         await self.qq.start()
         logger.info(
             "Gateway ready: http://%s:%d",
@@ -647,8 +624,6 @@ class ServiceContainer:
             if self.cron_service:
                 await self.cron_service.stop()
             await self.session_tracker.stop()
-            await self.typing.stop_all()
-            await self.feishu.stop()
             await self.qq.stop()
             try:
                 from src.mcp.manager import get_mcp_manager

@@ -310,7 +310,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
     async def cmd_new(args: str, ctx: dict) -> str:
         zh = container.config.agents.language == "zh"
         user_key = ctx.get("user_key", "")
-        channel_prefix = ctx.get("channel_prefix", "feishu")
+        channel_prefix = ctx.get("channel_prefix", "qq")
         if not user_key:
             return "无法确定会话。" if zh else "Cannot determine session."
         user_hash = user_key.split(":")[-1] if user_key else "unknown"

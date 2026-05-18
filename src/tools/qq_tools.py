@@ -193,11 +193,11 @@ async def qq_send_text(chat_id: str = "", text: str = "", reply_to: Optional[str
 
 
 async def qq_send_image(chat_id: str = "", image_key: str = "") -> str:
-    """Send an image to a QQ user or group.
+    """Send an image to a QQ user or group. Supports local file paths and URLs.
 
     Args:
         chat_id: Chat ID in format 'c2c:openid', 'group:openid', etc. Leave empty to reply in current chat.
-        image_key: Image URL or local file path.
+        image_key: Local file path (preferred) or URL of the image.
     """
     chat_id = chat_id or _current_qq_chat_id.get("")
     if not chat_id:
@@ -210,11 +210,11 @@ async def qq_send_image(chat_id: str = "", image_key: str = "") -> str:
 
 
 async def qq_send_file(chat_id: str = "", file_key: str = "") -> str:
-    """Send a file to a QQ user or group (C2C and group only).
+    """Send a file to a QQ user or group. Supports local file paths and URLs.
 
     Args:
         chat_id: Chat ID in format 'c2c:openid' or 'group:openid'. Leave empty to reply in current chat.
-        file_key: File URL or local file path.
+        file_key: Local file path (preferred) or URL of the file.
     """
     chat_id = chat_id or _current_qq_chat_id.get("")
     if not chat_id:

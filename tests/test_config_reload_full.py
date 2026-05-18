@@ -18,7 +18,7 @@ def _make_app():
     app.agent_loop._tools = []
     app.agent_loop._tool_map = {}
     app.agent_loop._skills_prompt = ""
-    app.feishu = MagicMock()
+    app.qq = MagicMock()
     app.cron_service = None
     app.skills_cache = []
     return app

@@ -183,15 +183,13 @@ def register_dashboard(app: FastAPI, application):
             has_fallbacks=bool(cfg.model.fallbacks),
             uptime=f"{hours}h {minutes}m {seconds}s",
             gateway=f"{cfg.gateway.host}:{cfg.gateway.port}",
-            feishu_enabled=cfg.channels.feishu.enabled,
-            feishu_domain=cfg.channels.feishu.domain,
             session_count=_app_ref.session_tracker.active_count if _app_ref.session_tracker else 0,
             tool_count=len(tools),
             skill_count=len(skills),
             cron_enabled=cfg.cron.enabled,
             cron_jobs=cron_jobs,
             memory_enabled=getattr(cfg.memory, "enabled", False),
-            tts_enabled=getattr(cfg.tts, "enabled", False),
+            tts_enabled=getattr(getattr(cfg, "tts", None), "enabled", False),
             tools=tools,
             skills=skills,
             sessions=sessions,
@@ -225,12 +223,6 @@ def register_dashboard(app: FastAPI, application):
                 "max_tool_rounds": cfg.agents.max_tool_rounds,
                 "subagents": list(cfg.agents.subagents.keys()),
                 "gateway": f"{cfg.gateway.host}:{cfg.gateway.port}" + (" (auth)" if cfg.gateway.auth_token else ""),
-                "feishu_enabled": cfg.channels.feishu.enabled,
-                "feishu_domain": cfg.channels.feishu.domain,
-                "feishu_dm": cfg.channels.feishu.dm_policy,
-                "feishu_group": cfg.channels.feishu.group_policy,
-                "feishu_mention": cfg.channels.feishu.require_mention,
-                "feishu_streaming": cfg.channels.feishu.streaming,
                 "session_scope": cfg.session.scope,
                 "idle_reset_minutes": cfg.session.idle_reset_minutes,
                 "exec_enabled": cfg.tools.exec.enabled,
@@ -242,8 +234,8 @@ def register_dashboard(app: FastAPI, application):
                 "cron_enabled": cfg.cron.enabled,
                 "cron_concurrent": cfg.cron.max_concurrent_runs,
                 "memory_enabled": getattr(cfg.memory, "enabled", False),
-                "tts_enabled": getattr(cfg.tts, "enabled", False),
-                "tts_provider": getattr(cfg.tts, "provider", ""),
+                "tts_enabled": getattr(getattr(cfg, "tts", None), "enabled", False),
+                "tts_provider": getattr(getattr(cfg, "tts", None), "provider", ""),
                 "checkpointer": cfg.checkpointer.type,
                 # New config entries
                 "qq_enabled": cfg.channels.qq.enabled,
@@ -288,10 +280,6 @@ def register_dashboard(app: FastAPI, application):
                 "has_fallbacks": bool(cfg.model.fallbacks),
             },
             "gateway": f"{cfg.gateway.host}:{cfg.gateway.port}",
-            "feishu": {
-                "enabled": cfg.channels.feishu.enabled,
-                "domain": cfg.channels.feishu.domain,
-            },
             "sessions": _app_ref.session_tracker.active_count if _app_ref.session_tracker else 0,
             "tools": len(_app_ref.agent_loop._tools) if _app_ref.agent_loop else 0,
             "skills": len(skills),
@@ -300,7 +288,7 @@ def register_dashboard(app: FastAPI, application):
                 "jobs": 0,
             },
             "memory": getattr(cfg, "memory", None) and cfg.memory.enabled or False,
-            "tts": getattr(cfg, "tts", None) and cfg.tts.enabled or False,
+            "tts": getattr(cfg, "tts", None) and getattr(cfg.tts, "enabled", False) or False,
         }
         if _app_ref.cron_service:
             s = _app_ref.cron_service.status()
@@ -314,7 +302,7 @@ def register_dashboard(app: FastAPI, application):
         sessions = []
 
         # Only show chat sessions (channel:user:* or channel:group:* or channel:sN:*)
-        _chat_pattern = _re.compile(r'^(feishu|qq):(user|group|s\d+):')
+        _chat_pattern = _re.compile(r'^(qq):(user|group|s\d+):')
 
         # Active sessions from tracker (with idle time)
         active_ids = set()
@@ -432,14 +420,6 @@ def register_dashboard(app: FastAPI, application):
                 "port": cfg.gateway.port,
                 "has_auth": bool(cfg.gateway.auth_token),
             },
-            "feishu": {
-                "enabled": cfg.channels.feishu.enabled,
-                "domain": cfg.channels.feishu.domain,
-                "dm_policy": cfg.channels.feishu.dm_policy,
-                "group_policy": cfg.channels.feishu.group_policy,
-                "require_mention": cfg.channels.feishu.require_mention,
-                "streaming": cfg.channels.feishu.streaming,
-            },
             "session": {
                 "scope": cfg.session.scope,
                 "idle_reset_minutes": cfg.session.idle_reset_minutes,
@@ -460,8 +440,8 @@ def register_dashboard(app: FastAPI, application):
                 "enabled": getattr(cfg.memory, "enabled", False),
             },
             "tts": {
-                "enabled": getattr(cfg.tts, "enabled", False),
-                "provider": getattr(cfg.tts, "provider", ""),
+                "enabled": getattr(getattr(cfg, "tts", None), "enabled", False),
+                "provider": getattr(getattr(cfg, "tts", None), "provider", ""),
             },
             "checkpointer": {
                 "type": cfg.checkpointer.type,
@@ -602,7 +582,7 @@ def register_dashboard(app: FastAPI, application):
         }
         # Sessions (active + historical from checkpointer, chat only)
         import re as _re
-        _chat_pattern = _re.compile(r'^(feishu|qq):(user|group|s\d+):')
+        _chat_pattern = _re.compile(r'^(qq):(user|group|s\d+):')
         all_sessions = []
         active_ids = set()
         if _app_ref.session_tracker:

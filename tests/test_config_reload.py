@@ -29,7 +29,7 @@ class TestReloadExecutor:
         old_service = AsyncMock()
         app.cron_service = old_service
         app.config = AppConfig()
-        app.feishu = MagicMock()
+        app.qq = MagicMock()
         executor = ReloadExecutor(app)
         plan = ReloadPlan(actions=[ReloadAction(action="reload_cron")])
         with patch("src.cron.service.CronService") as MockCron:

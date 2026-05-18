@@ -21,10 +21,9 @@ def _make_gateway_app(auth_token="test-token"):
     config.gateway.auth_token = auth_token
 
     agent_loop = MagicMock()
-    feishu_channel = None
     cron_service = None
 
-    app = create_gateway(config, agent_loop, feishu_channel, cron_service)
+    app = create_gateway(config, agent_loop, cron_service)
 
     mock_container = MagicMock()
     mock_container.rbac = None

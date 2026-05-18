@@ -52,16 +52,6 @@ def cmd_doctor(args):
         warnings.append("Gateway auth_token is empty")
         print("[WARN] Gateway auth_token is empty — all auth disabled")
 
-    # Check Feishu
-    if config.channels.feishu.enabled:
-        if config.channels.feishu.app_id and config.channels.feishu.app_secret:
-            print(f"[OK] Feishu configured (domain={config.channels.feishu.domain})")
-        else:
-            errors.append("Feishu enabled but app_id or app_secret is empty")
-            print("[FAIL] Feishu enabled but credentials missing")
-    else:
-        print("[--] Feishu disabled")
-
     # Check database files
     db_path = Path(config.checkpointer.path)
     if db_path.parent.exists():
@@ -112,7 +102,7 @@ def cmd_status(args):
     print("MyClaw System Status\n" + "=" * 40)
     print(f"Model:      {config.model.provider}/{config.model.name}")
     print(f"Gateway:    {config.gateway.host}:{config.gateway.port}")
-    print(f"Feishu:     {'enabled' if config.channels.feishu.enabled else 'disabled'}")
+    print(f"QQ:         {'enabled' if config.channels.qq.enabled else 'disabled'}")
     print(f"Cron:       {'enabled' if config.cron.enabled else 'disabled'}")
     print(f"Memory:     {'enabled' if config.memory.enabled else 'disabled'}")
     print(f"Skills:     {'enabled' if config.skills.enabled else 'disabled'}")

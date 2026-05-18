@@ -36,8 +36,8 @@ session_search:
     def test_parse_thread_id_legacy_p2p(self):
         from src.session_index.store import parse_thread_id
 
-        result = parse_thread_id("feishu:user:ou_abc123")
-        assert result["channel"] == "feishu"
+        result = parse_thread_id("qq:user:ou_abc123")
+        assert result["channel"] == "qq"
         assert result["chat_type"] == "p2p"
         assert result["sender_id"] == "ou_abc123"
 
@@ -60,8 +60,8 @@ session_search:
     def test_parse_thread_id_global(self):
         from src.session_index.store import parse_thread_id
 
-        result = parse_thread_id("feishu:global")
-        assert result["channel"] == "feishu"
+        result = parse_thread_id("qq:global")
+        assert result["channel"] == "qq"
         assert result["chat_type"] == "p2p"
 
     def test_parse_thread_id_ws(self):
@@ -93,14 +93,14 @@ class TestSessionIndexStore:
 
         store = SessionIndexStore(str(tmp_path / "index.db"))
         store.upsert_session(
-            thread_id="feishu:user:ou_abc",
-            channel="feishu",
+            thread_id="qq:user:ou_abc",
+            channel="qq",
             sender_id="ou_abc",
             chat_id="c2c:ou_abc",
             chat_type="p2p",
         )
-        session = store.get_session("feishu:user:ou_abc")
-        assert session["channel"] == "feishu"
+        session = store.get_session("qq:user:ou_abc")
+        assert session["channel"] == "qq"
         assert session["sender_id"] == "ou_abc"
         assert session["is_active"] == 1
         store.close()
@@ -109,7 +109,7 @@ class TestSessionIndexStore:
         from src.session_index.store import SessionIndexStore
 
         store = SessionIndexStore(str(tmp_path / "index.db"))
-        store.upsert_session("t1", "feishu", "s1", "c1", "p2p")
+        store.upsert_session("t1", "qq", "s1", "c1", "p2p")
         msgs = [
             {
                 "message_id": "msg-001",
@@ -148,7 +148,7 @@ class TestSessionIndexStore:
         from src.session_index.store import SessionIndexStore
 
         store = SessionIndexStore(str(tmp_path / "index.db"))
-        store.upsert_session("t1", "feishu", "s1", "c1", "p2p")
+        store.upsert_session("t1", "qq", "s1", "c1", "p2p")
         store.add_messages(
             "t1",
             [
@@ -207,7 +207,7 @@ class TestSyncMessages:
             {"role": "assistant", "content": "hi there", "id": "a1"},
             {"role": "tool", "content": "/bin/ls output...", "tool_call_id": "tc1", "id": "t1", "name": "exec_command"},
         ]
-        sync_messages(store, thread_id="t1", messages=msgs, channel="feishu", sender_id="ou_abc", chat_id="c1", chat_type="p2p", tool_max_chars=500)
+        sync_messages(store, thread_id="t1", messages=msgs, channel="qq", sender_id="ou_abc", chat_id="c1", chat_type="p2p", tool_max_chars=500)
         assert store._db.execute("SELECT COUNT(*) FROM messages WHERE thread_id='t1'").fetchone()[0] == 3
         store.close()
 

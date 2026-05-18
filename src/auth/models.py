@@ -83,7 +83,7 @@ class User(BaseModel):
 class Device(BaseModel):
     device_id: str
     user_id: str
-    platform: str = ""  # "feishu", "qq", "web"
+    platform: str = ""  # "qq", "web"
     name: str = ""
     fingerprint: str = ""
     trusted: bool = False

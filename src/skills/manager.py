@@ -278,7 +278,7 @@ def get_tools() -> list:
             description: 技能描述
             category: 技能分类
             enabled: 是否启用（toggle 时需要）
-            channel: 渠道名称（toggle 时可选，如 feishu/qq）
+            channel: 渠道名称（toggle 时可选，如 qq）
             source: 安装来源（install 时需要，URL 或本地路径）
         """
         if action == "list":

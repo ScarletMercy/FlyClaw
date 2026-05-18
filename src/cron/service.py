@@ -27,12 +27,12 @@ class CronService:
         store: CronStore,
         execute_fn: Callable,
         config: Any = None,
-        feishu_channel: Any = None,
+        channel: Any = None,
     ):
         self.store = store
         self.execute_fn = execute_fn
         self._config = config
-        self._feishu_channel = feishu_channel
+        self._channel = channel
         self._scheduler: Optional[AsyncIOScheduler] = None
         self._jobs: dict[str, CronJob] = {}
         self._failure_alert_after = 2
@@ -61,11 +61,11 @@ class CronService:
         )
         logger.warning("Failure alert for job '%s': %d consecutive errors", job.name, job.consecutive_errors)
 
-        if self._feishu_channel and job.delivery.mode == "announce":
+        if self._channel and job.delivery.mode == "announce":
             target = job.delivery.to or job.delivery.channel or ""
             if target:
                 try:
-                    await self._feishu_channel.send_text(target, alert_text)
+                    await self._channel.send_text(target, alert_text)
                 except Exception as e:
                     logger.error("Failed to send failure alert: %s", e)
 

@@ -60,6 +60,13 @@ def _format_display(text: str) -> str:
     return _JSON_FENCE_RE.sub(_replacer, text)
 
 
+_SILENT_TOOLS = frozenset({
+    "text_to_speech", "send_image_to_chat", "send_file_to_chat", "send_voice",
+    "qq_send_image", "qq_send_file",
+    "skill_manage", "curate_skills", "curator_status",
+})
+
+
 class MessageHandler:
     def __init__(self, container):
         self._container = container
@@ -72,7 +79,7 @@ class MessageHandler:
             return f"user:{sender_id}"
         return f"group:{chat_id}"
 
-    def create_callback(self, session_scope: str, channel_prefix: str = "feishu"):
+    def create_callback(self, session_scope: str, channel_prefix: str = "qq"):
         async def on_message(
             text: str,
             sender_id: str,
@@ -133,9 +140,6 @@ class MessageHandler:
                 await reply_fn("未知命令。输入 /help 查看可用命令。")
                 return
 
-            if channel_prefix == "feishu":
-                await self._container.typing.start(message_id)
-
             from src.tools.cron_tools import set_current_chat_id
             set_current_chat_id(chat_id)
             from src.tools.media_tools import set_current_channel
@@ -159,8 +163,6 @@ class MessageHandler:
             if existing:
                 if existing.pending_approval:
                     await reply_fn("⏳ 有待审批的操作，请先回复审批后再发新消息。")
-                    if channel_prefix == "feishu":
-                        await self._container.typing.stop(message_id)
                     return
                 input_state.messages = existing.messages + input_state.messages
 
@@ -184,14 +186,23 @@ class MessageHandler:
                 try:
                     if event == "tool.exec_started":
                         tool = kwargs.get("tool_name", "")
-                        args_preview = kwargs.get("args_preview", "")[:60]
+                        if tool in _SILENT_TOOLS:
+                            return
+                        raw_args = kwargs.get("args_preview", "")
+                        try:
+                            parsed = json.loads(raw_args)
+                            if isinstance(parsed, dict):
+                                vals = list(parsed.values())
+                                args_preview = str(vals[0])[:80] if len(parsed) == 1 else ", ".join(f"{k}={v}" for k, v in parsed.items())[:80]
+                            else:
+                                args_preview = raw_args[:80]
+                        except (json.JSONDecodeError, ValueError):
+                            args_preview = raw_args[:80]
                         if zh:
                             msg = f"🔧 {tool}: {args_preview}" if args_preview else f"🔧 执行 {tool}..."
                         else:
                             msg = f"🔧 {tool}: {args_preview}" if args_preview else f"🔧 Running {tool}..."
-                        if channel == "feishu" and self._container.feishu:
-                            await self._container.feishu.send_text(active_chat_id, msg)
-                        elif channel == "qq" and self._container.qq:
+                        if channel == "qq" and self._container.qq:
                             await self._container.qq.send_text(active_chat_id, msg)
                     elif event == "tool.exec_failed":
                         tool = kwargs.get("tool_name", "")
@@ -200,9 +211,7 @@ class MessageHandler:
                             msg = f"❌ {tool} 失败: {err}"
                         else:
                             msg = f"❌ {tool} failed: {err}"
-                        if channel == "feishu" and self._container.feishu:
-                            await self._container.feishu.send_text(active_chat_id, msg)
-                        elif channel == "qq" and self._container.qq:
+                        if channel == "qq" and self._container.qq:
                             await self._container.qq.send_text(active_chat_id, msg)
                 except Exception:
                     pass
@@ -245,7 +254,7 @@ class MessageHandler:
 
                 for msg in reversed(messages):
                     if msg.get("role") == "assistant" and msg.get("content"):
-                        assistant_text = msg["content"]
+                        assistant_text = msg["content"].lstrip("\n")
                         break
 
                 for msg in messages[pre_msg_count:]:
@@ -289,7 +298,7 @@ class MessageHandler:
 
                 try:
                     from src.media_delivery import deliver_media
-                    ch = self._container.qq if channel_prefix == "qq" else self._container.feishu if channel_prefix == "feishu" else None
+                    ch = self._container.qq if channel_prefix == "qq" else None
                     if ch:
                         display_text = await deliver_media(display_text, chat_id, channel_prefix, ch)
                 except Exception as e:
@@ -298,10 +307,9 @@ class MessageHandler:
                 try:
                     logger.debug("[flow] sending reply, len=%d", len(display_text))
                     await reply_fn(display_text)
-                finally:
-                    if channel_prefix == "feishu":
-                        await self._container.typing.stop(message_id)
-                logger.info("Reply to %s: %.100s", session_key, display_text)
+                    logger.info("Reply to %s: %.100s", session_key, display_text)
+                except Exception as e:
+                    logger.error("Reply failed: %s", e)
 
                 from src.events import emit_async
                 await emit_async(
@@ -401,28 +409,6 @@ class MessageHandler:
                 if assistant_text:
                     await self._container.qq.send_text(chat_id, assistant_text)
                 return
-            else:
-                await self._container.feishu.send_approval_card(
-                    chat_id,
-                    exc.request_id,
-                    exc.command_preview,
-                    denylisted=exc.denylisted,
-                )
-
-            decision = await mgr.await_approval(exc.request_id, timeout=approval_timeout)
-            if decision == "timeout":
-                if auto_deny:
-                    msg = "操作超时，已自动拒绝。" if zh else "Operation timed out, auto-denied."
-                    await self._container.feishu.send_text(chat_id, msg)
-                decision = "deny"
-            result_state = await self._container.agent_loop.resume(exc.thread_id, decision)
-            assistant_text = ""
-            for msg in reversed(result_state.messages):
-                if msg.get("role") == "assistant" and msg.get("content"):
-                    assistant_text = msg["content"]
-                    break
-            if assistant_text:
-                await self._container.feishu.send_text(chat_id, assistant_text)
         except Exception:
             logger.exception("Error in _handle_approval_pending for request %s", exc.request_id)
 

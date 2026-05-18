@@ -222,7 +222,7 @@ def _configure_fallbacks(model: dict) -> None:
 
 
 def _step_model(config: dict) -> None:
-    print("  [1/6] Model Provider")
+    print("  [1/5] Model Provider")
     print("  ────────────────────")
 
     model = _section(config, "model")
@@ -280,7 +280,7 @@ def _step_model(config: dict) -> None:
 
 def _step_gateway(config: dict) -> None:
     print()
-    print("  [2/6] Gateway")
+    print("  [2/5] Gateway")
     print("  ────────────")
 
     gw = _section(config, "gateway")
@@ -293,38 +293,10 @@ def _step_gateway(config: dict) -> None:
     gw["auth_token"] = f"${{GATEWAY_AUTH_TOKEN}}" if not token else token
 
 
-def _step_feishu(config: dict) -> None:
-    print()
-    print("  [3/6] Feishu Channel")
-    print("  ────────────────────")
-
-    channels = _section(config, "channels")
-    feishu = _section(channels, "feishu")
-
-    if feishu.get("enabled") and _ask_skip("Feishu", feishu, "app_id", "app_secret"):
-        return
-
-    enabled = _ask_yn("  Enable Feishu?", default=feishu.get("enabled", False))
-    feishu["enabled"] = enabled
-
-    if enabled:
-        feishu["app_id"] = _ask("  App ID", default=feishu.get("app_id", ""))
-        feishu["app_secret"] = _ask("  App Secret", default=feishu.get("app_secret", ""))
-        feishu["domain"] = _ask_choice("  Domain", ["feishu", "lark"], default=feishu.get("domain", "feishu"))
-        feishu["dm_policy"] = _ask_choice(
-            "  DM policy", ["open", "pairing", "allowlist"], default=feishu.get("dm_policy", "open")
-        )
-        feishu["group_policy"] = _ask_choice(
-            "  Group policy", ["allowlist", "open", "disabled"], default=feishu.get("group_policy", "allowlist")
-        )
-        feishu["require_mention"] = _ask_yn(
-            "  Require @mention in groups?", default=feishu.get("require_mention", True)
-        )
-
 
 def _step_qq(config: dict) -> None:
     print()
-    print("  [4/6] QQ Bot Channel")
+    print("  [3/5] QQ Bot Channel")
     print("  ─────────────────────")
 
     channels = _section(config, "channels")
@@ -349,7 +321,7 @@ def _step_qq(config: dict) -> None:
 
 def _step_search(config: dict) -> None:
     print()
-    print("  [5/6] Web Search")
+    print("  [4/5] Web Search")
     print("  ────────────────")
 
     tools = _section(config, "tools")
@@ -369,12 +341,11 @@ def _step_search(config: dict) -> None:
 def _step_summary(config: dict) -> None:
     model = config.get("model", {})
     gw = config.get("gateway", {})
-    feishu = config.get("channels", {}).get("feishu", {})
     qq = config.get("channels", {}).get("qq", {})
     ws = config.get("tools", {}).get("web_search", {})
 
     print()
-    print("  [6/6] Summary")
+    print("  [5/5] Summary")
     print("  ─────────────")
     print(f"  Model:      {model.get('provider', '?')}/{model.get('name', '?')}")
     if model.get("base_url"):
@@ -385,10 +356,6 @@ def _step_summary(config: dict) -> None:
         for fb in fallbacks:
             print(f"    - {fb.get('provider', '?')}/{fb.get('name', '?')}")
     print(f"  Gateway:    {gw.get('host', '?')}:{gw.get('port', '?')}")
-    print(f"  Feishu:     {'enabled' if feishu.get('enabled') else 'disabled'}")
-    if feishu.get("enabled"):
-        print(f"    domain:   {feishu.get('domain', 'feishu')}")
-        print(f"    dm:       {feishu.get('dm_policy', 'open')}")
     print(f"  QQ Bot:     {'enabled' if qq.get('enabled') else 'disabled'}")
     if qq.get("enabled"):
         print(f"    app_id:   {qq.get('app_id', '')}")
@@ -413,7 +380,6 @@ def run_wizard():
 
     _step_model(config)
     _step_gateway(config)
-    _step_feishu(config)
     _step_qq(config)
     _step_search(config)
     _step_summary(config)

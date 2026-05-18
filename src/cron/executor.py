@@ -93,7 +93,7 @@ async def execute_cron_job(
     job: CronJob,
     agent_loop: Any,
     config: Any,
-    feishu_channel: Any = None,
+    channel: Any = None,
     started_at: Optional[float] = None,
 ) -> CronRunResult:
     if started_at is None:
@@ -163,7 +163,7 @@ async def execute_cron_job(
             finished_at=finished_at,
         )
 
-        await _deliver_result(job, output, feishu_channel)
+        await _deliver_result(job, output, channel)
         return cr
 
     except asyncio.TimeoutError:
@@ -227,7 +227,7 @@ async def execute_with_retry(
     return last_result
 
 
-async def _deliver_result(job: CronJob, output: str, feishu_channel: Any = None):
+async def _deliver_result(job: CronJob, output: str, channel: Any = None):
     if not output or not output.strip():
         return
     delivery = job.delivery
@@ -237,10 +237,10 @@ async def _deliver_result(job: CronJob, output: str, feishu_channel: Any = None)
         return
 
     try:
-        if delivery.mode == "announce" and feishu_channel is not None:
+        if delivery.mode == "announce" and channel is not None:
             target = delivery.to or delivery.channel or ""
             if target:
-                await feishu_channel.send_text(target, output)
+                await channel.send_text(target, output)
                 logger.info("Delivered cron output to channel: %s", target)
             else:
                 logger.warning("No delivery target for cron job '%s'", job.name)

@@ -11,9 +11,8 @@ def run_security_audit(config) -> dict[str, Any]:
 
     Checks:
     1. Gateway auth - warns if gateway exposed (0.0.0.0) without auth_token
-    2. Feishu whitelist - warns if dm_policy=open with empty allow_from
-    3. Exec safety - info if approval_mode=off
-    4. Data directory - ensures data/ exists or can be created
+    2. Exec safety - info if approval_mode=off
+    3. Data directory - ensures data/ exists or can be created
     5. Secret leakage - scans config.yaml for hardcoded secrets
 
     Returns:
@@ -40,13 +39,6 @@ def run_security_audit(config) -> dict[str, Any]:
         _check("gateway-auth", "WARN", f"gateway exposed on {host} without auth_token")
     elif token:
         _check("gateway-auth", "PASS", "")
-
-    # Check 2: Feishu whitelist
-    if config.channels.feishu.enabled:
-        if config.channels.feishu.dm_policy == "open" and not config.channels.feishu.allow_from:
-            _check("feishu-dm", "WARN", "dm_policy=open with empty allow_from")
-        else:
-            _check("feishu-dm", "PASS", "")
 
     # Check 3: Exec approval
     if config.tools.exec.approval_mode == "off":

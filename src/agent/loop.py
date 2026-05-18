@@ -453,11 +453,8 @@ class AgentLoop:
             tools = apply_tool_policy(tools, sender_id, self._config, user=user)
 
         channel = state.channel
-        if channel == "feishu":
-            tools = [t for t in tools if not t.name.startswith("qq_")]
-        elif channel == "qq":
-            feishu_extra = frozenset({"send_image_to_chat", "send_file_to_chat"})
-            tools = [t for t in tools if not t.name.startswith("feishu_") and t.name not in feishu_extra]
+        if channel == "qq":
+            tools = [t for t in tools if not t.name.startswith("feishu_")]
 
         max_rounds = self._get_max_tool_rounds()
         if max_rounds > 0:

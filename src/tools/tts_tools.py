@@ -45,10 +45,6 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
         from src.channels.qq import _qq_channel
         if _qq_channel and await _qq_channel.send_audio(chat_id, audio_bytes):
             return f"Voice sent ({len(audio_bytes)} bytes, voice={voice})"
-    elif channel == "feishu":
-        from src.channels.feishu import _feishu_channel
-        if _feishu_channel and await _feishu_channel.send_audio(chat_id, audio_bytes):
-            return f"Voice sent ({len(audio_bytes)} bytes, voice={voice})"
 
     return "[error] Failed to send voice to channel"
 

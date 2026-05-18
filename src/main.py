@@ -19,9 +19,6 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%H:%M:%S",
 )
-_lark_logger = logging.getLogger("Lark")
-_lark_logger.setLevel(logging.CRITICAL)
-_lark_logger.handlers.clear()
 logger = logging.getLogger("myclaw")
 
 
@@ -35,7 +32,6 @@ class Application:
         handler = MessageHandler(self.container)
         scope = self.container.config.session.scope
 
-        self.container.feishu.set_message_callback(handler.create_callback(scope))
         self.container.qq.set_message_callback(handler.create_callback(scope, channel_prefix="qq"))
 
         register_builtin_commands(self.container.dispatcher, self.container, tools, skills)

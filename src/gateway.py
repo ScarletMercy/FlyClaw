@@ -148,7 +148,7 @@ def _get_app(request: Request):
     return _app_ref
 
 
-def create_gateway(app_config, agent_loop, feishu_channel=None, cron_service=None):
+def create_gateway(app_config, agent_loop, cron_service=None):
     global _rate_limiter
     rate = getattr(app_config.gateway, "rate_limit", 10.0) if hasattr(app_config, "gateway") else 10.0
     capacity = getattr(app_config.gateway, "rate_limit_burst", 20) if hasattr(app_config, "gateway") else 20
@@ -449,39 +449,6 @@ def create_gateway(app_config, agent_loop, feishu_channel=None, cron_service=Non
             return {"result": await client.call_tool(tool_name, (await request.json()).get("arguments", {}))}
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
-
-    @app.post("/api/feishu/card-action")
-    async def feishu_card_action(request: Request, _auth=Depends(require_auth)):
-        body = await request.json()
-        action_value = body.get("action", {}).get("value", "")
-        request_id, decision = "", "deny"
-        if isinstance(action_value, dict):
-            request_id, decision = action_value.get("request_id", ""), action_value.get("decision", "deny")
-        elif isinstance(action_value, str):
-            try:
-                vd = json.loads(action_value)
-                request_id, decision = (vd.get("request_id", ""), vd.get("decision", "deny")) if isinstance(vd, dict) else (action_value, "deny")
-            except (json.JSONDecodeError, TypeError):
-                request_id = action_value
-        from src.channels.cards import get_card_callback_registry
-        callback = get_card_callback_registry().resolve(request_id) if request_id else None
-        if callback:
-            try:
-                await callback(body)
-                return {"success": True}
-            except Exception as e:
-                logger.error("Card callback error: %s", e)
-                return {"success": False, "error": "internal error"}
-        if request_id:
-            from src.tools.approval import get_approval_manager
-            mgr = get_approval_manager()
-            pending = mgr.get_pending(request_id)
-            if pending:
-                if decision not in ("allow_once", "allow_always", "deny"):
-                    decision = "deny"
-                mgr.resolve(request_id, decision)
-                return {"success": True}
-        return {"success": False, "error": "unknown action"}
 
     @app.post("/api/pair")
     async def pair_device(request: Request, rbac=Depends(require_rbac)):

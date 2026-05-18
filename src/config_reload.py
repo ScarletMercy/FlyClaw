@@ -52,9 +52,9 @@ class ReloadExecutor:
         app = self._app
 
         async def cron_execute(job):
-            return await execute_cron_job(job, app.agent_loop, app.config, app.feishu)
+            return await execute_cron_job(job, app.agent_loop, app.config, app.qq)
 
-        self._app.cron_service = CronService(store, cron_execute, config=self._app.config, feishu_channel=self._app.feishu)
+        self._app.cron_service = CronService(store, cron_execute, config=self._app.config, channel=self._app.qq)
         await self._app.cron_service.start()
 
     async def _do_reload_tools(self):

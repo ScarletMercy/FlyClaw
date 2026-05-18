@@ -93,8 +93,6 @@ async def deliver_media(text: str, chat_id: str, channel_prefix: str, channel) -
         try:
             if channel_prefix == "qq":
                 await _deliver_qq(channel, chat_id, p, media_type)
-            elif channel_prefix == "feishu":
-                await _deliver_feishu(channel, chat_id, p, media_type)
         except Exception as e:
             logger.error("Media delivery failed for %s: %s", file_path, e)
 
@@ -109,26 +107,3 @@ async def _deliver_qq(channel, chat_id: str, p: Path, media_type: str):
         # image, video, file — all use send_file to preserve filename
         await channel.send_file(chat_id, str(p))
 
-
-async def _deliver_feishu(channel, chat_id: str, p: Path, media_type: str):
-    if media_type == "audio":
-        data = p.read_bytes()
-        await channel.send_audio(chat_id, data, file_name=p.name)
-    else:
-        from src.channels.feishu import get_feishu_client
-        from src.channels.media import upload_file, upload_image
-
-        client = get_feishu_client()
-        if client is None:
-            logger.error("Feishu client not initialized")
-            return
-
-        data = p.read_bytes()
-        if media_type == "image":
-            key = await upload_image(client, data)
-            if key:
-                await channel.send_image(chat_id, key)
-        else:
-            key = await upload_file(client, data, p.name)
-            if key:
-                await channel.send_file(chat_id, key)

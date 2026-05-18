@@ -121,7 +121,7 @@ class TestMetaDict:
         import json
         state = AgentState(
             system_prompt="sys", sender_id="u1", chat_id="c1",
-            chat_type="group", channel="feishu",
+            chat_type="group", channel="qq",
             pending_approval={"request_id": "r1"},
         )
         meta = state.meta_dict()

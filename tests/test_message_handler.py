@@ -30,9 +30,8 @@ def _make_container():
     container.dispatcher = MagicMock()
     container.dispatcher.match = MagicMock(return_value=None)
     container.dispatcher.dispatch = AsyncMock(return_value="Available commands: ...")
-    container.feishu = MagicMock()
-    container.feishu.client = MagicMock()
     container.qq = MagicMock()
+    container.qq.client = MagicMock()
     container.cron_service = None
     return container
 
@@ -141,11 +140,11 @@ class TestMessageCallbackSlashCommands:
         container.dispatcher.dispatch.assert_awaited_once_with(
             "help", "",
             context={
-                "thread_id": "feishu:user:u1",
+                "thread_id": "qq:user:u1",
                 "sender_id": "u1",
                 "chat_id": "c1",
-                "user_key": "feishu:user:u1",
-                "channel_prefix": "feishu",
+                "user_key": "qq:user:u1",
+                "channel_prefix": "qq",
             },
         )
         container.agent_loop.run.assert_not_called()
@@ -159,7 +158,7 @@ class TestMessageCallbackPendingApproval:
             messages=[{"role": "user", "content": "cmd"}],
             pending_approval={"tool_call_id": "tc1"},
         )
-        await container.state_store.save("feishu:user:u1", pending_state)
+        await container.state_store.save("qq:user:u1", pending_state)
 
         handler = MessageHandler(container)
         callback = handler.create_callback("per_sender")
@@ -213,7 +212,7 @@ class TestMessageCallbackHistoryLoad:
                 {"role": "assistant", "content": "previous answer"},
             ]
         )
-        await container.state_store.save("feishu:user:u1", old_state)
+        await container.state_store.save("qq:user:u1", old_state)
 
         new_result = AgentState(
             messages=[

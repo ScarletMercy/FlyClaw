@@ -89,20 +89,6 @@ class AgentConfig(BaseModel):
     )
 
 
-class FeishuConfig(BaseModel):
-    enabled: bool = False
-    app_id: str = ""
-    app_secret: str = ""
-    domain: Literal["feishu", "lark"] = "feishu"
-    dm_policy: Literal["open", "pairing", "allowlist"] = "open"
-    group_policy: Literal["open", "allowlist", "disabled"] = "allowlist"
-    allow_from: list[str] = Field(default_factory=list)
-    group_allow_from: list[str] = Field(default_factory=list)
-    require_mention: bool = True
-    streaming: bool = True
-    typing_indicator: bool = True
-
-
 class QQConfig(BaseModel):
     enabled: bool = False
     app_id: str = ""
@@ -116,7 +102,6 @@ class QQConfig(BaseModel):
 
 
 class ChannelsConfig(BaseModel):
-    feishu: FeishuConfig = Field(default_factory=FeishuConfig)
     qq: QQConfig = Field(default_factory=QQConfig)
 
 
@@ -173,6 +158,15 @@ class MediaUnderstandingCapabilityConfig(BaseModel):
     api_key: str = ""  # Empty = inherit from parent
 
 
+class MediaUnderstandingFallback(BaseModel):
+    """Fallback model config for media understanding."""
+
+    provider: str = "openai"
+    name: str = ""
+    base_url: str = ""
+    api_key: str = ""
+
+
 class MediaUnderstandingConfig(BaseModel):
     """Media understanding (image description, audio transcription, video description)."""
 
@@ -185,6 +179,7 @@ class MediaUnderstandingConfig(BaseModel):
     max_audio_size: int = 25 * 1024 * 1024  # 25MB
     max_video_size: int = 50 * 1024 * 1024  # 50MB
     timeout_seconds: int = 60
+    fallbacks: list[MediaUnderstandingFallback] = Field(default_factory=list)
     image: MediaUnderstandingCapabilityConfig = Field(default_factory=MediaUnderstandingCapabilityConfig)
     audio: MediaUnderstandingCapabilityConfig = Field(default_factory=MediaUnderstandingCapabilityConfig)
     video: MediaUnderstandingCapabilityConfig = Field(default_factory=MediaUnderstandingCapabilityConfig)
