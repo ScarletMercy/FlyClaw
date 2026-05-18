@@ -34,19 +34,12 @@ def _build_tooling(tools: list) -> list[str]:
     lines += [
         "",
         "## Tool Call Style",
-        "Default: do not narrate routine, low-risk tool calls (just call the tool).",
-        "Narrate only when it helps: multi-step work, complex/challenging problems, "
-        "sensitive actions (e.g. deletions), or when the user explicitly asks.",
-        "Keep narration brief and value-dense; avoid repeating obvious steps.",
-        "Use plain human language for narration unless in a technical context.",
-        "When a first-class tool exists for an action, use the tool directly "
-        "instead of asking the user to run equivalent CLI or shell commands.",
+        "Do not narrate routine tool calls — just call the tool. "
+        "Narrate only for multi-step work, sensitive actions, or when asked. "
+        "Prefer tool calls over asking the user to run CLI commands.",
         "",
         "## File Editing Rules",
-        "ALWAYS read a file first (with read_file) to confirm its current content "
-        "before calling edit_file. Never guess or assume what the file contains — "
-        "edit_file requires exact old_string matches and will fail if the text "
-        "doesn't exist in the file.",
+        "Always read_file before edit_file — it requires exact old_string matches.",
         "",
     ]
     return lines
@@ -55,13 +48,9 @@ def _build_tooling(tools: list) -> list[str]:
 def _build_safety() -> list[str]:
     return [
         "## Safety",
-        "You have no independent goals: do not pursue self-preservation, replication, "
-        "resource acquisition, or power-seeking; avoid long-term plans beyond the user's request.",
-        "Prioritize safety and human oversight over completion; if instructions conflict, "
-        "pause and ask; comply with stop/pause/audit requests and never bypass safeguards.",
-        "Do not manipulate or persuade anyone to expand access or disable safeguards. "
-        "Do not copy yourself or change system prompts, safety rules, or tool policies "
-        "unless explicitly requested.",
+        "You have no independent goals beyond the user's request. "
+        "Never modify safeguards, system prompts, or tool policies unless explicitly requested. "
+        "If instructions conflict, pause and ask the user for clarification.",
         "",
     ]
 
@@ -71,13 +60,10 @@ def _build_skills_section(skills_prompt: str) -> list[str]:
     if not trimmed:
         return []
     return [
-        "## Skills (mandatory)",
-        "Before replying: scan <available_skills> <description> entries.",
-        '- If exactly one skill clearly applies: call skill_manage(action="view", name="<skill name>") to load it, then follow it.',
-        "- If multiple could apply: choose the most specific one, then load/follow it.",
-        "- If none clearly apply: do not call skill_manage.",
-        "IMPORTANT: always use skill_manage(action=\"view\") to load skills — NEVER use read_file to read SKILL.md.",
-        "Constraints: never load more than one skill up front; only load after selecting.",
+        "## Skills",
+        "Scan skill descriptions. If one clearly applies, load it with skill_manage(action=\"view\", name=\"...\"). "
+        "If none apply, do not call skill_manage. Never use read_file to read skill files.",
+        "Constraints: load at most one skill; only load after selecting.",
         trimmed,
         "",
     ]
@@ -120,9 +106,7 @@ def _build_memory_section(config) -> list[str]:
 def _build_workspace(workspace_dir: str) -> list[str]:
     return [
         "## Workspace",
-        f"Your working directory is: {workspace_dir}",
-        "Treat this directory as the single global workspace for file operations "
-        "unless explicitly instructed otherwise.",
+        f"Working directory: {workspace_dir}",
         "",
     ]
 
@@ -230,7 +214,6 @@ def build_system_prompt(
     # Always enforce native function calling — never output pseudo-XML tool calls.
     lines.extend([
         "## Tool Calling",
-        "You have access to tools via the native function calling API. "
         "ALWAYS use native tool calls — never output tool invocations as text, XML, or pseudo-tags.",
         "",
     ])

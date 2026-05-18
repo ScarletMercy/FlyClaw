@@ -7,7 +7,7 @@ from .types import Skill, SkillCommandSpec
 
 logger = logging.getLogger("myclaw.skills.prompt")
 
-_DEFAULT_BUDGET = 30000
+_DEFAULT_BUDGET = 15000
 
 
 def format_skills_full(skills: list[Skill]) -> str:
@@ -22,8 +22,6 @@ def format_skills_full(skills: list[Skill]) -> str:
         parts.append(f"    <description>{_esc(s.description)}</description>")
         parts.append(f"  </skill>")
     parts.append("</skills>")
-    parts.append("")
-    parts.append('To use a skill, call skill_manage(action="view", name="<skill name>") to load full instructions. NEVER use read_file.')
     return "\n".join(parts)
 
 
@@ -36,7 +34,6 @@ def format_skills_compact(skills: list[Skill]) -> str:
             continue
         parts.append(f"  {_esc(s.name)}: {_esc(s.description)}")
     parts.append("")
-    parts.append('To use a skill, call skill_manage(action="view", name="<skill name>") to load full instructions. NEVER use read_file.')
     return "\n".join(parts)
 
 
