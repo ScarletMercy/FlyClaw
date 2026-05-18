@@ -1,11 +1,63 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 
 from src.agent.loop import ApprovalPending
 
 logger = logging.getLogger("myclaw")
+
+_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n([\s\S]*?)\n\s*```", re.IGNORECASE)
+_MAX_FORMAT_LEN = 8000
+
+
+def _format_json_value(val, indent=0):
+    prefix = "  " * indent
+    if isinstance(val, dict):
+        if not val:
+            return "{}"
+        lines = []
+        for k, v in val.items():
+            formatted = _format_json_value(v, indent + 1)
+            lines.append(f"{prefix}  **{k}**: {formatted}")
+        return "\n".join(lines)
+    elif isinstance(val, list):
+        if not val:
+            return "[]"
+        if val and isinstance(val[0], dict):
+            lines = []
+            for i, item in enumerate(val):
+                lines.append(f"{prefix}{i + 1}.")
+                for k, v in item.items():
+                    formatted = _format_json_value(v, indent + 1)
+                    lines.append(f"{prefix}  - **{k}**: {formatted}")
+            return "\n".join(lines)
+        return ", ".join(str(x) for x in val)
+    elif isinstance(val, bool):
+        return "true" if val else "false"
+    elif isinstance(val, (int, float)):
+        return str(val)
+    elif val is None:
+        return "null"
+    return str(val)
+
+
+def _format_display(text: str) -> str:
+    if not text or len(text) > _MAX_FORMAT_LEN:
+        return text
+
+    def _replacer(m):
+        raw = m.group(1).strip()
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            return m.group(0)
+        formatted = _format_json_value(data)
+        return f"```\n{formatted}\n```"
+
+    return _JSON_FENCE_RE.sub(_replacer, text)
 
 
 class MessageHandler:
@@ -233,7 +285,7 @@ class MessageHandler:
                     except Exception:
                         pass
 
-                display_text = assistant_text
+                display_text = _format_display(assistant_text)
 
                 try:
                     from src.media_delivery import deliver_media
