@@ -173,6 +173,15 @@ class MediaUnderstandingCapabilityConfig(BaseModel):
     api_key: str = ""  # Empty = inherit from parent
 
 
+class MediaUnderstandingFallback(BaseModel):
+    """Fallback model config for media understanding."""
+
+    provider: str = "openai"
+    name: str = ""
+    base_url: str = ""
+    api_key: str = ""
+
+
 class MediaUnderstandingConfig(BaseModel):
     """Media understanding (image description, audio transcription, video description)."""
 
@@ -185,6 +194,7 @@ class MediaUnderstandingConfig(BaseModel):
     max_audio_size: int = 25 * 1024 * 1024  # 25MB
     max_video_size: int = 50 * 1024 * 1024  # 50MB
     timeout_seconds: int = 60
+    fallbacks: list[MediaUnderstandingFallback] = Field(default_factory=list)
     image: MediaUnderstandingCapabilityConfig = Field(default_factory=MediaUnderstandingCapabilityConfig)
     audio: MediaUnderstandingCapabilityConfig = Field(default_factory=MediaUnderstandingCapabilityConfig)
     video: MediaUnderstandingCapabilityConfig = Field(default_factory=MediaUnderstandingCapabilityConfig)

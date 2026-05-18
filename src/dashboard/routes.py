@@ -191,7 +191,7 @@ def register_dashboard(app: FastAPI, application):
             cron_enabled=cfg.cron.enabled,
             cron_jobs=cron_jobs,
             memory_enabled=getattr(cfg.memory, "enabled", False),
-            tts_enabled=getattr(cfg.tts, "enabled", False),
+            tts_enabled=getattr(getattr(cfg, "tts", None), "enabled", False),
             tools=tools,
             skills=skills,
             sessions=sessions,
@@ -242,8 +242,8 @@ def register_dashboard(app: FastAPI, application):
                 "cron_enabled": cfg.cron.enabled,
                 "cron_concurrent": cfg.cron.max_concurrent_runs,
                 "memory_enabled": getattr(cfg.memory, "enabled", False),
-                "tts_enabled": getattr(cfg.tts, "enabled", False),
-                "tts_provider": getattr(cfg.tts, "provider", ""),
+                "tts_enabled": getattr(getattr(cfg, "tts", None), "enabled", False),
+                "tts_provider": getattr(getattr(cfg, "tts", None), "provider", ""),
                 "checkpointer": cfg.checkpointer.type,
                 # New config entries
                 "qq_enabled": cfg.channels.qq.enabled,
@@ -300,7 +300,7 @@ def register_dashboard(app: FastAPI, application):
                 "jobs": 0,
             },
             "memory": getattr(cfg, "memory", None) and cfg.memory.enabled or False,
-            "tts": getattr(cfg, "tts", None) and cfg.tts.enabled or False,
+            "tts": getattr(cfg, "tts", None) and getattr(cfg.tts, "enabled", False) or False,
         }
         if _app_ref.cron_service:
             s = _app_ref.cron_service.status()
@@ -460,8 +460,8 @@ def register_dashboard(app: FastAPI, application):
                 "enabled": getattr(cfg.memory, "enabled", False),
             },
             "tts": {
-                "enabled": getattr(cfg.tts, "enabled", False),
-                "provider": getattr(cfg.tts, "provider", ""),
+                "enabled": getattr(getattr(cfg, "tts", None), "enabled", False),
+                "provider": getattr(getattr(cfg, "tts", None), "provider", ""),
             },
             "checkpointer": {
                 "type": cfg.checkpointer.type,

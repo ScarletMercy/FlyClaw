@@ -325,6 +325,7 @@ class ServiceContainer:
                     self.config.tools.media_understanding,
                     fallback_api_key=self.config.model.api_key or "",
                 )
+                self.media_understanding_runner = self._qq_mu_runner
             except Exception as e:
                 logger.warning("Failed to init QQ media understanding: %s", e)
 
