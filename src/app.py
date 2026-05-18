@@ -472,18 +472,16 @@ class ServiceContainer:
         except Exception as e:
             logger.warning("Startup sync failed: %s", e)
 
-    def _start_events(self):
+    async def _start_events(self):
         from src.events import emit_async, get_hook_manager
 
-        async def _emit():
-            await emit_async(
-                "app.startup",
-                model=f"{self.config.model.provider}/{self.config.model.name}",
-                tools_count=len(self.agent_loop._tools) if self.agent_loop else 0,
-                skills_count=len(self.skills_cache),
-                channels_enabled=[ch for ch in ["feishu", "qq"] if getattr(getattr(self.config.channels, ch, None), "enabled", False)],
-            )
-        asyncio.ensure_future(_emit())
+        await emit_async(
+            "app.startup",
+            model=f"{self.config.model.provider}/{self.config.model.name}",
+            tools_count=len(self.agent_loop._tools) if self.agent_loop else 0,
+            skills_count=len(self.skills_cache),
+            channels_enabled=[ch for ch in ["feishu", "qq"] if getattr(getattr(self.config.channels, ch, None), "enabled", False)],
+        )
 
         try:
             from src.analytics.audit_store import subscribe_audit_to_events
@@ -612,7 +610,7 @@ class ServiceContainer:
     # ── Startup: main orchestrator ───────────────────────────────────
 
     async def on_startup(self):
-        self._start_events()
+        await self._start_events()
         self._start_security_audit()
         await self._start_skills_watcher()
         if self.cron_service:
