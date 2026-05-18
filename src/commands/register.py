@@ -115,6 +115,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 "/approval off|ask|always        — 审批模式",
                 "/rounds <n>                     — 最大工具轮数",
                 "/compress on|off                — 压缩开关",
+                "/progress on|off                — 工具进度通知开关",
                 "/timezone <tz>                  — 时区设置",
                 "/lang zh|en                     — 中英文切换",
                 "",
@@ -154,6 +155,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 "/approval off|ask|always        — Approval mode",
                 "/rounds <n>                     — Max tool rounds",
                 "/compress on|off                — Compression toggle",
+                "/progress on|off                — Tool progress notifications toggle",
                 "/timezone <tz>                  — Timezone",
                 "/lang zh|en                     — Language switch",
                 "",
@@ -671,6 +673,26 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         return f"Compression is {'ON' if current else 'OFF'}. Usage: /compress on|off"
 
     dispatcher.register_builtin("compress", cmd_compress)
+
+    async def cmd_progress(args: str, ctx: dict) -> str:
+        zh = container.config.agents.language == "zh"
+        cfg = container.config
+        arg = args.strip().lower()
+
+        if arg in ("on", "enable", "1", "true"):
+            cfg.agents.tool_progress_notifications = True
+            _save_config()
+            return "工具进度通知已开启。" if zh else "Tool progress notifications ON."
+        if arg in ("off", "disable", "0", "false"):
+            cfg.agents.tool_progress_notifications = False
+            _save_config()
+            return "工具进度通知已关闭。" if zh else "Tool progress notifications OFF."
+        current = cfg.agents.tool_progress_notifications
+        if zh:
+            return f"工具进度通知: {'开启' if current else '关闭'}。用法: /progress on|off"
+        return f"Tool progress notifications are {'ON' if current else 'OFF'}. Usage: /progress on|off"
+
+    dispatcher.register_builtin("progress", cmd_progress)
 
     async def cmd_timezone(args: str, ctx: dict) -> str:
         zh = container.config.agents.language == "zh"

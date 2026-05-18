@@ -94,7 +94,7 @@ class AgentLoopRuntime:
 
 
 def _build_agent_loop(state_store):
-    from src.agent.litegraph_loop import LiteGraphAgentLoop
+    from src.agent.zerograph_loop import ZeroGraphAgentLoop
     from src.agent.client import create_chain
     from src.config import load_config
     from src.tools.registry import get_tool_registry
@@ -103,7 +103,7 @@ def _build_agent_loop(state_store):
     client = create_chain(config)
     tools = list(get_tool_registry().collect())
 
-    return LiteGraphAgentLoop(
+    return ZeroGraphAgentLoop(
         client=client,
         tools=tools,
         state_store=state_store,

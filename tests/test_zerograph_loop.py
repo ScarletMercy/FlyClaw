@@ -1,4 +1,4 @@
-"""Tests for LiteGraphAgentLoop — core execution, tool calls, approval, resume, limits."""
+"""Tests for ZeroGraphAgentLoop — core execution, tool calls, approval, resume, limits."""
 
 import asyncio
 import json
@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.agent.client import ChatResponse
-from src.agent.litegraph_loop import LiteGraphAgentLoop, _estimate_tokens_simple
+from src.agent.zerograph_loop import ZeroGraphAgentLoop, _estimate_tokens_simple
 from src.agent.loop import ApprovalPending
 from src.agent.state import AgentState, MemoryStateStore
 from src.agent.tooldef import ToolDef
@@ -71,12 +71,12 @@ def _make_config(**overrides):
 
 
 def _make_loop(store, config, tools=None, client=None):
-    """Create LiteGraphAgentLoop bypassing __init__ to avoid heavy imports."""
+    """Create ZeroGraphAgentLoop bypassing __init__ to avoid heavy imports."""
     if tools is None:
         tools = []
     if client is None:
         client = AsyncMock()
-    loop = LiteGraphAgentLoop.__new__(LiteGraphAgentLoop)
+    loop = ZeroGraphAgentLoop.__new__(ZeroGraphAgentLoop)
     loop._client = client
     loop._tools = tools
     loop._store = store
@@ -197,7 +197,7 @@ class TestShouldContinue:
         ) == "tools"
 
     def test_without_tool_calls(self):
-        from litegraph import END
+        from zerograph import END
 
         loop = _make_loop(MemoryStateStore(), _make_config())
         assert loop._should_continue(
@@ -205,7 +205,7 @@ class TestShouldContinue:
         ) == END
 
     def test_empty_messages(self):
-        from litegraph import END
+        from zerograph import END
 
         loop = _make_loop(MemoryStateStore(), _make_config())
         assert loop._should_continue({"messages": []}) == END
@@ -391,7 +391,7 @@ class TestRedactAssistantContent:
 # ── Integration Tests: Graph Execution ─────────────────────
 
 
-class TestLiteGraphSingleTurn:
+class TestZeroGraphSingleTurn:
     @pytest.mark.asyncio
     async def test_no_tool_call_returns_immediately(self):
         client = AsyncMock()
@@ -420,7 +420,7 @@ class TestLiteGraphSingleTurn:
         assert "content" in last
 
 
-class TestLiteGraphToolCalls:
+class TestZeroGraphToolCalls:
     @pytest.mark.asyncio
     async def test_single_tool_call(self):
         tool = _make_tool("get_weather")
@@ -523,7 +523,7 @@ class TestLiteGraphToolCalls:
         assert len(tool_msgs) == 3
 
 
-class TestLiteGraphStatePersistence:
+class TestZeroGraphStatePersistence:
     @pytest.mark.asyncio
     async def test_state_saved_after_completion(self):
         client = AsyncMock()
@@ -540,7 +540,7 @@ class TestLiteGraphStatePersistence:
         assert any(m.get("content") == "Saved!" for m in loaded.messages)
 
 
-class TestLiteGraphMaxRounds:
+class TestZeroGraphMaxRounds:
     @pytest.mark.asyncio
     async def test_max_rounds_limits_tool_calls(self):
         config = _make_config()
@@ -563,7 +563,7 @@ class TestLiteGraphMaxRounds:
         assert result.messages[-1]["role"] == "assistant"
 
 
-class TestLiteGraphApproval:
+class TestZeroGraphApproval:
     @pytest.mark.asyncio
     async def test_approval_pending_raised(self):
         from src.tools.exec import ApprovalNeededError
@@ -696,7 +696,7 @@ class TestLiteGraphApproval:
         assert any("denied" in m.get("content", "").lower() for m in tool_msgs)
 
 
-class TestLiteGraphDenyCascade:
+class TestZeroGraphDenyCascade:
     @pytest.mark.asyncio
     async def test_deny_cascades_to_remaining_tools(self):
         from src.tools.exec import ApprovalNeededError
@@ -753,7 +753,7 @@ class TestLiteGraphDenyCascade:
         assert all("denied" in m.get("content", "").lower() for m in tool_msgs)
 
 
-class TestLiteGraphMetadata:
+class TestZeroGraphMetadata:
     @pytest.mark.asyncio
     async def test_metadata_preserved_through_graph(self):
         client = AsyncMock()

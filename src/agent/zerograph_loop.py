@@ -1,4 +1,4 @@
-"""LiteGraph-backed agent loop — drop-in replacement for AgentLoop.
+"""ZeroGraph-backed agent loop — drop-in replacement for AgentLoop.
 
 Public API is identical to AgentLoop:
   - run(state, thread_id, max_rounds) -> AgentState
@@ -6,7 +6,7 @@ Public API is identical to AgentLoop:
   - get_store() -> StateStore
 
 Internally builds a 3-node StateGraph (agent → tools → condition) and uses
-LiteGraph's checkpointing + interrupt for state persistence and approval flow.
+ZeroGraph's checkpointing + interrupt for state persistence and approval flow.
 """
 
 from __future__ import annotations
@@ -17,15 +17,15 @@ import logging
 import time
 from typing import Annotated, Any, TypedDict
 
-from litegraph import END, START, StateGraph
-from litegraph.channels.messages import add_messages
-from litegraph.checkpoint.sqlite import SqliteSaver
+from zerograph import END, START, StateGraph
+from zerograph.channels.messages import add_messages
+from zerograph.checkpoint.sqlite import SqliteSaver
 
 from src.agent.loop import ApprovalPending
 from src.agent.state import AgentState, StateStore
 from src.agent.tooldef import ToolDef
 
-logger = logging.getLogger("myclaw.agent.litegraph_loop")
+logger = logging.getLogger("myclaw.agent.zerograph_loop")
 
 _CHARS_PER_TOKEN = 4
 
@@ -56,7 +56,7 @@ class _GraphState(TypedDict):
     __thread_id__: str
 
 
-class LiteGraphAgentLoop:
+class ZeroGraphAgentLoop:
     def __init__(
         self,
         client: Any,
@@ -178,7 +178,7 @@ class LiteGraphAgentLoop:
             cp_path = str(Path(cp_path).expanduser().resolve())
         self._checkpointer = SqliteSaver(cp_path)
         self._compiled = graph.compile(checkpointer=self._checkpointer)
-        logger.info("LiteGraph agent graph compiled with %d tools", len(self._tools))
+        logger.info("ZeroGraph agent graph compiled with %d tools", len(self._tools))
 
     async def _run_inner(self, state: AgentState, thread_id: str, max_rounds: int) -> AgentState:
         from src.events import emit_async
@@ -198,7 +198,7 @@ class LiteGraphAgentLoop:
         try:
             result = await self._compiled.ainvoke(input_dict, config)
         except Exception as e:
-            from litegraph.errors import GraphInterrupt, GraphRecursionError
+            from zerograph.errors import GraphInterrupt, GraphRecursionError
             if isinstance(e, GraphRecursionError):
                 logger.warning("Graph recursion limit (%d) reached", max_rounds)
                 result = self._compiled.get_state(config).values
@@ -249,7 +249,7 @@ class LiteGraphAgentLoop:
         return final_state
 
     async def _resume_inner(self, thread_id: str, decision: str) -> AgentState:
-        from litegraph.types import Command
+        from zerograph.types import Command
         from src.events import emit_async
 
         self._ensure_graph()
@@ -266,7 +266,7 @@ class LiteGraphAgentLoop:
         try:
             result = await self._compiled.ainvoke(Command(resume=decision), config)
         except Exception as e:
-            from litegraph.errors import GraphInterrupt, GraphRecursionError
+            from zerograph.errors import GraphInterrupt, GraphRecursionError
             if isinstance(e, GraphRecursionError):
                 logger.warning("Graph recursion limit reached on resume")
                 result = self._compiled.get_state(config).values
@@ -359,11 +359,11 @@ class LiteGraphAgentLoop:
 
     async def _tools_node(self, state: dict) -> dict:
         from src.events import emit_async
-        from litegraph.types import interrupt as _lg_interrupt
+        from zerograph.types import interrupt as _lg_interrupt
 
         # Detect resume context: on resume the scratchpad has resume values.
         # This lets us suppress duplicate events for re-executed tools.
-        import litegraph.pregel._loop as _loop_mod
+        import zerograph.pregel._loop as _loop_mod
         _cfg = _loop_mod._current_config.get({})
         _sp = _cfg.get("configurable", {}).get("__scratchpad__")
         is_resume = _sp is not None and bool(_sp.resume)

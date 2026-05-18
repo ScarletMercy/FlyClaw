@@ -32,7 +32,7 @@ async def _run_single(
     """Run a single sub-agent. Returns result dict."""
     from src.agents.registry import get_agent_registry
     from src.agent.state import AgentState, MemoryStateStore
-    from src.agent.litegraph_loop import LiteGraphAgentLoop
+    from src.agent.zerograph_loop import ZeroGraphAgentLoop
     from src.agent.client import create_chain
 
     registry = get_agent_registry()
@@ -79,7 +79,7 @@ async def _run_single(
             client = create_chain(config)
 
         state_store = MemoryStateStore()
-        agent_loop = LiteGraphAgentLoop(
+        agent_loop = ZeroGraphAgentLoop(
             client=client,
             tools=all_tools,
             state_store=state_store,

@@ -73,10 +73,10 @@ def _build_skills_section(skills_prompt: str) -> list[str]:
     return [
         "## Skills (mandatory)",
         "Before replying: scan <available_skills> <description> entries.",
-        "- If exactly one skill clearly applies: read its SKILL.md at <location>, then follow it.",
-        "- If multiple could apply: choose the most specific one, then read/follow it.",
-        "- If none clearly apply: do not read any SKILL.md.",
-        "Constraints: never read more than one skill up front; only read after selecting.",
+        '- If exactly one skill clearly applies: call skill_manage(action="view", name="<skill name>") to load it, then follow it.',
+        "- If multiple could apply: choose the most specific one, then load/follow it.",
+        "- If none clearly apply: do not call skill_manage.",
+        "Constraints: never load more than one skill up front; only load after selecting.",
         trimmed,
         "",
     ]

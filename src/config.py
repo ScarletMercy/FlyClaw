@@ -83,6 +83,7 @@ class AgentConfig(BaseModel):
     subagent_max_depth: int = 2  # Max nesting depth for sub-agent calls
     timezone: str = "Asia/Shanghai"
     language: Literal["zh", "en"] = "zh"
+    tool_progress_notifications: bool = True
     bootstrap_files: list[str] = Field(
         default_factory=lambda: ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md"]
     )

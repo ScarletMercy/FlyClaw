@@ -118,11 +118,14 @@ class MessageHandler:
 
             # Subscribe to tool events for progress reporting
             zh = self._container.config.agents.language == "zh"
+            show_progress = self._container.config.agents.tool_progress_notifications
             active_chat_id = chat_id
             channel = channel_prefix
             _progress_unsub = None
 
             async def _on_tool_event(event: str, **kwargs):
+                if not show_progress:
+                    return
                 tid = kwargs.get("thread_id", "")
                 if tid != thread_id:
                     return

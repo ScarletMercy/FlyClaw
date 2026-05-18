@@ -56,8 +56,8 @@ class ToolDef:
             result = await result
         return str(result) if result is not None else ""
 
-    def to_litegraph_tool(self) -> Callable:
-        """Return an async function compatible with LiteGraph ToolNode."""
+    def to_zerograph_tool(self) -> Callable:
+        """Return an async function compatible with ZeroGraph ToolNode."""
         async def _tool_func(**kwargs) -> str:
             return await self.execute(kwargs)
         _tool_func.__name__ = self.name
