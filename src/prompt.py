@@ -76,6 +76,7 @@ def _build_skills_section(skills_prompt: str) -> list[str]:
         '- If exactly one skill clearly applies: call skill_manage(action="view", name="<skill name>") to load it, then follow it.',
         "- If multiple could apply: choose the most specific one, then load/follow it.",
         "- If none clearly apply: do not call skill_manage.",
+        "IMPORTANT: always use skill_manage(action=\"view\") to load skills — NEVER use read_file to read SKILL.md.",
         "Constraints: never load more than one skill up front; only load after selecting.",
         trimmed,
         "",

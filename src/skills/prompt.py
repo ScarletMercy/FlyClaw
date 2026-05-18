@@ -23,7 +23,7 @@ def format_skills_full(skills: list[Skill]) -> str:
         parts.append(f"  </skill>")
     parts.append("</skills>")
     parts.append("")
-    parts.append('To use a skill, call skill_manage with action="view" and the skill <name> to load full instructions.')
+    parts.append('To use a skill, call skill_manage(action="view", name="<skill name>") to load full instructions. NEVER use read_file.')
     return "\n".join(parts)
 
 
@@ -36,7 +36,7 @@ def format_skills_compact(skills: list[Skill]) -> str:
             continue
         parts.append(f"  {_esc(s.name)}: {_esc(s.description)}")
     parts.append("")
-    parts.append('To use a skill, call skill_manage with action="view" and the skill <name> to load full instructions.')
+    parts.append('To use a skill, call skill_manage(action="view", name="<skill name>") to load full instructions. NEVER use read_file.')
     return "\n".join(parts)
 
 

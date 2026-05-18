@@ -268,11 +268,12 @@ def get_tools() -> list:
         channel: str = "",
         source: str = "",
     ) -> str:
-        """管理技能（查看/创建/编辑/删除/安装/卸载/启用/禁用/统计）。
+        """技能管理工具。加载 skill 时必须使用此工具而非 read_file。
 
         Args:
             action: 操作类型 (list, view, create, edit, delete, usage, toggle, install, uninstall)
-            name: 技能名称
+                    action="view" 用于加载指定 skill 的完整指令内容
+            name: 技能名称（view 时必填）
             content: 技能内容（create/edit 时需要）
             description: 技能描述
             category: 技能分类
