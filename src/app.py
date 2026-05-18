@@ -146,6 +146,7 @@ class ServiceContainer:
             "src.tools.media_understanding_tools",
             "src.tools.session_search_tools",
             "src.tools.web_tools",
+            "src.tools.tts_tools",
             "src.tools.beads_tools",
             "src.memory.beads_sync",
             "src.tools.skills_tools",
