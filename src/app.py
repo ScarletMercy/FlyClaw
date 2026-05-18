@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.agent.client import create_client, create_chain
-from src.agent.zerograph_loop import ZeroGraphAgentLoop
+from src.agent.loop import AgentLoop
 from src.agent.state import StateStore
 from src.agent.tooldef import ToolDef
 from src.channels.feishu import FeishuChannel
@@ -54,7 +54,7 @@ class ServiceContainer:
         self.config = config or load_config()
         _ensure_myclaw_data_dir()
         self.skills_cache: list = []
-        self.agent_loop: ZeroGraphAgentLoop | None = None
+        self.agent_loop: AgentLoop | None = None
         self.state_store: StateStore | None = None
         self.model_ref = None
         self.feishu: FeishuChannel | None = None
@@ -310,7 +310,7 @@ class ServiceContainer:
         cp_path.parent.mkdir(parents=True, exist_ok=True)
         self.state_store = StateStore(str(cp_path))
 
-        self.agent_loop = ZeroGraphAgentLoop(
+        self.agent_loop = AgentLoop(
             client=client,
             tools=tools,
             state_store=self.state_store,
@@ -319,7 +319,7 @@ class ServiceContainer:
             context_window_tokens=self.config.model.context_window,
         )
 
-        logger.info("ZeroGraphAgentLoop created with %d tools, %d skills", len(tools), len(skills))
+        logger.info("AgentLoop created with %d tools, %d skills", len(tools), len(skills))
 
         if self.config.session_search.enabled:
             from src.session_index.store import SessionIndexStore

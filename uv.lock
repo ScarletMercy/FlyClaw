@@ -659,7 +659,6 @@ dependencies = [
     { name = "uvicorn" },
     { name = "watchfiles" },
     { name = "websockets" },
-    { name = "zerograph" },
 ]
 
 [package.optional-dependencies]
@@ -714,7 +713,6 @@ requires-dist = [
     { name = "uvicorn", specifier = ">=0.34" },
     { name = "watchfiles", specifier = ">=1.0" },
     { name = "websockets", specifier = ">=13.0" },
-    { name = "zerograph", directory = "../LiteGraph" },
 ]
 provides-extras = ["imaging", "memory", "memory-lancedb", "termux", "dev"]
 
@@ -1832,19 +1830,3 @@ wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/9a/3f/f70e03f40ffc9a30d817eef7da1be72ee4956ba8d7255c399a01b135902a/websockets-16.0-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:a653aea902e0324b52f1613332ddf50b00c06fdaf7e92624fbf8c77c78fa5767", size = 178735, upload-time = "2026-01-10T09:23:42.259Z" },
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/6f/28/258ebab549c2bf3e64d2b0217b973467394a9cea8c42f70418ca2c5d0d2e/websockets-16.0-py3-none-any.whl", hash = "sha256:1637db62fad1dc833276dded54215f2c7fa46912301a24bd94d45d46a011ceec", size = 171598, upload-time = "2026-01-10T09:23:45.395Z" },
 ]
-
-[[package]]
-name = "zerograph"
-version = "0.1.0"
-source = { directory = "../LiteGraph" }
-
-[package.metadata]
-requires-dist = [
-    { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.6" },
-    { name = "mkdocs-autorefs", marker = "extra == 'docs'", specifier = ">=1.0" },
-    { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.5" },
-    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.25" },
-    { name = "pytest", marker = "extra == 'dev'" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'" },
-]
-provides-extras = ["dev", "docs"]
