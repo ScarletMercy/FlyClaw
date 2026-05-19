@@ -83,181 +83,19 @@ def register_dashboard(app: FastAPI, application):
     _app_ref = application
     _install_log_handler()
 
-    from jinja2 import Template
-
     _template_path = Path(__file__).parent / "templates" / "dashboard.html"
-    _jinja_template = Template(_template_path.read_text(encoding="utf-8"))
+    _html_template = _template_path.read_text(encoding="utf-8")
 
     router = APIRouter(tags=["dashboard"])
 
     @router.get("/dashboard", response_class=HTMLResponse)
     async def dashboard_page():
         cfg = _app_ref.config
-        uptime = time.monotonic() - _start_time
-        hours, remainder = divmod(int(uptime), 3600)
-        minutes, seconds = divmod(remainder, 60)
-        skills = _app_ref.skills_cache or []
-
-        # Collect tools list for SSR
-        tools = []
-        try:
-            from src.tools.registry import get_tool_registry
-
-            for t in get_tool_registry().collect():
-                tools.append({"name": t.name, "description": (t.description or "")[:120]})
-        except Exception:
-            pass
-
-        # Collect sessions for SSR
-        sessions = []
-        if _app_ref.session_tracker:
-            sessions = _app_ref.session_tracker.get_sessions()
-
-        # Collect cron jobs for SSR
-        cron_jobs = []
-        if _app_ref.cron_service:
-            for j in _app_ref.cron_service.list_jobs():
-                cron_jobs.append(j.model_dump())
-
-        # Collect MCP servers for SSR
-        mcp_servers = []
-        mcp_enabled = getattr(cfg, "mcp", None) and cfg.mcp.enabled
-        if mcp_enabled:
-            try:
-                from src.mcp.manager import get_mcp_manager
-                mcp_mgr = get_mcp_manager()
-                mcp_servers = [s.model_dump() for s in await mcp_mgr.list_servers()]
-            except Exception:
-                pass
-
-        # Collect plugins for SSR
-        plugins = []
-        try:
-            from src.plugins.registry import get_plugin_registry
-            plugins = get_plugin_registry().list_plugins()
-        except Exception:
-            pass
-
-        # Collect auth users for SSR
-        auth_enabled = getattr(cfg.auth, "enabled", False)
-        auth_users = []
-        if auth_enabled:
-            try:
-                from src.auth.rbac import get_rbac
-                rbac = get_rbac()
-                if rbac:
-                    for u in rbac.store.list_users():
-                        devices = rbac.store.list_user_devices(u.user_id)
-                        auth_users.append({
-                            **u.model_dump(),
-                            "device_count": len(devices),
-                            "trusted_devices": sum(1 for d in devices if d.trusted),
-                        })
-            except Exception:
-                pass
-
-        # Pending approvals count
-        pending_approvals = []
-        try:
-            from src.tools.approval import get_approval_manager
-            pending_approvals = [r.model_dump() for r in get_approval_manager().list_pending()]
-        except Exception:
-            pass
-
-        # Beads config
-        beads_enabled = getattr(cfg, "beads", None) and cfg.beads.enabled
-        beads_judge_model = getattr(cfg, "beads", None) and getattr(cfg.beads, "memory_judge_model", "")
-
-        # Link understanding config
-        link_understanding_enabled = getattr(cfg, "link_understanding", None) and cfg.link_understanding.enabled
-        link_max_previews = getattr(cfg, "link_understanding", None) and getattr(cfg.link_understanding, "max_previews", 3)
-
-        # Security config
-        security_enabled = getattr(cfg, "security", None) and cfg.security.enabled
-        security_audit = getattr(cfg, "security", None) and getattr(cfg.security, "audit_on_startup", False)
-
-        html = _jinja_template.render(
-            model_provider=cfg.model.provider,
-            model_name=cfg.model.name,
-            model_base_url=cfg.model.base_url or "default",
-            has_fallbacks=bool(cfg.model.fallbacks),
-            uptime=f"{hours}h {minutes}m {seconds}s",
-            gateway=f"{cfg.gateway.host}:{cfg.gateway.port}",
-            session_count=_app_ref.session_tracker.active_count if _app_ref.session_tracker else 0,
-            tool_count=len(tools),
-            skill_count=len(skills),
-            cron_enabled=cfg.cron.enabled,
-            cron_jobs=cron_jobs,
-            memory_enabled=getattr(cfg.memory, "enabled", False),
-            tts_enabled=getattr(getattr(cfg, "tts", None), "enabled", False),
-            tools=tools,
-            skills=skills,
-            sessions=sessions,
-            # New context data
-            qq_enabled=cfg.channels.qq.enabled,
-            qq_config={
-                "dm_policy": cfg.channels.qq.dm_policy,
-                "group_policy": cfg.channels.qq.group_policy,
-                "require_mention": cfg.channels.qq.require_mention,
-                "markdown_support": cfg.channels.qq.markdown_support,
-            },
-            mcp_enabled=mcp_enabled,
-            mcp_servers=mcp_servers,
-            plugins=plugins,
-            auth_enabled=auth_enabled,
-            auth_users=auth_users,
-            beads_enabled=beads_enabled,
-            beads_judge_model=beads_judge_model or "",
-            link_understanding_enabled=link_understanding_enabled,
-            link_max_previews=link_max_previews or 3,
-            security_enabled=security_enabled,
-            security_audit=security_audit,
-            pending_approvals=pending_approvals,
-            config={
-                "model_provider": cfg.model.provider,
-                "model_name": cfg.model.name,
-                "temperature": cfg.model.temperature,
-                "base_url": cfg.model.base_url or "default",
-                "fallbacks": len(cfg.model.fallbacks),
-                "workspace": cfg.agents.workspace,
-                "max_tool_rounds": cfg.agents.max_tool_rounds,
-                "subagents": list(cfg.agents.subagents.keys()),
-                "gateway": f"{cfg.gateway.host}:{cfg.gateway.port}" + (" (auth)" if cfg.gateway.auth_token else ""),
-                "session_scope": cfg.session.scope,
-                "idle_reset_minutes": cfg.session.idle_reset_minutes,
-                "exec_enabled": cfg.tools.exec.enabled,
-                "exec_approval": cfg.tools.exec.approval_mode,
-                "exec_sandbox": cfg.tools.exec.sandbox_enabled,
-                "web_search": cfg.tools.web_search.enabled,
-                "web_fetch": cfg.tools.web_fetch.enabled,
-                "media": cfg.tools.media_understanding.enabled,
-                "cron_enabled": cfg.cron.enabled,
-                "cron_concurrent": cfg.cron.max_concurrent_runs,
-                "memory_enabled": getattr(cfg.memory, "enabled", False),
-                "tts_enabled": getattr(getattr(cfg, "tts", None), "enabled", False),
-                "tts_provider": getattr(getattr(cfg, "tts", None), "provider", ""),
-                "checkpointer": cfg.checkpointer.type,
-                # New config entries
-                "qq_enabled": cfg.channels.qq.enabled,
-                "qq_dm": cfg.channels.qq.dm_policy,
-                "qq_group": cfg.channels.qq.group_policy,
-                "qq_mention": cfg.channels.qq.require_mention,
-                "qq_markdown": cfg.channels.qq.markdown_support,
-                "mcp_enabled": mcp_enabled,
-                "mcp_server_count": len(mcp_servers),
-                "mcp_servers": [s.get("name", "") for s in mcp_servers],
-                "plugin_count": len(plugins),
-                "plugin_names": [p.get("name", p.get("id", "")) for p in plugins],
-                "auth_enabled": auth_enabled,
-                "auth_default_role": getattr(cfg.auth, "default_role", "guest"),
-                "beads_enabled": beads_enabled,
-                "beads_judge_model": beads_judge_model or "",
-                "link_understanding_enabled": link_understanding_enabled,
-                "link_max_previews": link_max_previews or 3,
-                "security_enabled": security_enabled,
-                "security_audit": security_audit,
-            },
-        )
+        import re
+        html = _html_template
+        html = html.replace('{{ auth_token }}', cfg.gateway.auth_token or "")
+        html = html.replace('{{ model_provider }}', cfg.model.provider)
+        html = html.replace('{{ model_name }}', cfg.model.name)
         return HTMLResponse(html)
 
     @router.get("/api/dashboard/status")
@@ -355,6 +193,21 @@ def register_dashboard(app: FastAPI, application):
             "status": _app_ref.cron_service.status(),
             "jobs": [j.model_dump() for j in jobs],
         }
+
+    @router.get("/api/dashboard/mcp")
+    async def dashboard_mcp(request: Request):
+        _check_auth(request, app)
+        cfg = _app_ref.config
+        mcp_enabled = getattr(cfg, "mcp", None) and cfg.mcp.enabled
+        if not mcp_enabled:
+            return {"enabled": False, "servers": []}
+        try:
+            from src.mcp.manager import get_mcp_manager
+            mgr = get_mcp_manager()
+            servers = [s.model_dump() for s in await mgr.list_servers()]
+            return {"enabled": True, "servers": servers}
+        except Exception as e:
+            return {"enabled": True, "servers": [], "error": str(e)}
 
     @router.get("/api/dashboard/tools")
     async def dashboard_tools(request: Request):
@@ -636,12 +489,11 @@ def register_dashboard(app: FastAPI, application):
                 snapshot["auth_users"] = []
         # Beads
         try:
-            from src.tools.beads_tools import _bd
-            result = await _bd(["memories", "--json"])
-            import json
-            snapshot["beads"] = json.loads(result)
+            from src.tools.memory_tools import get_memory_store
+            store = get_memory_store()
+            snapshot["memories"] = await store.list_all()
         except Exception:
-            snapshot["beads"] = {}
+            snapshot["memories"] = {}
         return snapshot
 
     # ── Model switching ─────────────────────────────────────
@@ -804,52 +656,59 @@ def register_dashboard(app: FastAPI, application):
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
 
-    # ── Beads memory API ──────────────────────────────────────
+    # ── Memory API ──────────────────────────────────────
 
-    @router.get("/api/dashboard/beads/memories")
-    async def dashboard_beads_memories(request: Request):
+    @router.get("/api/dashboard/memory/memories")
+    async def dashboard_memory_list(request: Request):
         _check_auth(request, app)
         try:
-            from src.tools.beads_tools import _bd
-            result = await _bd(["memories", "--json"])
-            import json
-            return json.loads(result)
+            from src.tools.memory_tools import get_memory_store
+            store = get_memory_store()
+            items = await store.list_all()
+            grouped = {}
+            for m in items:
+                cat = m.get("category", "其他")
+                grouped.setdefault(cat, []).append(m)
+            return grouped
         except Exception as e:
             return {"error": str(e)}
 
-    @router.get("/api/dashboard/beads/recall/{key:path}")
-    async def dashboard_beads_recall(key: str, request: Request):
+    @router.get("/api/dashboard/memory/recall/{key:path}")
+    async def dashboard_memory_recall(key: str, request: Request):
         _check_auth(request, app)
         try:
-            from src.tools.beads_tools import _bd
-            result = await _bd(["recall", key, "--json"])
+            from src.tools.memory_tools import get_memory_store
             import json
-            return json.loads(result)
+            store = get_memory_store()
+            return json.loads(await store.recall(key))
         except Exception as e:
             return {"error": str(e)}
 
-    @router.delete("/api/dashboard/beads/forget/{key:path}")
-    async def dashboard_beads_forget(key: str, request: Request):
+    @router.delete("/api/dashboard/memory/forget/{key:path}")
+    async def dashboard_memory_forget(key: str, request: Request):
         _check_auth(request, app)
         try:
-            from src.tools.beads_tools import _bd
-            result = await _bd(["forget", key])
-            return {"ok": True, "result": result}
+            from src.tools.memory_tools import get_memory_store
+            import json
+            store = get_memory_store()
+            return json.loads(await store.forget(key))
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
-    @router.post("/api/dashboard/beads/remember")
-    async def dashboard_beads_remember(request: Request):
+    @router.post("/api/dashboard/memory/remember")
+    async def dashboard_memory_save(request: Request):
         _check_auth(request, app)
         try:
             body = await request.json()
             content = body.get("content", "").strip()
             key = body.get("key", "").strip()
+            category = body.get("category", "fact").strip()
             if not content:
                 raise HTTPException(status_code=400, detail="content is required")
-            from src.tools.beads_tools import save_memory
-            result = await save_memory(content, key)
-            return {"ok": True, "result": result}
+            from src.tools.memory_tools import save_memory
+            import json
+            result = json.loads(await save_memory(content, key, category=category))
+            return result
         except HTTPException:
             raise
         except Exception as e:
@@ -991,11 +850,11 @@ def register_dashboard(app: FastAPI, application):
         _check_auth(request, app)
         cfg = _app_ref.config
         return {
-            "beads_enabled": getattr(cfg.beads, "enabled", False),
-            "memory_judge_model": getattr(cfg.beads, "memory_judge_model", ""),
+            "memory_store_enabled": getattr(cfg.memory_store, "enabled", False),
+            "memory_judge_model": getattr(cfg.memory_store, "memory_judge_model", ""),
             "curated_memory_sync": True,
             "skill_curation": True,
-            "session_end_extraction": getattr(cfg.beads, "enabled", False) and bool(getattr(cfg.beads, "memory_judge_model", "")),
+            "session_end_extraction": getattr(cfg.memory_store, "enabled", False) and bool(getattr(cfg.memory_store, "memory_judge_model", "")),
         }
 
     @router.post("/api/dashboard/learning/trigger")

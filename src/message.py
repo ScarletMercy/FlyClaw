@@ -112,15 +112,20 @@ class MessageHandler:
 
             self._container.session_tracker.touch(thread_id)
 
-            if channel_prefix == "qq" and text.strip().lower() in ("yes", "no"):
+            if channel_prefix == "qq" and text.strip().lower() in ("yes", "no", "/y", "/n"):
                 from src.tools.approval import get_approval_manager
                 mgr = get_approval_manager()
                 pending_list = mgr.list_pending()
                 for req in pending_list:
                     if req.chat_id == chat_id:
-                        decision = "allow_once" if text.strip().lower() == "yes" else "deny"
+                        decision_text = text.strip().lower()
+                        decision = "allow_once" if decision_text in ("yes", "/y") else "deny"
                         mgr.resolve(req.id, decision)
-                        await reply_fn(f"Approval {'granted' if decision == 'allow_once' else 'denied'}.")
+                        zh = self._container.config.agents.language == "zh"
+                        if req.tool_name == "memory_delete":
+                            await reply_fn("✅ 已确认删除记忆" if decision == "allow_once" else "❌ 已取消删除记忆")
+                        else:
+                            await reply_fn(f"Approval {'granted' if decision == 'allow_once' else 'denied'}.")
                         return
 
             cmd_match = self._container.dispatcher.match(text)
@@ -136,7 +141,7 @@ class MessageHandler:
                 return
 
             # "/" prefix but not a registered command — reply directly, skip model
-            if text.strip().startswith("/"):
+            if text.strip().startswith("/") and text.strip().lower() not in ("/y", "/n"):
                 await reply_fn("未知命令。输入 /help 查看可用命令。")
                 return
 
@@ -339,15 +344,15 @@ class MessageHandler:
                     except Exception:
                         pass
 
-                if getattr(self._container.config, "beads", None) and self._container.config.beads.enabled:
+                if getattr(self._container.config, "memory_store", None) and self._container.config.memory_store.enabled:
                     try:
-                        from src.tools.beads_tools import auto_extract_memory, save_memory
+                        from src.tools.memory_tools import auto_extract_memory, save_memory
                         extracted = auto_extract_memory(text, display_text)
                         if extracted:
                             content, category = extracted
-                            await save_memory(content)
-                        elif self._container.config.beads.memory_judge_model:
-                            task = asyncio.create_task(self._beads_llm_judge(
+                            await save_memory(content, category=category)
+                        elif self._container.config.memory_store.memory_judge_model:
+                            task = asyncio.create_task(self._memory_llm_judge(
                                 text, display_text, reply_fn,
                             ))
                             self._container.background_tasks.add(task)
@@ -366,8 +371,8 @@ class MessageHandler:
                         for msg in messages[pre_msg_count:]:
                             if msg.get("role") == "tool":
                                 tc_name = call_id_to_name.get(msg.get("tool_call_id", ""), "")
-                                if "bd_remember" in tc_name:
-                                    await reply_fn("\U0001f4be update memory: 已保存到 beads")
+                                if "memory_save" in tc_name:
+                                    await reply_fn("\U0001f4be update memory: 已保存到记忆")
                                     break
                     except Exception:
                         pass
@@ -386,19 +391,30 @@ class MessageHandler:
             approval_timeout = getattr(exc, "timeout", None) or 120
             auto_deny = getattr(exc, "auto_deny", False)
             zh = self._container.config.agents.language == "zh"
+            tool_name = getattr(exc, "tool_name", "exec_command")
 
             if chat_id.startswith(("c2c:", "group:", "channel:", "dm:")):
-                warn = "DANGEROUS" if exc.denylisted else "requires approval"
-                await self._container.qq.send_text(
-                    chat_id,
-                    f"**Approval Required** ({warn})\n```\n{exc.command_preview}\n```\n"
-                    f"Reply 'yes' to allow or 'no' to deny. (request: {exc.request_id})",
-                )
+                if tool_name == "memory_delete":
+                    keys = getattr(exc, "keys", [])
+                    preview = exc.command_preview
+                    msg_text = (
+                        f"🗑️ 以下 {len(keys)} 条记忆将被删除：\n\n"
+                        f"{preview}\n\n"
+                        f"发送 /y 确认删除，发送 /n 或忽略取消（{approval_timeout}秒超时）"
+                    )
+                else:
+                    warn = "DANGEROUS" if exc.denylisted else "requires approval"
+                    msg_text = (
+                        f"**Approval Required** ({warn})\n```\n{exc.command_preview}\n```\n"
+                        f"Reply 'yes' to allow or 'no' to deny. (request: {exc.request_id})"
+                    )
+
+                await self._container.qq.send_text(chat_id, msg_text)
                 decision = await mgr.await_approval(exc.request_id, timeout=approval_timeout)
                 if decision == "timeout":
-                    if auto_deny:
-                        msg = "操作超时，已自动拒绝。" if zh else "Operation timed out, auto-denied."
-                        await self._container.qq.send_text(chat_id, msg)
+                    if tool_name == "memory_delete" or auto_deny:
+                        timeout_msg = "⏰ 操作超时，记忆删除已取消。" if tool_name == "memory_delete" else ("操作超时，已自动拒绝。" if zh else "Operation timed out, auto-denied.")
+                        await self._container.qq.send_text(chat_id, timeout_msg)
                     decision = "deny"
                 result_state = await self._container.agent_loop.resume(exc.thread_id, decision)
                 assistant_text = ""
@@ -412,22 +428,23 @@ class MessageHandler:
         except Exception:
             logger.exception("Error in _handle_approval_pending for request %s", exc.request_id)
 
-    async def _beads_llm_judge(self, user_input: str, ai_response: str, reply_fn):
+    async def _memory_llm_judge(self, user_input: str, ai_response: str, reply_fn):
         try:
-            from src.tools.beads_tools import judge_memory_with_llm, save_memory
+            from src.tools.memory_tools import judge_memory_with_llm, save_memory
 
-            model_name = self._container.config.beads.memory_judge_model
-            base_url = self._container.config.beads.memory_judge_base_url or self._container.config.model.base_url
-            api_key = self._container.config.beads.memory_judge_api_key or self._container.config.model.api_key
+            model_name = self._container.config.memory_store.memory_judge_model
+            base_url = self._container.config.memory_store.memory_judge_base_url or self._container.config.model.base_url
+            api_key = self._container.config.memory_store.memory_judge_api_key or self._container.config.model.api_key
 
             if not model_name or not base_url or not api_key:
                 return
 
-            content = await judge_memory_with_llm(
+            result = await judge_memory_with_llm(
                 user_input, ai_response, model_name, base_url, api_key,
             )
-            if content:
-                await save_memory(content)
+            if result:
+                content, category = result
+                await save_memory(content, category=category)
                 await reply_fn(f"\U0001f4be update memory: {content[:50]}")
         except Exception:
-            logger.debug("Beads LLM judge failed", exc_info=True)
+            logger.debug("Memory LLM judge failed", exc_info=True)

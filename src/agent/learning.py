@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from src.config import AppConfig
-from src.memory.beads_sync import sync_beads_to_curated_files
+from src.memory.memory_sync import sync_memories_to_curated_files
 from src.skills.curator import SkillCurator
 from src.skills.manager import SkillManager
 
@@ -52,14 +52,14 @@ class LearningLoop:
         }
 
         # 1. 会话结束记忆提取
-        if self.config.beads.enabled and self.config.beads.memory_judge_model:
+        if self.config.memory_store.enabled and self.config.memory_store.memory_judge_model:
             try:
-                from src.tools.beads_tools import extract_session_end_memories
+                from src.tools.memory_tools import extract_session_end_memories
                 count = await extract_session_end_memories(
                     messages,
-                    self.config.beads.memory_judge_model,
-                    self.config.beads.memory_judge_base_url or "",
-                    self.config.beads.memory_judge_api_key or "",
+                    self.config.memory_store.memory_judge_model,
+                    self.config.memory_store.memory_judge_base_url or "",
+                    self.config.memory_store.memory_judge_api_key or "",
                 )
                 result["memories_extracted"] = count
                 if count > 0:
@@ -70,7 +70,7 @@ class LearningLoop:
         # 2. 同步策展记忆文件
         try:
             workspace = Path(self.config.agents.workspace).expanduser().resolve()
-            await sync_beads_to_curated_files(workspace)
+            await sync_memories_to_curated_files(workspace)
             result["curated"] = True
         except Exception as e:
             logger.warning("Learning loop curated sync failed: %s", e)
@@ -101,7 +101,7 @@ class LearningLoop:
         # 1. 同步策展记忆
         try:
             workspace = Path(self.config.agents.workspace).expanduser().resolve()
-            await sync_beads_to_curated_files(workspace)
+            await sync_memories_to_curated_files(workspace)
             result["memories_synced"] = True
         except Exception as e:
             logger.warning("Full learning cycle memory sync failed: %s", e)

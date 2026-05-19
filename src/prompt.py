@@ -69,20 +69,20 @@ def _build_skills_section(skills_prompt: str) -> list[str]:
     ]
 
 
-def _build_beads_section(config) -> list[str]:
-    """Beads memory tool guidance — complements AGENTS.md bootstrap context."""
+def _build_memory_store_section(config) -> list[str]:
+    """Memory store tool guidance."""
     if not config:
         return []
-    beads_cfg = getattr(config, "beads", None)
-    if not beads_cfg or not getattr(beads_cfg, "enabled", False):
+    ms_cfg = getattr(config, "memory_store", None)
+    if not ms_cfg or not getattr(ms_cfg, "enabled", False):
         return []
     return [
-        "## Beads Memory Tools",
-        "Use dedicated tools for memory operations — do NOT use exec_command to run bd:",
-        "- bd_remember: Save a memory (auto-dedup by key). Use when user shares preferences, identity, contacts, project info, or important decisions.",
-        "- bd_recall: Retrieve a specific memory by key.",
-        "- bd_memories: List or search all memories.",
-        "- bd_forget: Delete a memory.",
+        "## Memory Store Tools",
+        "Use dedicated tools for memory operations:",
+        "- memory_save: Save a memory (auto-dedup by key). Use when user shares preferences, identity, contacts, project info, or important decisions.",
+        "- memory_get: Retrieve a specific memory by key.",
+        "- memory_list: List or search all memories.",
+        "- memory_delete: Request batch deletion of memories. Pass ALL keys in ONE call. Requires user to send /y to confirm within 120s. Do NOT delete without explicit user request.",
         "",
     ]
 
@@ -221,7 +221,7 @@ def build_system_prompt(
     lines.extend(_build_safety())
     lines.extend(_build_skills_section(skills_prompt))
     lines.extend(_build_memory_section(config))
-    lines.extend(_build_beads_section(config))
+    lines.extend(_build_memory_store_section(config))
     lines.extend(_build_workspace(workspace_dir))
     if context_files:
         lines.extend(_build_bootstrap_context(context_files))

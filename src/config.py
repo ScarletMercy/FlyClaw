@@ -305,14 +305,15 @@ class MemoryConfig(BaseModel):
     auto_session_memory: bool = False  # Auto-write Q&A pairs to memory
 
 
-class BeadsConfig(BaseModel):
-    """Beads memory/issue tracker configuration."""
+class MemoryStoreConfig(BaseModel):
+    """Memory store configuration."""
 
     enabled: bool = False
-    workspace: str = ""  # Empty = auto-detect from agents.workspace
-    memory_judge_model: str = ""  # Small model for memory extraction (e.g. "LongCat-Flash-Lite")
-    memory_judge_base_url: str = ""  # Empty = inherit from main model
-    memory_judge_api_key: str = ""  # Empty = inherit from main model
+    db_path: str = "~/.myclaw/data/memories.db"
+    workspace: str = ""
+    memory_judge_model: str = ""
+    memory_judge_base_url: str = ""
+    memory_judge_api_key: str = ""
 
 
 class AuthConfig(BaseModel):
@@ -390,7 +391,7 @@ class AppConfig(BaseModel):
     timeouts: TimeoutsConfig = Field(default_factory=TimeoutsConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
-    beads: BeadsConfig = Field(default_factory=BeadsConfig)
+    memory_store: MemoryStoreConfig = Field(default_factory=MemoryStoreConfig)
     session_search: SessionSearchConfig = Field(default_factory=SessionSearchConfig)
     compression: CompressionConfig = Field(default_factory=CompressionConfig)
     canvas: CanvasConfig = Field(default_factory=CanvasConfig)
@@ -416,6 +417,9 @@ def _expand_paths(config: AppConfig) -> AppConfig:
     
     # Auth
     config.auth.db_path = str(Path(config.auth.db_path).expanduser().resolve())
+
+    # Memory store
+    config.memory_store.db_path = str(Path(config.memory_store.db_path).expanduser().resolve())
     
     # Session search
     config.session_search.index_path = str(Path(config.session_search.index_path).expanduser().resolve())
@@ -439,6 +443,8 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         if not raw:
             return AppConfig()
         substituted = _substitute_recursive(raw)
+        if "beads" in substituted and "memory_store" not in substituted:
+            substituted["memory_store"] = substituted.pop("beads")
         config = AppConfig(**substituted)
         return _expand_paths(config)
     except ValidationError as e:

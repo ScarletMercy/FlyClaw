@@ -137,11 +137,21 @@ def _resolve_type(py_type: Any) -> dict[str, Any]:
     origin = getattr(py_type, "__origin__", None)
 
     if origin is list:
+        args = getattr(py_type, "__args__", ())
+        if args:
+            return {"type": "array", "items": _resolve_type(args[0])}
         return {"type": "array"}
     if origin is dict:
+        args = getattr(py_type, "__args__", ())
+        if args and len(args) >= 2:
+            return {"type": "object", "additionalProperties": _resolve_type(args[1])}
         return {"type": "object"}
     if origin is set:
-        return {"type": "array", "uniqueItems": True}
+        args = getattr(py_type, "__args__", ())
+        result = {"type": "array", "uniqueItems": True}
+        if args:
+            result["items"] = _resolve_type(args[0])
+        return result
 
     if origin is object or (hasattr(py_type, "__args__") and py_type.__args__):
         args = getattr(py_type, "__args__", ())

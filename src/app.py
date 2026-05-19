@@ -140,8 +140,8 @@ class ServiceContainer:
             "src.tools.session_search_tools",
             "src.tools.web_tools",
             "src.tools.tts_tools",
-            "src.tools.beads_tools",
-            "src.memory.beads_sync",
+            "src.tools.memory_tools",
+            "src.memory.memory_sync",
             "src.skills.manager",
             "src.skills.curator",
             "src.agent.learning",
@@ -327,18 +327,16 @@ class ServiceContainer:
         self.cron_service = CronService(cron_store, cron_execute, config=self.config, channel=self.qq)
         logger.info("Cron service initialized")
 
-    def _setup_workspace(self):
+    async def _setup_workspace(self):
         from src.tools.file_tools import set_workspace
         workspace_path = str(Path(self.config.agents.workspace).expanduser().resolve())
         Path(workspace_path).mkdir(parents=True, exist_ok=True)
         set_workspace(workspace_path)
 
-        if getattr(self.config, "beads", None) and self.config.beads.enabled:
-            from src.tools.beads_tools import set_beads_workspace
-            beads_ws = self.config.beads.workspace or workspace_path
-            beads_ws = str(Path(beads_ws).expanduser().resolve())
-            Path(beads_ws).mkdir(parents=True, exist_ok=True)
-            set_beads_workspace(beads_ws)
+        if getattr(self.config, "memory_store", None) and self.config.memory_store.enabled:
+            from src.tools.memory_tools import get_memory_store
+            store = get_memory_store(self.config.memory_store.db_path)
+            await store.initialize()
 
     def _setup_qq_channel(self):
         self.qq = QQChannel(self.config.channels.qq)
@@ -419,7 +417,7 @@ class ServiceContainer:
         self.process_supervisor = ProcessSupervisor()
 
         self._setup_cron()
-        self._setup_workspace()
+        await self._setup_workspace()
         self._setup_qq_channel()
         self._setup_gateway()
 
@@ -613,6 +611,13 @@ class ServiceContainer:
                 await self._config_watcher.stop()
             if self.memory_store:
                 await self.memory_store.close()
+            if getattr(self.config, "memory_store", None) and self.config.memory_store.enabled:
+                try:
+                    from src.tools.memory_tools import get_memory_store
+                    mem_store = get_memory_store()
+                    await mem_store.close()
+                except Exception:
+                    pass
             if self.config.skills.enabled and self.config.skills.watch:
                 from src.skills.watcher import stop_skills_watcher
                 await stop_skills_watcher()

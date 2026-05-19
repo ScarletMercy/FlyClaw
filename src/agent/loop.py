@@ -41,7 +41,7 @@ def _estimate_tokens_simple(messages: list[dict]) -> int:
 class ApprovalPending(Exception):
     """Raised when a tool needs user approval. Loop pauses, caller resumes."""
 
-    def __init__(self, thread_id: str, request_id: str, tool_name: str, command_preview: str, denylisted: bool = False, timeout: int | None = None, auto_deny: bool = False):
+    def __init__(self, thread_id: str, request_id: str, tool_name: str, command_preview: str, denylisted: bool = False, timeout: int | None = None, auto_deny: bool = False, keys: list[str] | None = None):
         self.thread_id = thread_id
         self.request_id = request_id
         self.tool_name = tool_name
@@ -49,6 +49,7 @@ class ApprovalPending(Exception):
         self.denylisted = denylisted
         self.timeout = timeout
         self.auto_deny = auto_deny
+        self.keys = keys or []
         super().__init__(f"Approval needed: {tool_name} — {command_preview[:80]}")
 
 
@@ -249,7 +250,31 @@ class AgentLoop:
 
         # Handle the pending tool call
         if decision in ("allow_once", "allow_always"):
-            if pending_tc_id and assistant_msg_idx is not None:
+            pending_tool = pending.get("tool_name", "exec_command")
+            memory_keys = pending.get("memory_keys")
+
+            if pending_tool == "memory_delete" and memory_keys:
+                deleted = []
+                try:
+                    from src.tools.memory_tools import get_memory_store
+                    mem_store = get_memory_store()
+                    for k in memory_keys:
+                        await mem_store.forget(k)
+                        deleted.append(k)
+                except Exception as exc:
+                    import logging as _log
+                    _log.getLogger("myclaw.loop").warning("memory_delete resume failed: %s", exc)
+                result_content = json.dumps(
+                    {"ok": True, "deleted": deleted, "count": len(deleted)},
+                    ensure_ascii=False,
+                )
+                state.append_message({
+                    "role": "tool",
+                    "tool_call_id": pending_tc_id,
+                    "content": result_content,
+                })
+                existing_results.add(pending_tc_id)
+            elif pending_tc_id and assistant_msg_idx is not None:
                 assistant_msg = state.messages[assistant_msg_idx]
                 for tc in assistant_msg["tool_calls"]:
                     if tc.get("id") == pending_tc_id:
@@ -290,10 +315,12 @@ class AgentLoop:
                         existing_results.add(tc_id)
         else:
             if pending_tc_id:
+                pending_tool = pending.get("tool_name", "exec_command")
+                deny_msg = "[denied] 记忆删除已取消。" if pending_tool == "memory_delete" else "[denied] Command execution was denied by user."
                 state.append_message({
                     "role": "tool",
                     "tool_call_id": pending_tc_id,
-                    "content": "[denied] Command execution was denied by user.",
+                    "content": deny_msg,
                 })
                 existing_results.add(pending_tc_id)
 
@@ -595,12 +622,13 @@ class AgentLoop:
         except Exception as e:
             duration_ms = (_time.monotonic() - start) * 1000
             from src.tools.exec import ApprovalNeededError
-            if isinstance(e, ApprovalNeededError):
+            from src.tools.memory_tools import MemoryDeleteNeedsApproval
+            if isinstance(e, (ApprovalNeededError, MemoryDeleteNeedsApproval)):
                 await emit_async(
                     "tool.approval_pending",
                     thread_id=thread_id,
-                    tool_name="exec_command",
-                    command_preview=getattr(e, "command", "")[:200],
+                    tool_name=getattr(e, "tool_name", tool_name),
+                    command_preview=getattr(e, "command_preview", getattr(e, "command", "")[:200]),
                     denylisted=getattr(e, "denylisted", False),
                 )
                 return await self._handle_approval(e, tc, state, thread_id)
@@ -624,8 +652,9 @@ class AgentLoop:
         """Handle approval-needed error by saving state and raising ApprovalPending."""
         from src.tools.approval import get_approval_manager
         mgr = get_approval_manager()
-        cmd = getattr(error, "command", "")
+        cmd = getattr(error, "command_preview", "") or getattr(error, "command", "")
         denylisted = getattr(error, "denylisted", False)
+        tool_name = getattr(error, "tool_name", "exec_command")
 
         if isinstance(tc, dict):
             tc_id = tc.get("id", "")
@@ -633,7 +662,7 @@ class AgentLoop:
             tc_id = tc.id
 
         req = mgr.request_approval(
-            tool_name="exec_command",
+            tool_name=tool_name,
             args=cmd,
             sender_id=state.sender_id,
             chat_id=state.chat_id,
@@ -641,18 +670,26 @@ class AgentLoop:
             thread_id=thread_id,
         )
 
-        state.pending_approval = {
+        pending_data = {
             "request_id": req.id,
-            "tool_name": "exec_command",
+            "tool_name": tool_name,
             "command_preview": cmd[:200],
             "tool_call_id": tc_id,
         }
+        memory_keys = getattr(error, "keys", None)
+        if memory_keys:
+            pending_data["memory_keys"] = memory_keys
+
+        state.pending_approval = pending_data
         await self._store.save(thread_id, state)
 
         raise ApprovalPending(
             thread_id=thread_id,
             request_id=req.id,
-            tool_name="exec_command",
+            tool_name=tool_name,
             command_preview=cmd[:200],
             denylisted=denylisted,
+            timeout=getattr(error, "timeout", None),
+            auto_deny=getattr(error, "auto_deny", False),
+            keys=getattr(error, "keys", None),
         )

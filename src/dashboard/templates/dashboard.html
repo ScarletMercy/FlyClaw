@@ -1,1816 +1,898 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="dark">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MyClaw Dashboard</title>
+<title>MyClaw 控制台</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      colors: {
+        bg: '#09090b',
+        surface: { DEFAULT: '#18181b', 2: '#1f1f23', 3: '#27272a' },
+        bdr: { DEFAULT: '#27272a', 2: '#3f3f46' },
+        accent: { DEFAULT: '#818cf8', dim: '#6366f1', bg: 'rgba(129,140,248,.08)' },
+        ok: { DEFAULT: '#34d399', bg: 'rgba(52,211,153,.1)' },
+        warn: { DEFAULT: '#fbbf24', bg: 'rgba(251,191,36,.1)' },
+        err: { DEFAULT: '#fb7185', bg: 'rgba(251,113,133,.1)' },
+      },
+      fontFamily: {
+        sans: ['-apple-system','BlinkMacSystemFont','"Segoe UI"','"Noto Sans SC"','Roboto','sans-serif'],
+        mono: ['"Cascadia Code"','"Fira Code"','"SF Mono"', 'Consolas','monospace'],
+      },
+    },
+  },
+}
+</script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 <style>
-*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#0c0e14;--bg2:#10131a;--surface:#161a25;--surface2:#1c2130;--surface3:#242a3a;
-  --border:#2a3048;--border2:#353c55;
-  --text:#e4e8f1;--text2:#8892ad;--text3:#5c6478;
-  --accent:#7b93ff;--accent2:#a5b4fc;--accent-bg:rgba(123,147,255,.08);
-  --green:#34d399;--green-bg:rgba(52,211,153,.1);
-  --yellow:#fbbf24;--yellow-bg:rgba(251,191,36,.1);
-  --red:#fb7185;--red-bg:rgba(251,113,133,.1);
-  --blue:#60a5fa;--blue-bg:rgba(96,165,250,.1);
-  --purple:#a78bfa;--purple-bg:rgba(167,139,250,.1);
-  --orange:#fb923c;--orange-bg:rgba(251,146,60,.1);
-  --radius:10px;--radius-lg:14px;
-  --font:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC",Roboto,sans-serif;
-  --mono:"Cascadia Code","Fira Code","SF Mono",Consolas,monospace;
-  --shadow:0 1px 3px rgba(0,0,0,.3);
-  --shadow-lg:0 4px 20px rgba(0,0,0,.4);
-}
-body{font-family:var(--font);background:var(--bg);color:var(--text);line-height:1.6;min-height:100vh;overflow-x:hidden}
-::selection{background:var(--accent);color:#fff}
-::-webkit-scrollbar{width:6px;height:6px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:var(--text3)}
-
-/* Header */
-.header{
-  background:linear-gradient(135deg,var(--surface) 0%,var(--surface2) 100%);
-  border-bottom:1px solid var(--border);
-  padding:0 28px;height:56px;display:flex;align-items:center;justify-content:space-between;
-  position:sticky;top:0;z-index:100;backdrop-filter:blur(12px);
-}
-.header-left{display:flex;align-items:center;gap:14px}
-.logo{
-  width:32px;height:32px;
-  background:linear-gradient(135deg,var(--accent),var(--purple));
-  border-radius:8px;display:flex;align-items:center;justify-content:center;
-  font-size:15px;font-weight:800;color:#fff;
-  box-shadow:0 0 16px rgba(123,147,255,.25);
-}
-.header h1{font-size:16px;font-weight:600;letter-spacing:-.3px}
-.header h1 span{color:var(--text2);font-weight:400}
-.header-right{display:flex;align-items:center;gap:16px;font-size:12px;color:var(--text2)}
-.status-dot{width:7px;height:7px;border-radius:50%;background:var(--green);display:inline-block;
-  box-shadow:0 0 8px var(--green);animation:pulse 2s ease-in-out infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-.model-badge{background:var(--surface3);padding:4px 10px;border-radius:6px;font-size:11px;
-  font-family:var(--mono);color:var(--accent2);border:1px solid var(--border)}
-
-/* Tabs */
-.tabs-wrap{background:var(--bg2);border-bottom:1px solid var(--border);padding:0 28px;display:flex;gap:0;
-  overflow-x:auto;white-space:nowrap}
-.tab{
-  padding:12px 20px;font-size:13px;font-weight:500;color:var(--text3);cursor:pointer;
-  border-bottom:2px solid transparent;transition:all .2s;position:relative;flex-shrink:0;
-}
-.tab:hover{color:var(--text2)}
-.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
-.tab.active::after{content:'';position:absolute;bottom:-1px;left:20px;right:20px;height:2px;
-  background:var(--accent);border-radius:1px;
-  box-shadow:0 0 12px var(--accent),0 0 4px var(--accent)}
-.tab .badge{background:var(--red);color:#fff;font-size:10px;padding:1px 6px;border-radius:8px;margin-left:4px;font-weight:600}
-
-/* Content */
-.content{padding:24px 28px;max-width:1280px;margin:0 auto}
-.tab-panel{display:none;animation:fadeIn .25s ease}.tab-panel.active{display:block}
-@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-
-/* Stats */
-.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:14px;margin-bottom:28px}
-.stat-card{
-  background:linear-gradient(160deg,var(--surface) 0%,var(--surface2) 100%);
-  border:1px solid var(--border);border-radius:var(--radius-lg);padding:18px 20px;
-  transition:border-color .2s,transform .15s;position:relative;overflow:hidden;
-}
-.stat-card:hover{border-color:var(--border2);transform:translateY(-1px)}
-.stat-card .icon{position:absolute;top:14px;right:16px;font-size:22px;opacity:.12}
-.stat-card .label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px}
-.stat-card .value{font-size:24px;font-weight:700;letter-spacing:-.5px}
-.stat-card .value.sm{font-size:15px;font-weight:600;font-family:var(--mono);letter-spacing:0}
-.c-green{color:var(--green)}.c-yellow{color:var(--yellow)}.c-red{color:var(--red)}
-.c-blue{color:var(--blue)}.c-purple{color:var(--purple)}.c-accent{color:var(--accent)}.c-orange{color:var(--orange)}
-
-/* Cards & Tables */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;margin-bottom:16px}
-.card-header{padding:14px 20px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;
-  display:flex;align-items:center;justify-content:space-between;background:var(--bg2)}
-.card-header .count{font-weight:400;color:var(--text3);font-size:12px;margin-left:6px}
-table{width:100%;border-collapse:collapse}
-th{text-align:left;padding:11px 20px;font-size:11px;color:var(--text3);font-weight:600;
-  text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);background:var(--bg2)}
-td{padding:11px 20px;font-size:13px;border-bottom:1px solid var(--border);vertical-align:middle}
-tr:last-child td{border-bottom:none}
-tr{transition:background .1s}tr:hover{background:var(--surface2)}
-
-/* Buttons */
-.btn{
-  padding:5px 14px;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;
-  border:1px solid var(--border);background:var(--surface2);color:var(--text);
-  transition:all .15s;display:inline-flex;align-items:center;gap:4px;
-}
-.btn:hover{background:var(--surface3);border-color:var(--border2)}
-.btn:active{transform:scale(.97)}
-.btn.danger{color:var(--red);border-color:rgba(251,113,133,.3)}
-.btn.danger:hover{background:var(--red-bg);border-color:var(--red)}
-.btn.primary{color:var(--accent);border-color:rgba(123,147,255,.3)}
-.btn.primary:hover{background:var(--accent-bg);border-color:var(--accent)}
-.btn.sm{padding:3px 10px;font-size:11px}
-
-/* Config */
-.config-grid{display:grid;grid-template-columns:150px 1fr;gap:0;font-size:13px}
-.config-grid .key{padding:11px 20px;color:var(--text3);font-weight:500;font-size:12px;
-  background:var(--bg2);border-bottom:1px solid var(--border);letter-spacing:.2px}
-.config-grid .val{padding:11px 20px;border-bottom:1px solid var(--border);word-break:break-all}
-.config-grid .val.mono{font-family:var(--mono);font-size:12px}
-
-/* Tools */
-.tools-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:10px}
-.tool-card{
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-  padding:14px 16px;transition:border-color .2s,transform .15s;
-}
-.tool-card:hover{border-color:var(--accent);transform:translateY(-1px)}
-.tool-card .name{font-size:12px;font-weight:600;color:var(--accent);font-family:var(--mono);margin-bottom:3px}
-.tool-card .desc{font-size:12px;color:var(--text2);line-height:1.55}
-.tool-card .meta{font-size:11px;color:var(--text3);margin-top:6px}
-
-/* Section */
-.section-title{font-size:12px;font-weight:600;margin:22px 0 10px;color:var(--text3);
-  text-transform:uppercase;letter-spacing:.8px;display:flex;align-items:center;gap:8px}
-.section-title::after{content:'';flex:1;height:1px;background:var(--border)}
-.empty{text-align:center;padding:48px 24px;color:var(--text3);font-size:13px}
-
-/* Logs */
-.log-controls{display:flex;align-items:center;gap:14px;margin-bottom:10px;font-size:12px}
-.log-controls label{display:flex;align-items:center;gap:6px;color:var(--text2);cursor:pointer;transition:color .15s}
-.log-controls label:hover{color:var(--text)}
-.log-controls input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px}
-.log-container{
-  background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);
-  height:calc(100vh - 210px);overflow-y:auto;
-  font-family:var(--mono);font-size:11.5px;line-height:1.85;
-}
-.log-line{padding:1px 16px;white-space:pre-wrap;word-break:break-all;border-left:2px solid transparent;transition:background .1s}
-.log-line:hover{background:rgba(255,255,255,.02)}
-.log-line.INFO{color:#bcc5d3}.log-line.WARNING{color:var(--yellow);border-left-color:var(--yellow)}
-.log-line.ERROR{color:var(--red);border-left-color:var(--red);background:rgba(251,113,133,.04)}
-.log-line.CRITICAL{color:#fff;background:var(--red);border-left-color:#fff}
-.log-ts{color:#3d4556;margin-right:10px;user-select:none}
-.log-logger{color:var(--blue);margin-right:10px;user-select:none}
-
-/* Tags / Badges */
-.tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:600;letter-spacing:.3px}
-.tag-green{background:var(--green-bg);color:var(--green)}
-.tag-red{background:var(--red-bg);color:var(--red)}
-.tag-yellow{background:var(--yellow-bg);color:var(--yellow)}
-.tag-blue{background:var(--blue-bg);color:var(--blue)}
-.tag-purple{background:var(--purple-bg);color:var(--purple)}
-.tag-gray{background:var(--surface3);color:var(--text3)}
-.tag-orange{background:var(--orange-bg);color:var(--orange)}
-
-/* Event Log */
-.event-item{
-  padding:4px 8px;margin:2px 0;border-radius:4px;
-  display:flex;align-items:center;gap:6px;
-  font-size:11px;line-height:1.6;
-  border-left:2px solid var(--border);
-  transition:background .1s;
-}
-.event-item:hover{background:rgba(255,255,255,.02)}
-.event-cat{
-  font-weight:600;color:var(--text2);
-  min-width:50px;text-transform:uppercase;
-  font-size:10px;letter-spacing:.5px;
-}
-.event-ts{
-  margin-left:auto;color:var(--text3);
-  font-size:10px;user-select:none;
-}
-
-/* Tool Stats */
-.tool-stat{
-  display:flex;align-items:center;justify-content:space-between;
-  padding:6px 12px;background:var(--surface);border:1px solid var(--border);
-  border-radius:6px;font-size:12px;min-width:120px;
-}
-.tool-stat .tool-name{
-  font-family:var(--mono);color:var(--accent);font-weight:600;
-}
-.tool-stat .tool-count{
-  background:var(--blue-bg);color:var(--blue);
-  padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;
-}
-
-/* MCP Server Cards */
-.mcp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px}
-.mcp-card{
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);
-  padding:18px 20px;transition:border-color .2s;
-}
-.mcp-card:hover{border-color:var(--border2)}
-.mcp-card .mcp-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-.mcp-card .mcp-name{font-size:14px;font-weight:600}
-.mcp-card .mcp-tools{margin-top:12px;border-top:1px solid var(--border);padding-top:10px}
-.mcp-card .mcp-tool{font-size:11px;font-family:var(--mono);color:var(--accent);padding:3px 0}
-
-/* User cards */
-.role-select{
-  background:var(--bg);border:1px solid var(--border);color:var(--text);padding:3px 8px;
-  border-radius:4px;font-size:11px;cursor:pointer;
-}
-.role-select:focus{border-color:var(--accent);outline:none}
-
-/* Devices expansion */
-.device-row{background:var(--bg2)}
-.device-row td{padding:8px 20px 8px 52px;font-size:12px;color:var(--text2)}
-
-/* Approval card */
-.approval-card{
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-  padding:14px 18px;margin-bottom:8px;display:flex;align-items:center;gap:14px;
-}
-.approval-card .info{flex:1}
-.approval-card .info .tool{font-family:var(--mono);font-size:12px;color:var(--accent);margin-bottom:2px}
-.approval-card .info .preview{font-size:12px;color:var(--text2);white-space:pre-wrap;max-height:60px;overflow:hidden}
-.approval-card .info .meta-line{font-size:11px;color:var(--text3);margin-top:4px}
-.approval-card .actions{display:flex;gap:6px}
-
-/* Beads Memory */
-.memory-search{display:flex;gap:10px;margin-bottom:16px}
-.memory-search input{flex:1;padding:8px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;transition:border-color .2s}
-.memory-search input:focus{border-color:var(--accent)}
-.memory-search input::placeholder{color:var(--text3)}
-.mem-category{margin-bottom:20px}
-.mem-category-header{
-  display:flex;align-items:center;gap:10px;padding:10px 16px;cursor:pointer;
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-  transition:all .15s;user-select:none;
-}
-.mem-category-header:hover{border-color:var(--border2);background:var(--surface2)}
-.mem-category-header .arrow{font-size:10px;color:var(--text3);transition:transform .2s;width:12px;text-align:center}
-.mem-category-header .arrow.open{transform:rotate(90deg)}
-.mem-category-header .cat-icon{font-size:16px}
-.mem-category-header .cat-label{font-size:13px;font-weight:600;flex:1}
-.mem-category-header .cat-count{font-size:11px;color:var(--text3);font-weight:400}
-.mem-category-items{padding:4px 0 0 0}
-.mem-item{
-  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
-  padding:12px 18px;margin-top:6px;margin-left:22px;transition:border-color .2s;
-}
-.mem-item:hover{border-color:var(--border2)}
-.mem-item .mem-key{font-family:var(--mono);font-size:11px;color:var(--accent);margin-bottom:4px;display:flex;align-items:center;gap:8px}
-.mem-item .mem-val{font-size:13px;color:var(--text);line-height:1.6;word-break:break-all}
-.mem-item .mem-actions{margin-top:8px;display:flex;gap:6px}
-.memory-add-form{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;margin-bottom:16px}
-.memory-add-form input,.memory-add-form textarea{width:100%;padding:8px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;outline:none;margin-bottom:10px;transition:border-color .2s;font-family:var(--font)}
-.memory-add-form textarea{min-height:80px;resize:vertical}
-.memory-add-form input:focus,.memory-add-form textarea:focus{border-color:var(--accent)}
-.memory-add-form input::placeholder,.memory-add-form textarea::placeholder{color:var(--text3)}
-/* Responsive */
-@media(max-width:768px){
-  .stats-grid{grid-template-columns:repeat(2,1fr);gap:10px}
-  .content{padding:16px}.tabs-wrap{padding:0 16px}
-  .tab{padding:12px 14px}
-  .header{padding:0 16px}.config-grid{grid-template-columns:120px 1fr}
-  th,td{padding:8px 12px;font-size:12px}
-  .mcp-grid{grid-template-columns:1fr}
-}
-/* Model switcher */
-.model-switcher{position:relative;display:inline-block}
-.model-switcher .model-btn{cursor:pointer}
-.model-switcher .model-dropdown{
-  display:none;position:absolute;right:0;top:100%;margin-top:6px;
-  background:var(--surface2);border:1px solid var(--border2);border-radius:var(--radius);
-  width:max-content;min-width:200px;max-width:90vw;box-shadow:var(--shadow-lg);z-index:200;overflow:hidden;
-}
-.model-switcher.open .model-dropdown{display:block}
-.model-dropdown .md-item{
-  padding:10px 16px;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:8px;
-  transition:background .1s;border-bottom:1px solid var(--border);
-}
-.model-dropdown .md-item:last-child{border-bottom:none}
-.model-dropdown .md-item:hover{background:var(--surface3)}
-.model-dropdown .md-item.active{background:var(--accent-bg);color:var(--accent)}
-.model-dropdown .md-item .md-name{font-family:var(--mono);font-size:12px;flex:1}
-.model-dropdown .md-item .md-tag{font-size:10px}
+  ::-webkit-scrollbar{width:5px;height:5px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#3f3f46;border-radius:3px}
+  ::-webkit-scrollbar-thumb:hover{background:#52525b}
+  @keyframes fadeUp{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+  .fade-up{animation:fadeUp .2s ease}
+  @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.3}}
+  .pulse-dot{animation:pulse-dot 2s ease-in-out infinite}
 </style>
 </head>
-<body>
+<body class="bg-bg text-zinc-100 font-sans min-h-screen flex" x-data="app()" x-init="init()">
 
-<div class="header">
-  <div class="header-left">
-    <div class="logo">M</div>
-    <h1>MyClaw <span>Dashboard</span></h1>
+<!-- ── Sidebar ── -->
+<aside class="w-[180px] shrink-0 bg-surface border-r border-bdr flex flex-col h-screen sticky top-0 z-40
+              max-lg:hidden">
+  <div class="h-14 flex items-center gap-3 px-4 border-b border-bdr">
+    <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-purple-500 flex items-center justify-center
+                text-white font-extrabold text-sm shadow-lg shadow-accent/20">M</div>
+    <span class="font-semibold text-sm tracking-tight">MyClaw</span>
   </div>
-  <div class="header-right">
-    <div class="model-switcher" id="modelSwitcher">
-      <span class="model-badge model-btn" id="currentModel" onclick="toggleModelDropdown()">{{ model_provider }}/{{ model_name }} &#9662;</span>
-      <div class="model-dropdown" id="modelDropdown">
-        <div id="modelList"></div>
-      </div>
-    </div>
-    <span style="display:flex;align-items:center;gap:6px"><span class="status-dot"></span> Running</span>
+  <nav class="flex-1 py-2 px-2 space-y-0.5 overflow-y-auto">
+    <template x-for="t in tabs" :key="t.id">
+      <button @click="activeTab=t.id"
+              :class="activeTab===t.id ? 'bg-accent/10 text-accent border-accent/30' : 'text-zinc-400 hover:text-zinc-200 hover:bg-surface-3 border-transparent'"
+              class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] font-medium border transition-all duration-150">
+        <span x-text="t.icon" class="text-base w-5 text-center"></span>
+        <span x-text="t.label"></span>
+      </button>
+    </template>
+  </nav>
+  <div class="p-3 border-t border-bdr text-[10px] text-zinc-500 font-mono">
+    <span x-text="modelProvider"></span>/<span x-text="modelName"></span>
   </div>
-</div>
+</aside>
 
-<div class="tabs-wrap">
-  <div class="tab active" data-tab="overview">Overview</div>
-  <div class="tab" data-tab="sessions">Sessions</div>
-  <div class="tab" data-tab="cron">Cron</div>
-  <div class="tab" data-tab="tools">Tools</div>
-  {% if mcp_enabled %}
-  <div class="tab" data-tab="mcp">MCP</div>
-  {% endif %}
-  {% if auth_enabled %}
-  <div class="tab" data-tab="users">Users</div>
-  {% endif %}
-  {% if beads_enabled %}
-  <div class="tab" data-tab="beads">Beads</div>
-  {% endif %}
-  <div class="tab" data-tab="search">Search</div>
-  <div class="tab" data-tab="audit">Audit</div>
-  <div class="tab" data-tab="config">Config</div>
-  <div class="tab" data-tab="analytics">Analytics</div>
-  <div class="tab" data-tab="logs">Logs</div>
-</div>
+<!-- ── Mobile bottom nav ── -->
+<nav class="lg:hidden fixed bottom-0 inset-x-0 bg-surface border-t border-bdr z-50 flex overflow-x-auto">
+  <template x-for="t in tabs" :key="t.id">
+    <button @click="activeTab=t.id"
+            :class="activeTab===t.id ? 'text-accent' : 'text-zinc-500'"
+            class="flex-1 min-w-[48px] flex flex-col items-center py-2 text-[10px]">
+      <span x-text="t.icon" class="text-lg"></span>
+      <span x-text="t.label" class="mt-0.5 truncate max-w-[60px]"></span>
+    </button>
+  </template>
+</nav>
 
-<div class="content">
-  <!-- ═══════ Overview ═══════ -->
-  <div class="tab-panel active" id="panel-overview">
-    <div class="stats-grid">
-      <div class="stat-card"><div class="icon">&#9200;</div><div class="label">Uptime</div><div class="value sm c-blue">{{ uptime }}</div></div>
-      <div class="stat-card"><div class="icon">&#128101;</div><div class="label">Sessions</div><div class="value c-green">{{ session_count }}</div></div>
-      <div class="stat-card"><div class="icon">&#128295;</div><div class="label">Tools</div><div class="value c-accent">{{ tool_count }}</div></div>
-      <div class="stat-card"><div class="icon">&#9733;</div><div class="label">Skills</div><div class="value c-purple">{{ skill_count }}</div></div>
-      <div class="stat-card"><div class="icon">&#9200;</div><div class="label">Cron Jobs</div><div class="value {% if cron_jobs|length > 0 %}c-green{% else %}sm{% endif %}">{{ cron_jobs|length }}</div></div>
-      <div class="stat-card"><div class="icon">&#9993;</div><div class="label">Feishu</div><div class="value sm {% if feishu_enabled %}c-green{% else %}c-yellow{% endif %}">{% if feishu_enabled %}{{ feishu_domain }}{% else %}OFF{% endif %}</div></div>
-      <div class="stat-card"><div class="icon">&#128172;</div><div class="label">QQ</div><div class="value sm {% if qq_enabled %}c-green{% else %}c-yellow{% endif %}">{% if qq_enabled %}ON{% else %}OFF{% endif %}</div></div>
-      <div class="stat-card"><div class="icon">&#128279;</div><div class="label">MCP</div><div class="value sm {% if mcp_enabled and mcp_servers|length > 0 %}c-green{% elif mcp_enabled %}c-yellow{% else %}c-yellow{% endif %}">{% if mcp_enabled %}{{ mcp_servers|length }} servers{% else %}OFF{% endif %}</div></div>
-      <div class="stat-card"><div class="icon">&#128451;</div><div class="label">Memory</div><div class="value sm {% if memory_enabled %}c-green{% else %}c-yellow{% endif %}">{% if memory_enabled %}ON{% else %}OFF{% endif %}</div></div>
-      <div class="stat-card"><div class="icon">&#128266;</div><div class="label">TTS</div><div class="value sm {% if tts_enabled %}c-green{% else %}c-yellow{% endif %}">{% if tts_enabled %}ON{% else %}OFF{% endif %}</div></div>
-      <div class="stat-card"><div class="icon">&#128230;</div><div class="label">Plugins</div><div class="value {% if plugins|length > 0 %}c-orange{% else %}sm{% endif %}">{{ plugins|length }}</div></div>
-      <div class="stat-card"><div class="icon">&#128274;</div><div class="label">Auth</div><div class="value sm {% if auth_enabled %}c-green{% else %}c-yellow{% endif %}">{% if auth_enabled %}ON{% else %}OFF{% endif %}</div></div>
-      <div class="stat-card"><div class="icon">&#128269;</div><div class="label">Security</div><div class="value sm {% if security_enabled %}c-green{% else %}c-yellow{% endif %}">{% if security_enabled %}ON{% else %}OFF{% endif %}</div></div>
-      <div class="stat-card"><div class="icon">&#128200;</div><div class="label">Learning</div><div class="value sm {% if beads_enabled and beads_judge_model %}c-green{% else %}c-yellow{% endif %}">{% if beads_enabled and beads_judge_model %}ON{% else %}OFF{% endif %}</div></div>
-    </div>
-
-    <!-- Event Log (real-time from event bus) -->
-    <div class="section-title">
-      Live Events
-      <span id="eventCount" style="margin-left:8px;font-size:11px;color:var(--text3)">0</span>
-      <button class="btn sm" onclick="clearEventLog()" style="margin-left:auto">Clear</button>
-    </div>
-    <div class="card" style="margin-bottom:20px">
-      <div id="eventLog" style="padding:12px;max-height:300px;overflow-y:auto;font-size:12px;font-family:var(--mono)">
-        <div style="color:var(--text3);font-size:13px">Waiting for events...</div>
+<!-- ── Main ── -->
+<div class="flex-1 flex flex-col min-w-0">
+  <!-- Top bar -->
+  <header class="h-14 shrink-0 bg-surface/80 backdrop-blur border-b border-bdr flex items-center px-5 gap-4 sticky top-0 z-30">
+    <h1 class="text-sm font-semibold lg:hidden">MyClaw</h1>
+    <div class="flex-1"></div>
+    <!-- Model switcher -->
+    <div class="relative" x-data="{open:false}" @click.away="open=false">
+      <button @click="open=!open"
+              class="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface-3 border border-bdr text-xs font-mono text-accent hover:border-bdr-2 transition">
+        <span x-text="modelProvider+'/'+modelName"></span>
+        <svg class="w-3 h-3 text-zinc-500" viewBox="0 0 12 12"><path d="M3 5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
+      </button>
+      <div x-show="open" x-transition class="absolute right-0 mt-2 w-64 bg-surface-2 border border-bdr-2 rounded-xl shadow-2xl overflow-hidden z-50">
+        <template x-for="m in models" :key="m.name">
+          <button @click="switchModel(m); open=false"
+                  :class="m.active ? 'bg-accent/10 text-accent' : 'text-zinc-300 hover:bg-surface-3'"
+                  class="w-full flex items-center gap-3 px-4 py-2.5 text-xs border-b border-bdr last:border-0 transition">
+            <span class="w-2 h-2 rounded-full" :class="m.active ? 'bg-accent' : 'bg-zinc-600'"></span>
+            <span class="font-mono flex-1 text-left" x-text="m.name"></span>
+            <span x-show="m.active" class="text-[10px] text-accent">当前</span>
+          </button>
+        </template>
+        <div x-show="models.length===0" class="px-4 py-3 text-xs text-zinc-500">加载模型中...</div>
       </div>
     </div>
-
-    <!-- Tool Stats -->
-    <div class="section-title">Tool Usage</div>
-    <div class="card" style="margin-bottom:20px">
-      <div id="toolStats" style="padding:12px;display:flex;flex-wrap:wrap;gap:8px">
-        <div style="color:var(--text3);font-size:13px">No tool calls yet</div>
-      </div>
+    <!-- Status -->
+    <div class="flex items-center gap-2 text-xs text-zinc-400">
+      <span class="w-2 h-2 rounded-full bg-ok pulse-dot shadow shadow-ok/50"></span>
+      <span>运行中</span>
+      <span class="text-zinc-600 font-mono" x-text="uptime"></span>
     </div>
+  </header>
 
-    <!-- Config Reload Button -->
-    <div style="display:flex;gap:10px;margin-bottom:20px;align-items:center">
-      <button class="btn primary" onclick="reloadConfig()">&#x21bb; Reload Config</button>
-      <span id="configReloadStatus" style="font-size:12px;color:var(--text2)"></span>
-    </div>
+  <!-- Content -->
+  <main class="flex-1 overflow-y-auto p-5 lg:p-6 pb-20 lg:pb-6 max-w-[1400px] w-full mx-auto">
 
-    <!-- Security Audit Results -->
-    {% if security_enabled %}
-    <div class="section-title">Security Audit</div>
-    <div class="card" id="securityAuditCard">
-      <div class="card-header">
-        Audit Results
-        <button class="btn sm primary" onclick="runSecurityAudit()" style="margin-left:auto">Run Audit</button>
-      </div>
-      <div id="securityAuditResults" style="padding:16px">
-        <div style="color:var(--text3);font-size:13px">Click "Run Audit" to check security posture</div>
-      </div>
-  </div>
-  {% endif %}
-
-  <!-- ═══════ Config ═══════ -->
-  <div class="tab-panel" id="panel-config">
-    <div class="card">
-      <div class="card-header">
-        Configuration Editor
-        <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn sm primary" onclick="saveConfig()">&#128190; Save Config</button>
-          <button class="btn sm" onclick="loadConfig()">&#x21bb; Reload</button>
+    <!-- ═══ Sessions ═══ -->
+    <div x-show="activeTab==='sessions'" class="fade-up space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-semibold">会话</h2>
+        <div class="flex items-center gap-2">
+          <input x-model="sessionSearch" @input="filterSessions()"
+                 placeholder="搜索会话..."
+                 class="px-3 py-1.5 rounded-lg bg-surface border border-bdr text-xs text-zinc-200 placeholder-zinc-600 focus:border-accent outline-none w-48">
+          <button @click="loadSessions()" class="px-3 py-1.5 rounded-lg bg-surface border border-bdr text-xs text-zinc-400 hover:text-zinc-200 hover:border-bdr-2 transition">刷新</button>
         </div>
       </div>
-      <div id="configEditor" style="padding:16px">
-        <div style="color:var(--text3);font-size:13px">Loading configuration...</div>
+      <div class="bg-surface border border-bdr rounded-xl overflow-hidden">
+        <table class="w-full text-xs">
+          <thead><tr class="bg-surface-2 text-zinc-500 uppercase text-[10px] tracking-wider">
+            <th class="px-4 py-3 text-left">线程 ID</th>
+            <th class="px-4 py-3 text-left">状态</th>
+            <th class="px-4 py-3 text-left">空闲</th>
+            <th class="px-4 py-3 text-left">消息数</th>
+            <th class="px-4 py-3 text-right">操作</th>
+          </tr></thead>
+          <tbody>
+            <template x-for="s in filteredSessions" :key="s.thread_id">
+              <tr class="border-t border-bdr hover:bg-surface-2/50 transition">
+                <td class="px-4 py-3 font-mono text-zinc-300 max-w-[280px] truncate" x-text="s.thread_id" :title="s.thread_id"></td>
+                <td class="px-4 py-3">
+                  <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                        :class="s.status==='active' ? 'bg-ok-bg text-ok' : 'bg-zinc-800 text-zinc-400'">
+                    <span class="w-1.5 h-1.5 rounded-full" :class="s.status==='active' ? 'bg-ok' : 'bg-zinc-500'"></span>
+                    <span x-text="s.status"></span>
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-zinc-400 font-mono" x-text="formatIdle(s.last_active)"></td>
+                <td class="px-4 py-3 text-zinc-400 font-mono" x-text="s.checkpoint_count || '-'"></td>
+                <td class="px-4 py-3 text-right">
+                  <div class="flex items-center justify-end gap-1">
+                    <button @click="viewMessages(s.thread_id)" class="px-2 py-1 rounded bg-surface-3 text-zinc-400 hover:text-accent hover:bg-accent/10 transition">消息</button>
+                    <button @click="resetSession(s.thread_id)" class="px-2 py-1 rounded bg-surface-3 text-zinc-400 hover:text-err hover:bg-err/10 transition">重置</button>
+                  </div>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="filteredSessions.length===0">
+              <td colspan="5" class="px-4 py-10 text-center text-zinc-600">没有找到会话</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
-    <div id="configSaveStatus" style="margin-top:10px;font-size:12px;color:var(--text2)"></div>
-  </div>
 
-  <!-- ═══════ Analytics ═══════ -->
-  <div class="tab-panel" id="panel-analytics">
-    <div class="stats-grid">
-      <div class="stat-card"><div class="icon">&#128200;</div><div class="label">Total Tool Calls (7d)</div><div class="value c-blue" id="analyticsTotalCalls">-</div></div>
-      <div class="stat-card"><div class="icon">&#9200;</div><div class="label">Avg Duration</div><div class="value sm c-green" id="analyticsAvgDuration">-</div></div>
-      <div class="stat-card"><div class="icon">&#9989;</div><div class="label">Success Rate</div><div class="value c-green" id="analyticsSuccessRate">-</div></div>
-      <div class="stat-card"><div class="icon">&#10060;</div><div class="label">Error Count</div><div class="value c-red" id="analyticsErrorCount">-</div></div>
+    <!-- ═══ Cron ═══ -->
+    <div x-show="activeTab==='cron'" class="fade-up space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-semibold">定时任务</h2>
+        <button @click="loadCron()" class="px-3 py-1.5 rounded-lg bg-surface border border-bdr text-xs text-zinc-400 hover:text-zinc-200 hover:border-bdr-2 transition">刷新</button>
+      </div>
+      <template x-if="!cronEnabled">
+        <div class="bg-surface border border-bdr rounded-xl p-10 text-center text-zinc-600">定时任务已禁用</div>
+      </template>
+      <div class="grid gap-3" :class="cronJobs.length > 0 ? 'grid-cols-1 md:grid-cols-2' : ''">
+        <template x-for="j in cronJobs" :key="j.name">
+          <div class="bg-surface border border-bdr rounded-xl p-5 hover:border-bdr-2 transition">
+            <div class="flex items-start justify-between mb-3">
+              <div>
+                <div class="font-semibold text-sm" x-text="j.name"></div>
+                <div class="font-mono text-[11px] text-accent mt-1" x-text="j.schedule"></div>
+              </div>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                    :class="j.enabled ? 'bg-ok-bg text-ok' : 'bg-zinc-800 text-zinc-500'"
+                    x-text="j.enabled ? '已启用' : '已禁用'"></span>
+            </div>
+            <div class="text-xs text-zinc-400 space-y-1">
+              <div x-show="j.message"><span class="text-zinc-500">消息：</span> <span x-text="(j.message||'').substring(0,120)"></span></div>
+              <div x-show="j.last_run"><span class="text-zinc-500">上次运行：</span> <span x-text="formatTime(j.last_run)"></span></div>
+              <div x-show="j.next_run"><span class="text-zinc-500">下次运行：</span> <span x-text="formatTime(j.next_run)"></span></div>
+            </div>
+            <div class="mt-3 flex gap-2">
+              <button @click="runCronJob(j.name)" class="px-3 py-1 rounded-lg bg-accent/10 text-accent text-xs font-medium hover:bg-accent/20 transition">立即运行</button>
+            </div>
+          </div>
+        </template>
+      </div>
+      <div x-show="cronEnabled && cronJobs.length===0" class="bg-surface border border-bdr rounded-xl p-10 text-center text-zinc-600">没有配置定时任务</div>
     </div>
 
-    <div class="card">
-      <div class="card-header">Top Tools by Usage</div>
-      <table><thead><tr><th>Tool</th><th>Calls</th><th>Success Rate</th><th>Avg Duration</th></tr></thead>
-      <tbody id="analyticsTopTools">
-        <tr><td colspan="4" style="text-align:center;color:var(--text3);padding:20px">Loading...</td></tr>
-      </tbody></table>
+    <!-- ═══ MCP ═══ -->
+    <div x-show="activeTab==='mcp'" class="fade-up space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-semibold">MCP 服务器</h2>
+        <button @click="loadMcp()" class="px-3 py-1.5 rounded-lg bg-surface border border-bdr text-xs text-zinc-400 hover:text-zinc-200 hover:border-bdr-2 transition">刷新</button>
+      </div>
+      <template x-if="!mcpEnabled">
+        <div class="bg-surface border border-bdr rounded-xl p-10 text-center text-zinc-600">MCP 已禁用</div>
+      </template>
+      <div class="grid gap-4 md:grid-cols-2">
+        <template x-for="s in mcpServers" :key="s.name">
+          <div class="bg-surface border border-bdr rounded-xl p-5 hover:border-bdr-2 transition">
+            <div class="flex items-center justify-between mb-3">
+              <span class="font-semibold text-sm" x-text="s.name"></span>
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                    :class="s.status==='connected' ? 'bg-ok-bg text-ok' : 'bg-warn-bg text-warn'"
+                    x-text="s.status || 'unknown'"></span>
+            </div>
+            <div x-show="s.command" class="text-xs font-mono text-zinc-500 mb-2 truncate" x-text="s.command"></div>
+            <div x-show="s.tools && s.tools.length" class="mt-3 pt-3 border-t border-bdr space-y-1">
+              <div class="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">工具</div>
+              <template x-for="t in (s.tools||[]).slice(0,10)" :key="t.name||t">
+                <div class="text-xs font-mono text-accent/80" x-text="t.name || t"></div>
+              </template>
+              <div x-show="(s.tools||[]).length > 10" class="text-[11px] text-zinc-500">
+                +<span x-text="(s.tools||[]).length - 10"></span> 更多
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+      <div x-show="mcpEnabled && mcpServers.length===0" class="bg-surface border border-bdr rounded-xl p-10 text-center text-zinc-600">没有配置 MCP 服务器</div>
     </div>
 
-    <div class="card">
-      <div class="card-header">Recent Errors</div>
-      <div id="analyticsRecentErrors" style="padding:16px">
-        <div style="color:var(--text3);font-size:13px">Loading...</div>
+    <!-- ═══ Users ═══ -->
+    <div x-show="activeTab==='users'" class="fade-up space-y-4">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-semibold">用户管理</h2>
+        <button @click="loadUsers()" class="px-3 py-1.5 rounded-lg bg-surface border border-bdr text-xs text-zinc-400 hover:text-zinc-200 hover:border-bdr-2 transition">刷新</button>
+      </div>
+      <template x-if="!authEnabled">
+        <div class="bg-surface border border-bdr rounded-xl p-10 text-center text-zinc-600">认证已禁用</div>
+      </template>
+      <div x-show="authEnabled" class="bg-surface border border-bdr rounded-xl overflow-hidden">
+        <table class="w-full text-xs">
+          <thead><tr class="bg-surface-2 text-zinc-500 uppercase text-[10px] tracking-wider">
+            <th class="px-4 py-3 text-left">用户 ID</th>
+            <th class="px-4 py-3 text-left">角色</th>
+            <th class="px-4 py-3 text-left">设备</th>
+            <th class="px-4 py-3 text-right">操作</th>
+          </tr></thead>
+          <tbody>
+            <template x-for="u in authUsers" :key="u.user_id">
+              <tr class="border-t border-bdr hover:bg-surface-2/50 transition">
+                <td class="px-4 py-3 font-mono text-zinc-300" x-text="u.user_id"></td>
+                <td class="px-4 py-3">
+                  <select :value="u.role" @change="updateRole(u.user_id, $event.target.value)"
+                          class="bg-bg border border-bdr text-zinc-300 rounded px-2 py-0.5 text-[11px] outline-none focus:border-accent">
+                    <option value="admin">admin</option>
+                    <option value="user">user</option>
+                    <option value="guest">guest</option>
+                  </select>
+                </td>
+                <td class="px-4 py-3 text-zinc-400">
+                  <span x-text="u.device_count || 0"></span> 设备，
+                  <span x-text="u.trusted_devices || 0"></span> 已信任
+                </td>
+                <td class="px-4 py-3 text-right">
+                  <button @click="deleteUser(u.user_id)" class="px-2 py-1 rounded bg-surface-3 text-zinc-400 hover:text-err hover:bg-err/10 transition">删除</button>
+                </td>
+              </tr>
+            </template>
+            <tr x-show="authUsers.length===0">
+              <td colspan="4" class="px-4 py-10 text-center text-zinc-600">没有注册用户</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
-  </div>
 
-  <!-- ═══════ Audit ═══════ -->
-  <div class="tab-panel" id="panel-audit">
-    <div class="card">
-      <div class="card-header">
-        Command Audit Log
-        <div style="display:flex;gap:8px;align-items:center">
-          <select id="auditToolFilter" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:12px" onchange="fetchAudit()">
-            <option value="">All Tools</option>
+    <!-- ═══ Audit ═══ -->
+    <div x-show="activeTab==='audit'" class="fade-up space-y-4" x-init="loadAuditStats()">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-semibold">审计日志</h2>
+        <div class="flex items-center gap-2">
+          <select x-model="auditToolFilter" @change="loadAudit()" class="bg-surface border border-bdr text-zinc-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-accent">
+            <option value="">全部工具</option>
+            <template x-for="t in auditTopTools" :key="t.tool">
+              <option :value="t.tool" x-text="t.tool+' ('+t.count+')'"></option>
+            </template>
           </select>
-          <select id="auditStatusFilter" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 8px;color:var(--text);font-size:12px" onchange="fetchAudit()">
-            <option value="">All Status</option>
-            <option value="success">Success</option>
-            <option value="error">Error</option>
+          <select x-model="auditStatusFilter" @change="loadAudit()" class="bg-surface border border-bdr text-zinc-300 rounded-lg px-2 py-1.5 text-xs outline-none focus:border-accent">
+            <option value="">全部状态</option>
+            <option value="success">成功</option>
+            <option value="error">失败</option>
           </select>
-          <button class="btn sm" onclick="fetchAudit()">&#x21bb; Refresh</button>
+          <button @click="loadAudit()" class="px-3 py-1.5 rounded-lg bg-surface border border-bdr text-xs text-zinc-400 hover:text-zinc-200 transition">刷新</button>
         </div>
       </div>
-      <div id="auditStats" style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;gap:12px;font-size:12px">
-        <span style="color:var(--text3)">Loading stats...</span>
+      <!-- Stats bar -->
+      <div class="flex items-center gap-3 text-xs flex-wrap">
+        <span class="px-2.5 py-1 rounded-lg bg-accent/10 text-accent font-medium" x-text="(auditStats.total_calls||0)+' 次调用 (7天)'"></span>
+        <span class="px-2.5 py-1 rounded-lg bg-ok-bg text-ok font-medium" x-text="(auditStats.success_count||0)+' 成功'"></span>
+        <span class="px-2.5 py-1 rounded-lg bg-err/10 text-err font-medium" x-text="(auditStats.error_count||0)+' 失败'"></span>
+        <span class="px-2.5 py-1 rounded-lg bg-warn-bg text-warn font-medium" x-text="Math.round((auditStats.success_rate||0)*100)+'%'"></span>
+        <span class="px-2.5 py-1 rounded-lg bg-surface-3 text-zinc-400 font-mono" x-text="Math.round(auditStats.avg_duration_ms||0)+'ms 均耗'"></span>
       </div>
-      <table><thead><tr><th>Time</th><th>Tool</th><th>Sender</th><th>Status</th><th>Duration</th><th>Args</th></tr></thead>
-      <tbody id="auditTableBody">
-        <tr><td colspan="6" style="text-align:center;color:var(--text3);padding:20px">Loading audit log...</td></tr>
-      </tbody></table>
-      <div class="empty" id="auditEmpty" style="display:none">&#128466; No audit entries found</div>
+      <!-- Table -->
+      <div class="bg-surface border border-bdr rounded-xl overflow-hidden">
+        <table class="w-full text-xs">
+          <thead><tr class="bg-surface-2 text-zinc-500 uppercase text-[10px] tracking-wider">
+            <th class="px-4 py-3 text-left">时间</th>
+            <th class="px-4 py-3 text-left">工具</th>
+            <th class="px-4 py-3 text-left">发送者</th>
+            <th class="px-4 py-3 text-left">状态</th>
+            <th class="px-4 py-3 text-left">耗时</th>
+            <th class="px-4 py-3 text-left">参数</th>
+          </tr></thead>
+          <tbody>
+            <template x-for="e in auditEntries" :key="e.id">
+              <tr class="border-t border-bdr hover:bg-surface-2/50 transition">
+                <td class="px-4 py-2.5 text-zinc-500 whitespace-nowrap" x-text="formatTime(e.timestamp)"></td>
+                <td class="px-4 py-2.5"><span class="px-2 py-0.5 rounded bg-accent/10 text-accent font-mono" x-text="e.tool_name"></span></td>
+                <td class="px-4 py-2.5 text-zinc-400 font-mono" x-text="e.sender_id||'-'"></td>
+                <td class="px-4 py-2.5">
+                  <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold"
+                        :class="e.success ? 'bg-ok-bg text-ok' : 'bg-err/10 text-err'"
+                        x-text="e.success ? '成功' : '失败'"></span>
+                </td>
+                <td class="px-4 py-2.5 text-zinc-400 font-mono" x-text="e.duration_ms>1000 ? (e.duration_ms/1000).toFixed(1)+'s' : Math.round(e.duration_ms)+'ms'"></td>
+                <td class="px-4 py-2.5 text-zinc-500 max-w-[260px] truncate" x-text="e.args_preview||''" :title="e.args_preview||''"></td>
+              </tr>
+            </template>
+            <tr x-show="auditEntries.length===0">
+              <td colspan="6" class="px-4 py-10 text-center text-zinc-600">没有审计记录</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
-  </div>
 
-  <!-- ═══════ Logs ═══════ -->
-  <div class="tab-panel" id="panel-logs">
-    <div class="log-controls">
-      <label><input type="checkbox" id="autoScroll" checked> Auto scroll</label>
-      <label><input type="checkbox" id="showAllLogs"> All loggers</label>
-      <button class="btn sm" onclick="clearLogs()">Clear</button>
-      <span style="flex:1"></span>
-      <span id="logCount" style="font-size:11px;color:var(--text3)"></span>
+    <!-- ═══ Logs ═══ -->
+    <div x-show="activeTab==='logs'" class="fade-up space-y-3" x-init="startLogStream()">
+      <div class="flex items-center gap-4 text-xs">
+        <label class="flex items-center gap-2 text-zinc-400 cursor-pointer hover:text-zinc-200 transition">
+          <input type="checkbox" x-model="logAutoScroll" class="accent-accent w-3.5 h-3.5"> 自动滚动
+        </label>
+        <label class="flex items-center gap-2 text-zinc-400 cursor-pointer hover:text-zinc-200 transition">
+          <input type="checkbox" x-model="logShowAll" class="accent-accent w-3.5 h-3.5"> 全部日志器
+        </label>
+        <button @click="logLines=[]" class="px-2.5 py-1 rounded-lg bg-surface border border-bdr text-zinc-400 hover:text-zinc-200 transition">清空</button>
+        <span class="flex-1"></span>
+        <span class="text-zinc-600" x-text="logLines.length+' 行'"></span>
+      </div>
+      <div x-ref="logBox"
+           class="bg-bg border border-bdr rounded-xl font-mono text-[11px] leading-[1.8] overflow-y-auto"
+           style="height:calc(100vh - 200px)">
+        <template x-for="(l,i) in logLines" :key="i">
+          <div class="px-4 py-[1px] border-l-2 whitespace-pre-wrap break-all transition-colors hover:bg-white/[.02]"
+               :class="{
+                 'border-transparent text-zinc-400': l.level==='INFO' || l.level==='DEBUG',
+                 'border-warn text-warn': l.level==='WARNING',
+                 'border-err text-err bg-err/[.03]': l.level==='ERROR',
+                 'border-white text-white bg-err': l.level==='CRITICAL',
+               }">
+            <span class="text-zinc-700 mr-2 select-none" x-text="formatLogTs(l.ts)"></span>
+            <span class="text-accent/60 mr-2 select-none" x-text="l.logger?.replace('myclaw.','')"></span>
+            <span x-text="l.message"></span>
+          </div>
+        </template>
+        <div x-show="logLines.length===0" class="px-4 py-10 text-center text-zinc-600">等待日志...</div>
+      </div>
     </div>
-    <div class="log-container" id="logContainer"></div>
-  </div>
+
+    <!-- ═══ Memory ═══ -->
+    <div x-show="activeTab==='memory'" class="fade-up space-y-4" x-init="loadMemories()">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-semibold">记忆</h2>
+        <button @click="showMemForm=!showMemForm" class="px-3 py-1.5 rounded-lg bg-accent/10 text-accent text-xs font-medium hover:bg-accent/20 transition"
+                x-text="showMemForm ? '取消' : '+ 添加记忆'"></button>
+      </div>
+      <!-- Add form -->
+      <div x-show="showMemForm" x-transition class="bg-surface border border-bdr rounded-xl p-5 space-y-3">
+        <input x-model="memFormKey" placeholder="键名（可选）" class="w-full px-3 py-2 rounded-lg bg-bg border border-bdr text-xs text-zinc-200 placeholder-zinc-600 focus:border-accent outline-none">
+        <textarea x-model="memFormContent" placeholder="内容..." rows="3" class="w-full px-3 py-2 rounded-lg bg-bg border border-bdr text-xs text-zinc-200 placeholder-zinc-600 focus:border-accent outline-none resize-y"></textarea>
+        <div class="flex items-center gap-3">
+          <button @click="saveMemory()" class="px-4 py-1.5 rounded-lg bg-accent/10 text-accent text-xs font-medium hover:bg-accent/20 transition">保存</button>
+          <span x-show="memFormStatus" x-text="memFormStatus" class="text-xs" :class="memFormOk ? 'text-ok' : 'text-err'"></span>
+        </div>
+      </div>
+      <!-- Search -->
+      <input x-model="memSearch" @input="filterMemories()" placeholder="搜索记忆..."
+             class="w-full px-3 py-2 rounded-lg bg-surface border border-bdr text-xs text-zinc-200 placeholder-zinc-600 focus:border-accent outline-none">
+      <!-- Categories -->
+      <template x-for="[cat, items] in Object.entries(filteredMemories)" :key="cat">
+        <div class="space-y-1.5">
+          <button @click="memOpen[cat]=!memOpen[cat]"
+                  class="w-full flex items-center gap-3 px-4 py-2.5 bg-surface border border-bdr rounded-xl text-sm hover:bg-surface-2 transition">
+            <span class="text-zinc-500 text-[10px] transition-transform" :class="memOpen[cat] ? 'rotate-90' : ''">&#9654;</span>
+            <span class="font-medium" x-text="cat"></span>
+            <span class="text-zinc-600 text-xs ml-auto" x-text="items.length+' 项'"></span>
+          </button>
+          <div x-show="memOpen[cat]" x-transition class="pl-5 space-y-1.5">
+            <template x-for="m in items" :key="m.key">
+              <div class="bg-surface border border-bdr rounded-xl px-4 py-3 hover:border-bdr-2 transition">
+                <div class="font-mono text-[11px] text-accent mb-1.5" x-text="m.key"></div>
+                <div class="text-xs text-zinc-300 leading-relaxed break-all" x-text="(m.content||'').substring(0,300)"></div>
+                <div class="mt-2 flex gap-2">
+                  <button @click="forgetMemory(m.key)" class="text-[11px] text-zinc-500 hover:text-err transition">删除</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+      <div x-show="Object.keys(filteredMemories).length===0" class="bg-surface border border-bdr rounded-xl p-10 text-center text-zinc-600">没有找到记忆</div>
+    </div>
+
+    <!-- ═══ Config ═══ -->
+    <div x-show="activeTab==='config'" class="fade-up space-y-4" x-init="loadConfig()">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-semibold">配置</h2>
+        <div class="flex items-center gap-2">
+          <button @click="saveConfig()" class="px-3 py-1.5 rounded-lg bg-accent/10 text-accent text-xs font-medium hover:bg-accent/20 transition">保存</button>
+          <button @click="loadConfig()" class="px-3 py-1.5 rounded-lg bg-surface border border-bdr text-xs text-zinc-400 hover:text-zinc-200 transition">重新加载</button>
+          <span x-show="configStatus" x-text="configStatus" class="text-xs" :class="configOk ? 'text-ok' : 'text-err'"></span>
+        </div>
+      </div>
+      <div class="grid gap-4 md:grid-cols-2">
+        <template x-for="[section, values] in Object.entries(configData)" :key="section">
+          <div class="bg-surface border border-bdr rounded-xl overflow-hidden">
+            <div class="px-4 py-3 border-b border-bdr bg-surface-2 text-sm font-semibold capitalize" x-text="section"></div>
+            <div class="p-4 space-y-3">
+              <template x-for="[key, val] in Object.entries(values)" :key="key">
+                <div>
+                  <label class="block text-[11px] text-zinc-500 uppercase tracking-wider mb-1" x-text="key.replace(/_/g,' ')"></label>
+                  <template x-if="typeof val === 'boolean'">
+                    <input type="checkbox" :checked="val" @change="configData[section][key]=$event.target.checked"
+                           class="accent-accent w-4 h-4">
+                  </template>
+                  <template x-if="typeof val === 'number'">
+                    <input type="number" :value="val" @input="configData[section][key]=parseFloat($event.target.value)||0"
+                           class="w-full px-3 py-1.5 rounded-lg bg-bg border border-bdr text-xs text-zinc-200 outline-none focus:border-accent">
+                  </template>
+                  <template x-if="typeof val === 'string' && val.length <= 50">
+                    <input type="text" :value="val" @input="configData[section][key]=$event.target.value"
+                           class="w-full px-3 py-1.5 rounded-lg bg-bg border border-bdr text-xs text-zinc-200 font-mono outline-none focus:border-accent">
+                  </template>
+                  <template x-if="typeof val === 'string' && val.length > 50">
+                    <textarea :value="val" @input="configData[section][key]=$event.target.value" rows="2"
+                              class="w-full px-3 py-1.5 rounded-lg bg-bg border border-bdr text-xs text-zinc-200 font-mono outline-none focus:border-accent resize-y"></textarea>
+                  </template>
+                  <template x-if="Array.isArray(val) || (typeof val === 'object' && val !== null)">
+                    <div class="px-3 py-1.5 rounded-lg bg-bg border border-bdr text-xs text-zinc-400 font-mono max-h-24 overflow-auto"
+                         x-text="JSON.stringify(val, null, 2)"></div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- ═══ Analytics ═══ -->
+    <div x-show="activeTab==='analytics'" class="fade-up space-y-4" x-init="loadAnalytics()">
+      <h2 class="text-lg font-semibold">统计分析</h2>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="bg-surface border border-bdr rounded-xl p-4">
+          <div class="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">总调用次数 (7天)</div>
+          <div class="text-2xl font-bold text-accent" x-text="analyticsStats.total_calls||0"></div>
+        </div>
+        <div class="bg-surface border border-bdr rounded-xl p-4">
+          <div class="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">平均耗时</div>
+          <div class="text-2xl font-bold text-ok" x-text="Math.round(analyticsStats.avg_duration_ms||0)+'ms'"></div>
+        </div>
+        <div class="bg-surface border border-bdr rounded-xl p-4">
+          <div class="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">成功率</div>
+          <div class="text-2xl font-bold text-ok" x-text="Math.round((analyticsStats.success_rate||0)*100)+'%'"></div>
+        </div>
+        <div class="bg-surface border border-bdr rounded-xl p-4">
+          <div class="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">错误数</div>
+          <div class="text-2xl font-bold" :class="(analyticsStats.error_count||0)>0 ? 'text-err' : 'text-zinc-500'" x-text="analyticsStats.error_count||0"></div>
+        </div>
+      </div>
+      <!-- Top tools -->
+      <div class="bg-surface border border-bdr rounded-xl overflow-hidden">
+        <div class="px-4 py-3 border-b border-bdr bg-surface-2 text-sm font-semibold">工具使用排行</div>
+        <table class="w-full text-xs">
+          <thead><tr class="text-zinc-500 uppercase text-[10px] tracking-wider">
+            <th class="px-4 py-2.5 text-left">工具</th>
+            <th class="px-4 py-2.5 text-left">调用次数</th>
+            <th class="px-4 py-2.5 text-left">成功率</th>
+            <th class="px-4 py-2.5 text-left">平均耗时</th>
+          </tr></thead>
+          <tbody>
+            <template x-for="t in analyticsStats.top_tools||[]" :key="t.tool">
+              <tr class="border-t border-bdr hover:bg-surface-2/50 transition">
+                <td class="px-4 py-2.5"><span class="px-2 py-0.5 rounded bg-accent/10 text-accent font-mono" x-text="t.tool"></span></td>
+                <td class="px-4 py-2.5 text-zinc-300" x-text="t.count"></td>
+                <td class="px-4 py-2.5 text-ok font-mono" x-text="Math.round((t.success_rate||0)*100)+'%'"></td>
+                <td class="px-4 py-2.5 text-zinc-400 font-mono" x-text="Math.round(t.avg_duration_ms||0)+'ms'"></td>
+              </tr>
+            </template>
+            <tr x-show="(analyticsStats.top_tools||[]).length===0">
+              <td colspan="4" class="px-4 py-10 text-center text-zinc-600">暂无工具使用数据</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <!-- Recent errors -->
+      <div class="bg-surface border border-bdr rounded-xl overflow-hidden">
+        <div class="px-4 py-3 border-b border-bdr bg-surface-2 text-sm font-semibold">最近错误</div>
+        <div class="p-4">
+          <template x-for="e in analyticsErrors" :key="e.id">
+            <div class="flex items-start gap-3 py-2 border-b border-bdr last:border-0">
+              <span class="px-2 py-0.5 rounded bg-err/10 text-err font-mono text-[11px]" x-text="e.tool_name"></span>
+              <div class="flex-1 text-xs text-zinc-400 font-mono break-all" x-text="e.error||'未知错误'"></div>
+              <span class="text-zinc-600 text-[10px] whitespace-nowrap" x-text="formatTime(e.timestamp)"></span>
+            </div>
+          </template>
+          <div x-show="analyticsErrors.length===0" class="text-center text-zinc-600 py-4">没有最近的错误</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ Message Modal ═══ -->
+    <template x-if="msgModal">
+      <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/70" @click.self="msgModal=null">
+        <div class="bg-surface border border-bdr rounded-2xl w-[95%] max-w-[850px] max-h-[85vh] flex flex-col shadow-2xl">
+          <div class="flex items-center justify-between px-5 py-4 border-b border-bdr">
+            <div>
+              <div class="text-sm font-semibold">会话消息</div>
+              <div class="text-[11px] text-zinc-500 font-mono mt-0.5" x-text="msgModal.threadId"></div>
+            </div>
+            <div class="flex items-center gap-3">
+              <input x-model="msgSearch" placeholder="搜索..." class="px-2.5 py-1 rounded-lg bg-bg border border-bdr text-xs text-zinc-200 placeholder-zinc-600 outline-none focus:border-accent w-44">
+              <button @click="msgModal=null" class="text-zinc-400 hover:text-zinc-200 text-xl transition">&times;</button>
+            </div>
+          </div>
+          <div class="flex-1 overflow-y-auto p-5 space-y-3">
+            <template x-for="(m,i) in msgModal.messages.filter(x=>!msgSearch || (x.content||'').toLowerCase().includes(msgSearch.toLowerCase()))" :key="i">
+              <div class="flex" :class="m.role==='user' ? 'justify-end' : 'justify-start'">
+                <div class="max-w-[80%] rounded-2xl px-4 py-3 border"
+                     :class="m.role==='user' ? 'bg-accent/10 border-accent/20' : m.role==='tool' ? 'bg-surface-3 border-bdr' : 'bg-surface-2 border-bdr'">
+                  <div class="flex items-center gap-2 mb-1">
+                    <span class="text-[10px] font-semibold uppercase"
+                          :class="m.role==='user' ? 'text-ok' : m.role==='assistant' ? 'text-accent' : 'text-zinc-500'"
+                          x-text="m.role"></span>
+                    <span x-show="m.tool_name" class="px-1.5 py-0.5 rounded bg-accent/10 text-accent text-[10px] font-mono" x-text="m.tool_name"></span>
+                  </div>
+                  <div class="text-xs text-zinc-300 whitespace-pre-wrap break-all leading-relaxed"
+                       x-text="m.content && m.content.length > 500 ? m.content.substring(0,500)+'...' : m.content"></div>
+                </div>
+              </div>
+            </template>
+          </div>
+          <div class="px-5 py-3 border-t border-bdr flex items-center justify-between text-xs text-zinc-500">
+            <span x-text="msgModal.messages.length+' 条消息'"></span>
+            <button x-show="msgModal.hasMore" @click="loadMoreMessages()" class="px-3 py-1 rounded-lg bg-surface-3 text-zinc-400 hover:text-zinc-200 transition">加载更多</button>
+          </div>
+        </div>
+      </div>
+    </template>
+
+  </main>
 </div>
 
 <script>
-const myclawLoggers = new Set(['myclaw','myclaw.graph','myclaw.exec','myclaw.config','myclaw.gateway','myclaw.dashboard','myclaw.session','myclaw.skills','myclaw.feishu','myclaw.feishu_tools','myclaw.plugins','myclaw.tts','myclaw.media_understanding','myclaw.cron','myclaw.memory','myclaw.approval','myclaw.beads','myclaw.mcp','myclaw.link_understanding','myclaw.security','myclaw.auth','myclaw.qq']);
-let logContainer, autoScroll, logLineCount = 0;
-
-// ── Idle time updater ──
-function formatIdle(sec) {
-  sec = Math.max(0, sec);
-  if (sec < 60) return Math.round(sec) + 's';
-  if (sec < 3600) return Math.floor(sec/60) + 'm ' + Math.round(sec%60) + 's';
-  const h = Math.floor(sec/3600);
-  return h + 'h ' + Math.floor((sec%3600)/60) + 'm';
-}
-function updateIdleTimes() {
-  document.querySelectorAll('[data-idle]').forEach(el => {
-    const base = parseFloat(el.dataset.idle);
-    el.textContent = formatIdle(base);
-  });
-}
-setInterval(updateIdleTimes, 1000);
-
-// ── Tabs ──
-document.querySelectorAll('.tab').forEach(tab => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById('panel-' + tab.dataset.tab).classList.add('active');
-    if (tab.dataset.tab === 'sessions') fetchSessions();
-    {% if mcp_enabled %}if (tab.dataset.tab === 'mcp') fetchMcpServers();{% endif %}
-    {% if auth_enabled %}if (tab.dataset.tab === 'users') fetchUsers();{% endif %}
-    {% if beads_enabled %}if (tab.dataset.tab === 'beads') fetchBeads();{% endif %}
-    if (tab.dataset.tab === 'config') loadConfig();
-    if (tab.dataset.tab === 'analytics') loadAnalytics();
-  });
-});
-
-// ── API ──
-function api(path, opts) {
-  const token = localStorage.getItem('myclaw_token') || '';
-  const headers = token ? { Authorization: 'Bearer ' + token } : {};
-  return fetch(path, { ...opts, headers }).then(r => {
-    if (r.status === 401) { localStorage.removeItem('myclaw_token'); showAuthPrompt(); throw new Error('Unauthorized'); }
-    return r.json();
-  });
-}
-
-// ── Auth ──
-function showAuthPrompt() {
-  if (document.getElementById('authOverlay')) return;
-  const o = document.createElement('div');
-  o.id = 'authOverlay';
-  o.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;z-index:999;animation:fadeIn .2s ease';
-  o.innerHTML = `<div style="background:var(--surface);border:1px solid var(--border2);border-radius:16px;padding:36px;width:380px;text-align:center;box-shadow:var(--shadow-lg)">
-    <div style="width:48px;height:48px;background:var(--surface3);border-radius:12px;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-size:22px">&#128274;</div>
-    <h2 style="margin-bottom:6px;font-size:17px;font-weight:600">Authentication</h2>
-    <p style="color:var(--text2);font-size:13px;margin-bottom:20px">Enter the gateway auth token to continue</p>
-    <input type="password" id="authInput" placeholder="Gateway auth token" style="width:100%;padding:10px 14px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:14px;margin-bottom:14px;outline:none;transition:border-color .2s" onfocus="this.style.borderColor='var(--accent)'">
-    <br><button class="btn primary" onclick="submitAuth()" style="width:100%;padding:8px">Connect</button>
-    <p id="authError" style="color:var(--red);font-size:12px;margin-top:10px;display:none"></p>
-  </div>`;
-  document.body.appendChild(o);
-  document.getElementById('authInput').focus();
-  document.getElementById('authInput').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuth(); });
-}
-function submitAuth() {
-  const t = document.getElementById('authInput').value.trim();
-  if (!t) return;
-  localStorage.setItem('myclaw_token', t);
-  document.getElementById('authOverlay').remove();
-  location.reload();
-}
-
-// ── Dynamic sessions ──
-async function fetchSessions() {
-  try {
-    const sessions = await api('/api/dashboard/sessions');
-    renderSessions(sessions);
-    const el = document.getElementById('sessionCount');
-    if (el) el.textContent = `(${sessions.length})`;
-  } catch(e) {}
-}
-async function resetSession(tid) {
-  if (!confirm('Reset this session?')) return;
-  try { await api('/api/dashboard/sessions/' + encodeURIComponent(tid) + '/reset', { method: 'POST' }); fetchSessions(); } catch(e) {}
-}
-async function runCron(jobId) {
-  try { await api('/api/cron/jobs/' + encodeURIComponent(jobId) + '/run', { method: 'POST' }); } catch(e) {}
-}
-
-// ── Approvals ──
-async function resolveApproval(requestId, decision) {
-  try {
-    await api('/api/approval/' + encodeURIComponent(requestId) + '/resolve', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ decision }),
-    });
-    const el = document.getElementById('approval-' + requestId);
-    if (el) el.remove();
-  } catch(e) {}
-}
-
-// ── MCP ──
-{% if mcp_enabled %}
-async function fetchMcpServers() {
-  try {
-    const servers = await api('/api/mcp/servers');
-    const grid = document.getElementById('mcpGrid');
-    if (!grid || !servers.length) return;
-    grid.innerHTML = servers.map(s => `
-      <div class="mcp-card" data-server="${escHtml(s.name)}">
-        <div class="mcp-header">
-          <div>
-            <span class="mcp-name">${escHtml(s.name)}</span>
-            <span class="tag tag-blue" style="margin-left:6px">${escHtml(s.transport || 'stdio')}</span>
-          </div>
-          <span style="display:flex;align-items:center;gap:6px">
-            <span class="status-dot" style="${s.connected ? '' : 'background:var(--red);box-shadow:0 0 8px var(--red)'}"></span>
-            <span style="font-size:12px;color:${s.connected ? 'var(--green)' : 'var(--red)'}">${s.connected ? 'Connected' : 'Disconnected'}</span>
-          </span>
-        </div>
-        <div style="font-size:12px;color:var(--text2)">Tools: <span style="color:var(--accent)">${s.tool_count || 0}</span></div>
-        ${s.error ? '<div style="font-size:11px;color:var(--red);margin-top:6px">' + escHtml(s.error) + '</div>' : ''}
-        <div class="mcp-tools" id="mcp-tools-${escHtml(s.name)}" style="display:none"></div>
-        <div style="margin-top:8px"><button class="btn sm" onclick="toggleMcpTools('${escHtml(s.name)}')">Show Tools</button></div>
-      </div>
-    `).join('');
-  } catch(e) {}
-}
-
-async function toggleMcpTools(serverName) {
-  const el = document.getElementById('mcp-tools-' + serverName);
-  if (!el) return;
-  if (el.style.display !== 'none') {
-    el.style.display = 'none';
-    return;
-  }
-  if (el.innerHTML) {
-    el.style.display = 'block';
-    return;
-  }
-  try {
-    const data = await api('/api/mcp/servers/' + encodeURIComponent(serverName));
-    const tools = data.tools || [];
-    if (!tools.length) {
-      el.innerHTML = '<div style="font-size:11px;color:var(--text3)">No tools available</div>';
-    } else {
-      el.innerHTML = tools.map(t =>
-        `<div class="mcp-tool">${escHtml(t.name || t)}${t.description ? ' <span style="color:var(--text3)">- ' + escHtml(t.description).slice(0,80) + '</span>' : ''}</div>`
-      ).join('');
-    }
-    el.style.display = 'block';
-  } catch(e) {
-    el.innerHTML = '<div style="font-size:11px;color:var(--red)">Failed to load tools</div>';
-    el.style.display = 'block';
-  }
-}
-{% endif %}
-
-// ── Users ──
-{% if auth_enabled %}
-async function fetchUsers() {
-  try {
-    const data = await api('/api/dashboard/users');
-    if (!data.enabled) return;
-    const users = data.users || [];
-    const tbody = document.getElementById('usersTbody');
-    if (!tbody) return;
-    if (!users.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">No users</td></tr>'; return; }
-    tbody.innerHTML = users.map(u => {
-      const uid = u.user_id || '';
-      const short = uid.length > 20 ? uid.slice(0,20) + '...' : uid;
-      return `<tr data-uid="${escHtml(uid)}">
-        <td style="font-family:var(--mono);font-size:11px">${escHtml(short)}</td>
-        <td>${escHtml(u.display_name || '-')}</td>
-        <td><select class="role-select" onchange="updateUserRole('${escHtml(uid)}', this.value)">
-          <option value="owner" ${u.role==='owner'?'selected':''}>owner</option>
-          <option value="admin" ${u.role==='admin'?'selected':''}>admin</option>
-          <option value="user" ${u.role==='user'?'selected':''}>user</option>
-          <option value="guest" ${u.role==='guest'?'selected':''}>guest</option>
-        </select></td>
-        <td><span style="font-size:12px">${u.device_count||0} devices (${u.trusted_devices||0} trusted)</span>
-          <button class="btn sm" style="margin-left:6px;font-size:10px" onclick="toggleDevices('${escHtml(uid)}')">Details</button></td>
-        <td style="font-size:12px;color:var(--text2)">${u.last_seen || '-'}</td>
-        <td><button class="btn sm danger" onclick="deleteUser('${escHtml(uid)}')">Delete</button></td>
-      </tr>
-      <tr class="device-row" id="devices-${escHtml(uid)}" style="display:none">
-        <td colspan="6"><div id="devices-list-${escHtml(uid)}" style="padding:4px 0">Loading...</div></td>
-      </tr>`;
-    }).join('');
-  } catch(e) {}
-}
-
-async function updateUserRole(userId, role) {
-  try { await api('/api/dashboard/users/' + encodeURIComponent(userId) + '/role', { method: 'PATCH', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ role }) }); } catch(e) {}
-}
-
-async function deleteUser(userId) {
-  if (!confirm('Delete user ' + userId + '?')) return;
-  try { await api('/api/dashboard/users/' + encodeURIComponent(userId), { method: 'DELETE' }); fetchUsers(); } catch(e) {}
-}
-
-async function toggleDevices(userId) {
-  const row = document.getElementById('devices-' + userId);
-  const list = document.getElementById('devices-list-' + userId);
-  if (!row || !list) return;
-  if (row.style.display !== 'none') { row.style.display = 'none'; return; }
-  try {
-    const devices = await api('/api/dashboard/users/' + encodeURIComponent(userId) + '/devices');
-    if (!devices.length) {
-      list.innerHTML = '<span style="color:var(--text3);font-size:12px">No devices</span>';
-    } else {
-      list.innerHTML = devices.map(d => `<div style="padding:4px 0;font-size:12px;border-bottom:1px solid var(--border)">
-        <span style="color:var(--text)">${escHtml(d.name || d.platform || 'device')}</span>
-        <span class="tag ${d.trusted ? 'tag-green' : 'tag-gray'}" style="margin-left:6px">${d.trusted ? 'trusted' : 'untrusted'}</span>
-        <span style="color:var(--text3);margin-left:8px">${escHtml(d.platform||'')}</span>
-        <span style="color:var(--text3);margin-left:8px">${d.paired_at ? 'paired ' + d.paired_at : ''}</span>
-        <button class="btn sm danger" style="margin-left:8px;font-size:10px" onclick="deleteDevice('${escHtml(d.device_id)}')">Revoke</button>
-      </div>`).join('');
-    }
-    row.style.display = 'table-row';
-  } catch(e) {}
-}
-
-async function deleteDevice(deviceId) {
-  if (!confirm('Revoke this device?')) return;
-  try { await api('/api/dashboard/devices/' + encodeURIComponent(deviceId), { method: 'DELETE' }); } catch(e) {}
-}
-{% endif %}
-
-// ── Model Switcher ──
-async function loadModels() {
-  try {
-    const data = await api('/api/dashboard/models');
-    const list = document.getElementById('modelList');
-    const available = data.available || [];
-    list.innerHTML = available.map(m =>
-      `<div class="md-item${m.active ? ' active' : ''}" onclick="switchModel('${escHtml(m.provider)}','${escHtml(m.name)}')">
-        <span class="md-name">${escHtml(m.provider)}/${escHtml(m.name)}</span>
-        ${m.active ? '<span class="tag tag-green md-tag">active</span>' : ''}
-      </div>`
-    ).join('');
-    if (available.length <= 1) {
-      list.innerHTML += '<div style="padding:10px 16px;font-size:11px;color:var(--text3)">No fallback models configured</div>';
-    }
-    document.getElementById('currentModel').textContent = data.current.provider + '/' + data.current.name + ' ▾';
-  } catch(e) {}
-}
-
-function toggleModelDropdown() {
-  const s = document.getElementById('modelSwitcher');
-  s.classList.toggle('open');
-  if (s.classList.contains('open')) loadModels();
-}
-
-document.addEventListener('click', e => {
-  const s = document.getElementById('modelSwitcher');
-  if (s && !s.contains(e.target)) s.classList.remove('open');
-});
-
-async function switchModel(provider, name) {
-  try {
-    const result = await api('/api/dashboard/models/switch', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ provider, name }),
-    });
-    document.getElementById('currentModel').textContent = result.current + ' ▾';
-    document.getElementById('modelSwitcher').classList.remove('open');
-  } catch(e) {
-    alert('Switch failed: ' + (e.message || 'unknown error'));
-  }
-}
-
-// ── Logs SSE ──
-function startLogStream() {
-  logContainer = document.getElementById('logContainer');
-  autoScroll = document.getElementById('autoScroll').checked;
-  const token = localStorage.getItem('myclaw_token') || '';
-  const url = '/api/dashboard/stream' + (token ? '?token=' + encodeURIComponent(token) : '');
-  const es = new EventSource(url);
-  es.addEventListener('log', e => {
-    try {
-      const log = JSON.parse(e.data);
-      if (document.getElementById('showAllLogs').checked || myclawLoggers.has(log.logger)) appendLog(log);
-    } catch {}
-  });
-  es.onerror = () => { es.close(); setTimeout(startLogStream, 3000); };
-}
-function appendLog(log) {
-  const d = document.createElement('div');
-  d.className = 'log-line ' + log.level;
-  const ts = new Date(log.ts * 1000).toLocaleTimeString();
-  d.innerHTML = `<span class="log-ts">${ts}</span><span class="log-logger">[${log.logger}]</span>${escHtml(log.message)}`;
-  logContainer.appendChild(d);
-  logLineCount++;
-  while (logContainer.children.length > 600) logContainer.removeChild(logContainer.firstChild);
-  document.getElementById('logCount').textContent = logLineCount + ' lines';
-  if (autoScroll) logContainer.scrollTop = logContainer.scrollHeight;
-}
-function escHtml(t) { return String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
-function clearLogs() { logContainer.innerHTML = ''; logLineCount = 0; document.getElementById('logCount').textContent = ''; }
-function clearEventLog() {
-  const el = document.getElementById('eventLog');
-  if (el) {
-    el.innerHTML = '<div style="color:var(--text3);font-size:13px">Event log cleared</div>';
-    _eventLog = [];
-    document.getElementById('eventCount').textContent = '0';
-  }
-}
-
-// ── State SSE (real-time updates for all panels) ──
-let _lastState = null;
-function startStateStream() {
-  const token = localStorage.getItem('myclaw_token') || '';
-  const url = '/api/dashboard/state-stream' + (token ? '?token=' + encodeURIComponent(token) : '');
-  const es = new EventSource(url);
-  es.onmessage = e => {
-    try {
-      const state = JSON.parse(e.data);
-      _lastState = state;
-      applyState(state);
-    } catch {}
-  };
-  es.onerror = () => { es.close(); setTimeout(startStateStream, 5000); };
-}
-function applyState(s) {
-  // Overview stats
-  const uptimeEl = document.querySelector('#panel-overview .stat-card .value.sm.c-blue');
-  if (uptimeEl) uptimeEl.textContent = s.uptime;
-  const sessionEl = document.querySelector('#panel-overview .stat-card .value.c-green');
-  if (sessionEl) sessionEl.textContent = s.session_count;
-  // Update session count badge in header if visible
-  const sessCount = document.getElementById('sessionCount');
-  if (sessCount) sessCount.textContent = `(${(s.sessions || []).length})`;
-
-  // Sessions tab (only if active)
-  if (document.getElementById('panel-sessions').classList.contains('active')) {
-    renderSessions(s.sessions || []);
-  }
-  // Pending approvals
-  renderApprovals(s.pending_approvals || []);
-  // Cron
-  if (document.getElementById('panel-cron').classList.contains('active') && s.cron_jobs) {
-    renderCron(s.cron_jobs);
-  }
-  // MCP
-  {% if mcp_enabled %}
-  if (document.getElementById('panel-mcp') && document.getElementById('panel-mcp').classList.contains('active') && s.mcp_servers) {
-    renderMcp(s.mcp_servers);
-  }
-  {% endif %}
-  // Users
-  {% if auth_enabled %}
-  if (document.getElementById('panel-users') && document.getElementById('panel-users').classList.contains('active') && s.auth_users) {
-    renderUsers(s.auth_users);
-  }
-  {% endif %}
-  // Beads
-  {% if beads_enabled %}
-  if (document.getElementById('panel-beads') && document.getElementById('panel-beads').classList.contains('active') && s.beads) {
-    _allBeads = {};
-    for (const [k, v] of Object.entries(s.beads)) { if (k !== 'schema_version') _allBeads[k] = v; }
-    document.getElementById('beadCount').textContent = Object.keys(_allBeads).length;
-    renderBeads(_allBeads);
-  }
-  {% endif %}
-}
-
-// ── Event Bus SSE (real-time event streaming) ──
-let _eventLog = [];
-const MAX_EVENT_LOG = 100;
-
-function startEventStream() {
-  const token = localStorage.getItem('myclaw_token') || '';
-  const url = '/api/dashboard/events' + (token ? '?token=' + encodeURIComponent(token) : '');
-  const es = new EventSource(url);
-
-  es.addEventListener('init', e => {
-    try {
-      const state = JSON.parse(e.data);
-      _lastState = state;
-      applyState(state);
-    } catch {}
-  });
-
-  es.addEventListener('tool.exec_started', e => {
-    try {
-      const data = JSON.parse(e.data);
-      addEventBadge('tool', 'started', data.context);
-    } catch {}
-  });
-
-  es.addEventListener('tool.exec_completed', e => {
-    try {
-      const data = JSON.parse(e.data);
-      const ctx = data.context;
-      addEventBadge('tool', 'ok', ctx);
-      updateToolStats(ctx);
-    } catch {}
-  });
-
-  es.addEventListener('tool.exec_failed', e => {
-    try {
-      const data = JSON.parse(e.data);
-      addEventBadge('tool', 'error', data.context);
-    } catch {}
-  });
-
-  es.addEventListener('session.reset', e => {
-    try {
-      const data = JSON.parse(e.data);
-      addEventBadge('session', 'reset', data.context);
-    } catch {}
-  });
-
-  es.addEventListener('message.received', e => {
-    try {
-      const data = JSON.parse(e.data);
-      addEventBadge('message', 'in', data.context);
-    } catch {}
-  });
-
-  es.addEventListener('message.replied', e => {
-    try {
-      const data = JSON.parse(e.data);
-      addEventBadge('message', 'out', data.context);
-    } catch {}
-  });
-
-  es.addEventListener('agent_loop.started', e => {
-    try {
-      const data = JSON.parse(e.data);
-      addEventBadge('agent', 'start', data.context);
-    } catch {}
-  });
-
-  es.addEventListener('agent_loop.completed', e => {
-    try {
-      const data = JSON.parse(e.data);
-      addEventBadge('agent', 'done', data.context);
-    } catch {}
-  });
-
-  es.addEventListener('agent.error', e => {
-    try {
-      const data = JSON.parse(e.data);
-      addEventBadge('agent', 'error', data.context);
-    } catch {}
-  });
-
-  es.onerror = () => { es.close(); setTimeout(startEventStream, 5000); };
-}
-
-function addEventBadge(category, type, ctx) {
-  const eventList = document.getElementById('eventLog');
-  if (!eventList) return;
-
-  const ts = new Date().toLocaleTimeString();
-  const colorMap = {
-    'started': 'tag-blue',
-    'ok': 'tag-green',
-    'error': 'tag-red',
-    'reset': 'tag-orange',
-    'in': 'tag-purple',
-    'out': 'tag-blue',
-    'start': 'tag-green',
-    'done': 'tag-gray',
-  };
-  const color = colorMap[type] || 'tag-gray';
-
-  const toolName = ctx.tool_name || ctx.channel || ctx.thread_id || '';
-  const duration = ctx.duration_ms ? ` (${Math.round(ctx.duration_ms)}ms)` : '';
-  const preview = ctx.args_preview ? `: ${escHtml(ctx.args_preview.slice(0, 50))}` : '';
-
-  const item = document.createElement('div');
-  item.className = 'event-item';
-  item.innerHTML = `<span class="tag ${color}">${type}</span> <span class="event-cat">${escHtml(category)}</span> ${escHtml(toolName)}${duration}${preview} <span class="event-ts">${ts}</span>`;
-
-  eventList.insertBefore(item, eventList.firstChild);
-
-  // Limit visible items
-  while (eventList.children.length > 50) {
-    eventList.removeChild(eventList.lastChild);
-  }
-
-  // Update counter
-  const counter = document.getElementById('eventCount');
-  if (counter) counter.textContent = eventList.children.length;
-}
-
-function updateToolStats(ctx) {
-  const toolName = ctx.tool_name;
-  if (!toolName) return;
-
-  const statsEl = document.getElementById('toolStats');
-  if (!statsEl) return;
-
-  // Simple counter per tool
-  if (!_toolStats) _toolStats = {};
-  _toolStats[toolName] = (_toolStats[toolName] || 0) + 1;
-
-  const topTools = Object.entries(_toolStats)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5);
-
-  statsEl.innerHTML = topTools.map(([name, count]) =>
-    `<div class="tool-stat"><span class="tool-name">${escHtml(name)}</span><span class="tool-count">${count}</span></div>`
-  ).join('');
-}
-
-// ── SSE-driven renderers ──
-function renderSessions(sessions) {
-  const tbody = document.querySelector('#panel-sessions tbody');
-  if (!tbody) return;
-  const empty = document.getElementById('sessionEmpty');
-  if (!sessions.length) { tbody.innerHTML = ''; if (empty) empty.style.display = ''; return; }
-  if (empty) empty.style.display = 'none';
-  tbody.innerHTML = sessions.map(s => {
-    const shortId = s.thread_id.length > 50 ? '...' + s.thread_id.slice(-47) : s.thread_id;
-    const isActive = s.status === 'active';
-    const statusTag = isActive ? '<span class="tag tag-green">active</span>' : '<span class="tag tag-gray">idle</span>';
-    const idleCell = s.last_active != null ? `<span class="tag tag-green" data-idle="${s.last_active}">${formatIdle(s.last_active)}</span>` : '-';
-    return `<tr data-tid="${escHtml(s.thread_id)}"><td style="font-family:var(--mono);font-size:11px;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(shortId)}</td><td>${statusTag}</td><td>${idleCell}</td><td><button class="btn sm danger" onclick="resetSession('${escHtml(s.thread_id)}')">Reset</button></td></tr>`;
-  }).join('');
-}
-
-function renderApprovals(approvals) {
-  // Remove old approval cards
-  document.querySelectorAll('.approval-card').forEach(el => {
-    const id = el.id.replace('approval-', '');
-    if (!approvals.find(a => a.id === id)) el.remove();
-  });
-  // Add new ones (insert after the stats grid, before config)
-  const container = document.querySelector('#panel-overview .stats-grid');
-  if (!container) return;
-  let section = document.getElementById('approvalSection');
-  if (!approvals.length) { if (section) section.remove(); return; }
-  if (!section) {
-    section = document.createElement('div');
-    section.id = 'approvalSection';
-    section.innerHTML = '<div class="section-title">Pending Approvals</div><div id="approvalList"></div>';
-    container.after(section);
-  }
-  const list = document.getElementById('approvalList');
-  list.innerHTML = approvals.map(a => `<div class="approval-card" id="approval-${escHtml(a.id)}">
-    <div class="info"><div class="tool">${escHtml(a.tool_name)}</div><div class="preview">${escHtml((a.args_preview || '').slice(0,200))}</div><div class="meta-line">from ${escHtml(a.sender_id)} &middot; ${escHtml(a.created_at || '')}</div></div>
-    <div class="actions"><button class="btn sm primary" onclick="resolveApproval('${escHtml(a.id)}','allow_once')">Allow</button><button class="btn sm danger" onclick="resolveApproval('${escHtml(a.id)}','deny')">Deny</button></div>
-  </div>`).join('');
-}
-
-function renderCron(jobs) {
-  const tbody = document.querySelector('#panel-cron tbody');
-  if (!tbody) return;
-  const empty = document.getElementById('cronEmpty');
-  if (!jobs.length) { tbody.innerHTML = ''; if (empty) empty.style.display = ''; return; }
-  if (empty) empty.style.display = 'none';
-  tbody.innerHTML = jobs.map(j => {
-    const en = j.enabled !== false;
-    const sched = j.schedule ? (j.schedule.expr || (j.schedule.every_seconds ? 'every ' + Math.round(j.schedule.every_seconds / 60) + 'm' : j.schedule.at || '-') ) : '-';
-    const lastRun = j.last_run_at ? new Date(j.last_run_at * 1000).toLocaleString() : '-';
-    return `<tr><td style="font-weight:500">${escHtml(j.name || j.id)}</td><td style="font-family:var(--mono);font-size:12px">${escHtml(sched)}</td><td>${en ? '<span class="tag tag-green">ON</span>' : '<span class="tag tag-red">OFF</span>'}</td><td style="font-size:12px;color:var(--text2)">${escHtml(lastRun)}</td><td><button class="btn sm primary" onclick="runCron('${escHtml(j.id)}')">&#9654;</button></td></tr>`;
-  }).join('');
-}
-
-{% if mcp_enabled %}
-function renderMcp(servers) {
-  const grid = document.getElementById('mcpGrid');
-  if (!grid) return;
-  grid.innerHTML = servers.map(s => `<div class="mcp-card" data-server="${escHtml(s.name)}">
-    <div class="mcp-header"><div><span class="mcp-name">${escHtml(s.name)}</span><span class="tag tag-blue" style="margin-left:6px">${escHtml(s.transport || 'stdio')}</span></div>
-    <span style="display:flex;align-items:center;gap:6px"><span class="status-dot" style="${s.connected ? '' : 'background:var(--red);box-shadow:0 0 8px var(--red)'}"></span><span style="font-size:12px;color:${s.connected ? 'var(--green)' : 'var(--red)'}">${s.connected ? 'Connected' : 'Disconnected'}</span></span></div>
-    <div style="font-size:12px;color:var(--text2)">Tools: <span style="color:var(--accent)">${s.tool_count || 0}</span></div>
-    ${s.error ? '<div style="font-size:11px;color:var(--red);margin-top:6px">' + escHtml(s.error) + '</div>' : ''}
-    <div class="mcp-tools" id="mcp-tools-${escHtml(s.name)}" style="display:none"></div>
-    <div style="margin-top:8px"><button class="btn sm" onclick="toggleMcpTools('${escHtml(s.name)}')">Show Tools</button></div>
-  </div>`).join('');
-}
-{% endif %}
-
-{% if auth_enabled %}
-function renderUsers(users) {
-  const tbody = document.getElementById('usersTbody');
-  if (!tbody) return;
-  tbody.innerHTML = users.map(u => {
-    const uid = u.user_id || '';
-    const short = uid.length > 20 ? uid.slice(0,20) + '...' : uid;
-    return `<tr data-uid="${escHtml(uid)}"><td style="font-family:var(--mono);font-size:11px">${escHtml(short)}</td><td>${escHtml(u.display_name || '-')}</td>
-    <td><select class="role-select" onchange="updateUserRole('${escHtml(uid)}', this.value)"><option value="owner" ${u.role==='owner'?'selected':''}>owner</option><option value="admin" ${u.role==='admin'?'selected':''}>admin</option><option value="user" ${u.role==='user'?'selected':''}>user</option><option value="guest" ${u.role==='guest'?'selected':''}>guest</option></select></td>
-    <td><span style="font-size:12px">${u.device_count||0} devices (${u.trusted_devices||0} trusted)</span><button class="btn sm" style="margin-left:6px;font-size:10px" onclick="toggleDevices('${escHtml(uid)}')">Details</button></td>
-    <td style="font-size:12px;color:var(--text2)">${escHtml(u.last_seen || '-')}</td><td><button class="btn sm danger" onclick="deleteUser('${escHtml(uid)}')">Delete</button></td></tr>
-    <tr class="device-row" id="devices-${escHtml(uid)}" style="display:none"><td colspan="6"><div id="devices-list-${escHtml(uid)}" style="padding:4px 0"></div></td></tr>`;
-  }).join('');
-}
-{% endif %}
-
-// ── Beads Memory ──
-{% if beads_enabled %}
-let _allBeads = {};
-
-const _catMeta = {
-  identity:  { icon: '\u{1F464}', label: 'Identity',  color: 'tag-purple' },
-  preference:{ icon: '\u{1F3AF}', label: 'Preference', color: 'tag-blue'   },
-  contact:   { icon: '\u{1F4E7}', label: 'Contact',   color: 'tag-green'  },
-  project:   { icon: '\u{1F4BB}', label: 'Project',   color: 'tag-orange' },
-  service:   { icon: '\u{1F527}', label: 'Service',   color: 'tag-yellow' },
-  fact:      { icon: '\u{1F4D6}', label: 'Fact',      color: 'tag-gray'   },
-};
-
-function _classify(key, val) {
-  // Value tag: [identity] / [preference] ...
-  const m = val.match(/^\[(identity|preference|contact|project|service|fact)\]/i);
-  if (m) return m[1].toLowerCase();
-  // Key prefix: identity- / preference- / fact- / project- ...
-  const km = key.match(/^(identity|preference|contact|project|service|fact)[-\s_]/i);
-  if (km) return km[1].toLowerCase();
-  // Key exact match
-  if (_catMeta[key.toLowerCase()]) return key.toLowerCase();
-  return 'other';
-}
-
-function _groupMemories(memories) {
-  const groups = {};
-  for (const [k, v] of Object.entries(memories)) {
-    const cat = _classify(k, v);
-    if (!groups[cat]) groups[cat] = [];
-    groups[cat].push([k, v]);
-  }
-  // Sort each group by key
-  for (const cat of Object.keys(groups)) {
-    groups[cat].sort((a, b) => a[0].localeCompare(b[0]));
-  }
-  return groups;
-}
-
-function _catOrder(cat) {
-  const order = ['identity','preference','contact','project','service','fact','other'];
-  return order.indexOf(cat);
-}
-
-async function fetchBeads() {
-  try {
-    const data = await api('/api/dashboard/beads/memories');
-    if (data.error) { document.getElementById('beadsContainer').innerHTML = '<div class="empty">Error: ' + escHtml(data.error) + '</div>'; return; }
-    const memories = {};
-    for (const [k, v] of Object.entries(data)) {
-      if (k === 'schema_version') continue;
-      memories[k] = v;
-    }
-    _allBeads = memories;
-    document.getElementById('beadCount').textContent = Object.keys(memories).length;
-    renderBeads(memories);
-  } catch(e) {}
-}
-
-function renderBeads(memories) {
-  const container = document.getElementById('beadsContainer');
-  const emptyEl = document.getElementById('beadsEmpty');
-  const keys = Object.keys(memories);
-  if (!keys.length) { container.innerHTML = ''; emptyEl.style.display = 'block'; return; }
-  emptyEl.style.display = 'none';
-  const groups = _groupMemories(memories);
-  const sortedCats = Object.keys(groups).sort((a, b) => _catOrder(a) - _catOrder(b));
-  let html = '';
-  for (const cat of sortedCats) {
-    const items = groups[cat];
-    const meta = _catMeta[cat] || { icon: '\u{1F4CC}', label: 'Other', color: 'tag-gray' };
-    const catId = 'cat-' + cat;
-    html += `<div class="mem-category">
-      <div class="mem-category-header" onclick="toggleCat('${catId}')">
-        <span class="arrow open" id="arrow-${catId}">&#9654;</span>
-        <span class="cat-icon">${meta.icon}</span>
-        <span class="cat-label">${meta.label}</span>
-        <span class="tag ${meta.color}">${items.length}</span>
-      </div>
-      <div class="mem-category-items" id="${catId}">`;
-    for (const [k, v] of items) {
-      html += `<div class="mem-item">
-        <div class="mem-key"><span>${escHtml(k)}</span></div>
-        <div class="mem-val">${escHtml(v)}</div>
-        <div class="mem-actions">
-          <button class="btn sm danger" onclick="forgetMemory('${escHtml(k)}')">Delete</button>
-        </div>
-      </div>`;
-    }
-    html += `</div></div>`;
-  }
-  container.innerHTML = html;
-}
-
-function toggleCat(catId) {
-  const el = document.getElementById(catId);
-  const arrow = document.getElementById('arrow-' + catId);
-  if (!el) return;
-  if (el.style.display === 'none') {
-    el.style.display = 'block';
-    arrow.classList.add('open');
-  } else {
-    el.style.display = 'none';
-    arrow.classList.remove('open');
-  }
-}
-
-function filterBeads(query) {
-  query = query.toLowerCase().trim();
-  if (!query) { renderBeads(_allBeads); return; }
-  const filtered = {};
-  for (const [k, v] of Object.entries(_allBeads)) {
-    if (k.toLowerCase().includes(query) || v.toLowerCase().includes(query)) {
-      filtered[k] = v;
-    }
-  }
-  renderBeads(filtered);
-}
-
-async function forgetMemory(key) {
-  if (!confirm('Delete memory "' + key + '"?')) return;
-  try {
-    await api('/api/dashboard/beads/forget/' + encodeURIComponent(key), { method: 'DELETE' });
-    delete _allBeads[key];
-    document.getElementById('beadCount').textContent = Object.keys(_allBeads).length;
-    renderBeads(_allBeads);
-  } catch(e) {}
-}
-
-function toggleAddMemory() {
-  const f = document.getElementById('addMemoryForm');
-  f.style.display = f.style.display === 'none' ? 'block' : 'none';
-  if (f.style.display === 'block') document.getElementById('memContentInput').focus();
-}
-
-async function saveNewMemory() {
-  const content = document.getElementById('memContentInput').value.trim();
-  const key = document.getElementById('memKeyInput').value.trim();
-  if (!content) return;
-  try {
-    await api('/api/dashboard/beads/remember', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ content, key }),
-    });
-    document.getElementById('memContentInput').value = '';
-    document.getElementById('memKeyInput').value = '';
-    document.getElementById('addMemoryForm').style.display = 'none';
-    fetchBeads();
-  } catch(e) {}
-}
-{% endif %}
-
-// ── Dashboard Enhancement Functions ──
-
-async function reloadConfig() {
-  const status = document.getElementById('configReloadStatus');
-  status.textContent = 'Reloading...';
-  try {
-    const data = await api('/api/dashboard/config/reload', { method: 'POST' });
-    if (data.ok) {
-      status.textContent = 'Config reloaded successfully';
-      status.style.color = 'var(--green)';
-      setTimeout(() => { status.textContent = ''; status.style.color = ''; }, 3000);
-    } else {
-      status.textContent = 'Error: ' + (data.error || 'Unknown');
-      status.style.color = 'var(--red)';
-    }
-  } catch(e) {
-    status.textContent = 'Error: ' + e.message;
-    status.style.color = 'var(--red)';
-  }
-}
-
-async function runSecurityAudit() {
-  const resultsDiv = document.getElementById('securityAuditResults');
-  resultsDiv.innerHTML = '<div style="color:var(--text3);font-size:13px">Running audit...</div>';
-  try {
-    const data = await api('/api/dashboard/security/audit');
-    if (data.error) {
-      resultsDiv.innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + escHtml(data.error) + '</div>';
-      return;
-    }
-    let html = '<div style="display:flex;gap:12px;margin-bottom:12px">';
-    html += '<span class="tag tag-green">' + data.pass + ' passed</span>';
-    html += '<span class="tag tag-yellow">' + data.warn + ' warnings</span>';
-    html += '<span class="tag tag-blue">' + data.info + ' info</span>';
-    html += '</div>';
-    if (data.issues && data.issues.length > 0) {
-      html += '<div style="margin-top:12px">';
-      for (const issue of data.issues.slice(0, 10)) {
-        const color = issue.severity === 'warn' ? 'var(--yellow)' : issue.severity === 'info' ? 'var(--blue)' : 'var(--text2)';
-        html += '<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;color:' + color + '">' + escHtml(issue.message || issue) + '</div>';
+const AUTH_TOKEN = "{{ auth_token }}";
+
+function app() {
+  return {
+    tabs: [
+      {id:'sessions', icon:'\u25A1', label:'\u4F1A\u8BDD'},
+      {id:'cron', icon:'\u23F0', label:'\u5B9A\u65F6\u4EFB\u52A1'},
+      {id:'mcp', icon:'\uD83D\uDD27', label:'MCP'},
+      {id:'users', icon:'\uD83D\uDC64', label:'\u7528\u6237'},
+      {id:'audit', icon:'\uD83D\uDCDC', label:'\u5BA1\u8BA1'},
+      {id:'logs', icon:'\uD83D\uDCCB', label:'\u65E5\u5FD7'},
+      {id:'memory', icon:'\uD83D\uDCA0', label:'\u8BB0\u5FC6'},
+      {id:'config', icon:'\u2699\uFE0F', label:'\u914D\u7F6E'},
+      {id:'analytics', icon:'\uD83D\uDCC8', label:'\u7EDF\u8BA1'},
+    ],
+    activeTab: 'sessions',
+    modelProvider: "{{ model_provider }}",
+    modelName: "{{ model_name }}",
+    models: [],
+    uptime: '',
+    _startTs: Date.now(),
+
+    sessions: [],
+    filteredSessions: [],
+    sessionSearch: '',
+
+    cronEnabled: false,
+    cronJobs: [],
+
+    mcpEnabled: false,
+    mcpServers: [],
+
+    authEnabled: false,
+    authUsers: [],
+
+    auditToolFilter: '',
+    auditStatusFilter: '',
+    auditEntries: [],
+    auditStats: {},
+    auditTopTools: [],
+
+    logLines: [],
+    logAutoScroll: true,
+    logShowAll: false,
+    _logEs: null,
+
+    memories: {},
+    filteredMemories: {},
+    memSearch: '',
+    memOpen: {},
+    showMemForm: false,
+    memFormKey: '',
+    memFormContent: '',
+    memFormStatus: '',
+    memFormOk: false,
+
+    configData: {},
+    configStatus: '',
+    configOk: false,
+
+    analyticsStats: {},
+    analyticsErrors: [],
+
+    msgModal: null,
+    msgSearch: '',
+
+    async init() {
+      this._uptimeTick();
+      setInterval(() => this._uptimeTick(), 1000);
+      await Promise.all([
+        this.loadModels(),
+        this.loadSessions(),
+        this.loadCron(),
+        this.loadMcp(),
+        this.loadUsers(),
+      ]);
+    },
+
+    _uptimeTick() {
+      const sec = Math.floor((Date.now() - this._startTs) / 1000);
+      const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = sec%60;
+      this.uptime = h+'h '+m+'m '+s+'s';
+    },
+
+    async api(path, opts={}) {
+      const headers = opts.headers || {};
+      if (AUTH_TOKEN) headers['Authorization'] = 'Bearer ' + AUTH_TOKEN;
+      const r = await fetch(path, {...opts, headers});
+      return r.json();
+    },
+
+    async apiPost(path, body) {
+      return this.api(path, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+    },
+
+    async apiDelete(path) {
+      return this.api(path, {method: 'DELETE'});
+    },
+
+    async apiPatch(path, body) {
+      return this.api(path, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+    },
+
+    formatIdle(ts) {
+      if (!ts) return '-';
+      const sec = Math.max(0, Math.floor((Date.now()/1000) - ts));
+      if (sec < 60) return sec+'s';
+      if (sec < 3600) return Math.floor(sec/60)+'m '+Math.round(sec%60)+'s';
+      return Math.floor(sec/3600)+'h '+Math.floor((sec%3600)/60)+'m';
+    },
+
+    formatTime(ts) {
+      if (!ts) return '-';
+      const d = new Date(typeof ts === 'number' ? (ts > 1e12 ? ts : ts*1000) : ts);
+      return d.toLocaleString();
+    },
+
+    formatLogTs(ts) {
+      if (!ts) return '';
+      const d = new Date(ts * 1000);
+      return d.toLocaleTimeString('zh-CN', {hour12:false});
+    },
+
+    // ── Models ──
+    async loadModels() {
+      const d = await this.api('/api/dashboard/models');
+      if (d.available) {
+        this.models = d.available;
+        if (d.current) {
+          this.modelProvider = d.current.provider || this.modelProvider;
+          this.modelName = d.current.name || this.modelName;
+        }
       }
-      if (data.issues.length > 10) {
-        html += '<div style="padding:8px 0;font-size:12px;color:var(--text3)">... and ' + (data.issues.length - 10) + ' more</div>';
+    },
+
+    async switchModel(m) {
+      const d = await this.apiPost('/api/dashboard/models/switch', {provider: m.provider||'', name: m.name});
+      if (d.ok) {
+        this.modelName = m.name;
+        await this.loadModels();
       }
-      html += '</div>';
-    }
-    resultsDiv.innerHTML = html;
-  } catch(e) {
-    resultsDiv.innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + escHtml(e.message) + '</div>';
-  }
-}
+    },
 
-async function fetchCurationStatus() {
-  const statusDiv = document.getElementById('curationStatus');
-  if (!statusDiv) return;
-  try {
-    const data = await api('/api/dashboard/skills/curation');
-    if (data.error) {
-      statusDiv.innerHTML = '<div style="color:var(--text3);font-size:13px">Error: ' + escHtml(data.error) + '</div>';
-      return;
-    }
-    const lc = data.lifecycle_counts || {};
-    let html = '<div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap">';
-    html += '<span class="tag tag-green">Active: ' + (lc.active || 0) + '</span>';
-    html += '<span class="tag tag-yellow">Stale: ' + (lc.stale || 0) + '</span>';
-    html += '<span class="tag tag-gray">Archived: ' + (lc.archived || 0) + '</span>';
-    html += '</div>';
-    html += '<div style="font-size:12px;color:var(--text2);line-height:1.8">';
-    html += '<div>Last review: ' + (data.last_review ? new Date(data.last_review).toLocaleString() : 'Never') + '</div>';
-    html += '<div>Total reviews: ' + (data.total_reviews || 0) + '</div>';
-    html += '<div>Days since review: ' + (data.days_since_review || 0) + '</div>';
-    html += '<div>Skills reviewed: ' + (data.skills_reviewed || 0) + '</div>';
-    html += '</div>';
-    statusDiv.innerHTML = html;
-  } catch(e) {}
-}
+    // ── Sessions ──
+    async loadSessions() {
+      const d = await this.api('/api/dashboard/sessions');
+      this.sessions = Array.isArray(d) ? d : [];
+      this.filterSessions();
+    },
 
-async function triggerCuration(dryRun = false) {
-  const statusDiv = document.getElementById('curationStatus');
-  statusDiv.innerHTML = '<div style="color:var(--text3);font-size:13px">Running curation review...</div>';
-  try {
-    const data = await api('/api/dashboard/skills/curation/review' + (dryRun ? '?dry_run=true' : ''), { method: 'POST' });
-    if (data.error) {
-      statusDiv.innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + escHtml(data.error) + '</div>';
-      return;
-    }
-    const changes = data.changes || [];
-    let html = '<div style="margin-bottom:12px"><span class="tag tag-green">Review complete</span></div>';
-    if (changes.length > 0) {
-      html += '<div style="font-size:12px;color:var(--text2);line-height:1.8">';
-      html += '<div style="margin-bottom:8px;font-weight:600;color:var(--text)">Changes: ' + changes.length + '</div>';
-      for (const c of changes.slice(0, 10)) {
-        html += '<div style="padding:4px 0;border-bottom:1px solid var(--border)">' + escHtml(c.skill) + ' → ' + escHtml(c.action) + '</div>';
-      }
-      html += '</div>';
-    } else {
-      html += '<div style="font-size:13px;color:var(--text3)">No changes needed</div>';
-    }
-    statusDiv.innerHTML = html;
-    fetchCurationStatus();
-  } catch(e) {
-    statusDiv.innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + escHtml(e.message) + '</div>';
-  }
-}
+    filterSessions() {
+      const q = this.sessionSearch.toLowerCase();
+      this.filteredSessions = q
+        ? this.sessions.filter(s => s.thread_id.toLowerCase().includes(q))
+        : this.sessions;
+    },
 
-async function fetchMemoryStats() {
-  const statsDiv = document.getElementById('memoryStats');
-  if (!statsDiv) return;
-  try {
-    const data = await api('/api/dashboard/memory/stats');
-    if (data.error || !data.enabled) {
-      statsDiv.innerHTML = '<div style="color:var(--text3);font-size:13px">' + (data.error || 'Memory system not enabled') + '</div>';
-      return;
-    }
-    let html = '<div style="display:flex;gap:12px;flex-wrap:wrap">';
-    html += '<span class="tag tag-blue">Documents: ' + (data.document_count || 0) + '</span>';
-    html += '<span class="tag tag-purple">Chunks: ' + (data.chunk_count || 0) + '</span>';
-    html += '<span class="tag tag-green">Indexed: ' + (data.last_indexed ? new Date(data.last_indexed).toLocaleString() : 'Never') + '</span>';
-    html += '</div>';
-    statsDiv.innerHTML = html;
-  } catch(e) {}
-}
+    async resetSession(tid) {
+      if (!confirm('确认重置会话 '+tid+'？')) return;
+      await this.apiPost('/api/dashboard/sessions/'+encodeURIComponent(tid)+'/reset', {});
+      await this.loadSessions();
+    },
 
-async function searchSessions() {
-  const query = document.getElementById('searchInput').value.trim();
-  const resultsDiv = document.getElementById('searchResults');
-  const emptyDiv = document.getElementById('searchEmpty');
-  if (!query) {
-    resultsDiv.innerHTML = '';
-    emptyDiv.style.display = 'block';
-    return;
-  }
-  emptyDiv.style.display = 'none';
-  resultsDiv.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px">Searching...</div>';
-  try {
-    const data = await api('/api/dashboard/search?q=' + encodeURIComponent(query));
-    const results = data.results || [];
-    if (results.length === 0) {
-      resultsDiv.innerHTML = '<div style="color:var(--text3);font-size:13px;padding:16px">No results found</div>';
-      return;
-    }
-    let html = '<div style="font-size:12px;color:var(--text2);margin-bottom:12px">' + results.length + ' results</div>';
-    for (const r of results.slice(0, 20)) {
-      html += '<div class="card" style="margin-bottom:8px;cursor:pointer" onclick="viewSessionMessages(\'' + escHtml(r.thread_id || '') + '\')">';
-      html += '<div style="padding:12px 16px">';
-      html += '<div style="font-size:11px;font-family:var(--mono);color:var(--text3);margin-bottom:4px">' + escHtml(r.thread_id || '') + '</div>';
-      html += '<div style="font-size:13px;color:var(--text)">' + escHtml(r.snippet || r.content || '').substring(0, 200) + '</div>';
-      html += '<div style="font-size:11px;color:var(--text3);margin-top:4px">' + (r.timestamp ? new Date(r.timestamp).toLocaleString() : '') + '</div>';
-      html += '</div></div>';
-    }
-    resultsDiv.innerHTML = html;
-  } catch(e) {
-    resultsDiv.innerHTML = '<div style="color:var(--red);font-size:13px;padding:16px">Error: ' + escHtml(e.message) + '</div>';
-  }
-}
+    async viewMessages(tid) {
+      const d = await this.api('/api/dashboard/sessions/'+encodeURIComponent(tid)+'/messages?limit=50');
+      this.msgModal = {
+        threadId: tid,
+        messages: d.messages || [],
+        total: d.total || 0,
+        hasMore: d.has_more || false,
+        _offset: 50,
+      };
+      this.msgSearch = '';
+    },
 
-async function viewSessionMessages(threadId) {
-  if (!threadId) return;
-  
-  const modal = document.createElement('div');
-  modal.className = 'message-modal';
-  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:center;justify-content:center';
-  
-  const content = document.createElement('div');
-  content.style.cssText = 'background:var(--surface);border:1px solid var(--border);border-radius:12px;max-width:900px;width:95%;max-height:85vh;display:flex;flex-direction:column';
-  
-  content.innerHTML = `
-    <div style="padding:16px 20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-      <div>
-        <div style="font-size:14px;font-weight:600">Session Messages</div>
-        <div style="font-size:11px;color:var(--text3);font-family:var(--mono);margin-top:2px">${escHtml(threadId)}</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:12px">
-        <input type="text" id="msgSearchInput" placeholder="Search messages..." 
-               style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:12px;width:200px"
-               oninput="filterMessages(this.value)">
-        <button onclick="this.closest('.message-modal').remove()" 
-                style="background:none;border:none;color:var(--text);font-size:20px;cursor:pointer">&times;</button>
-      </div>
-    </div>
-    <div id="messageList" style="flex:1;overflow-y:auto;padding:16px 20px">
-      <div style="color:var(--text3);font-size:13px;padding:20px;text-align:center">Loading messages...</div>
-    </div>
-    <div id="messageFooter" style="padding:12px 20px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-      <span id="messageCount" style="font-size:12px;color:var(--text3)"></span>
-      <button id="loadMoreBtn" class="btn sm" style="display:none" onclick="loadMoreMessages()">Load More</button>
-    </div>
-  `;
-  
-  modal.appendChild(content);
-  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-  
-  const escHandler = (e) => { if (e.key === 'Escape') { modal.remove(); document.removeEventListener('keydown', escHandler); } };
-  document.addEventListener('keydown', escHandler);
-  document.body.appendChild(modal);
-  
-  window._msgThread = threadId;
-  window._msgAll = [];
-  window._msgTotal = 0;
-  await loadMessages(threadId, 0, 50);
-}
+    async loadMoreMessages() {
+      if (!this.msgModal) return;
+      const d = await this.api('/api/dashboard/sessions/'+encodeURIComponent(this.msgModal.threadId)+'/messages?limit=50&offset='+this.msgModal._offset);
+      this.msgModal.messages = this.msgModal.messages.concat(d.messages || []);
+      this.msgModal.hasMore = d.has_more || false;
+      this.msgModal._offset += 50;
+    },
 
-async function loadMessages(threadId, offset, limit) {
-  const listEl = document.getElementById('messageList');
-  const countEl = document.getElementById('messageCount');
-  const loadMoreBtn = document.getElementById('loadMoreBtn');
-  
-  try {
-    const data = await api(`/api/dashboard/sessions/${encodeURIComponent(threadId)}/messages?limit=${limit}&offset=${offset}`);
-    if (data.error) {
-      listEl.innerHTML = '<div style="color:var(--red);font-size:13px;padding:16px">Error: ' + escHtml(data.error) + '</div>';
-      return;
-    }
-    
-    const messages = data.messages || [];
-    window._msgTotal = data.total;
-    
-    if (offset === 0) {
-      window._msgAll = messages;
-    } else {
-      window._msgAll = window._msgAll.concat(messages);
-    }
-    
-    renderMessages(window._msgAll);
-    countEl.textContent = `Showing ${window._msgAll.length} of ${window._msgTotal} messages`;
-    loadMoreBtn.style.display = data.has_more ? 'inline-block' : 'none';
-    
-  } catch(e) {
-    listEl.innerHTML = '<div style="color:var(--red);font-size:13px;padding:16px">Error: ' + escHtml(e.message) + '</div>';
-  }
-}
+    // ── Cron ──
+    async loadCron() {
+      const d = await this.api('/api/dashboard/cron');
+      this.cronEnabled = d.enabled || false;
+      this.cronJobs = d.jobs || [];
+    },
 
-function renderMessages(messages) {
-  const listEl = document.getElementById('messageList');
-  let html = '';
-  
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i];
-    const role = m.role || 'unknown';
-    const icon = role === 'user' ? '&#128101;' : role === 'assistant' ? '&#129302;' : '&#128295;';
-    const color = role === 'user' ? 'var(--green)' : role === 'assistant' ? 'var(--accent)' : 'var(--text3)';
-    const align = role === 'user' ? 'flex-end' : 'flex-start';
-    
-    html += `<div class="message-item" style="display:flex;justify-content:${align};margin-bottom:12px" data-role="${role}">`;
-    html += `<div style="max-width:80%;background:var(--surface2);border-radius:12px;padding:12px 16px;border:1px solid var(--border)">`;
-    
-    // Header: role + timestamp
-    html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">`;
-    html += `<span style="font-size:11px;font-weight:600;color:${color}">${icon} ${role}</span>`;
-    if (m.timestamp) {
-      html += `<span style="font-size:10px;color:var(--text3)">${new Date(m.timestamp).toLocaleString()}</span>`;
-    }
-    html += `</div>`;
-    
-    // Content
-    const content = m.content || '';
-    const isTruncated = content.length > 500;
-    const msgId = 'msg-' + i;
-    
-    if (role === 'tool' && m.tool_name) {
-      html += `<div style="margin-bottom:8px"><span class="tag tag-blue">${escHtml(m.tool_name)}</span></div>`;
-      if (m.tool_calls) {
-        html += `<details style="margin-top:8px"><summary style="font-size:11px;color:var(--text3);cursor:pointer">Arguments (JSON)</summary>`;
-        html += `<pre style="background:var(--bg);padding:8px;border-radius:6px;font-size:11px;overflow-x:auto;margin-top:4px">${escHtml(JSON.stringify(m.tool_calls, null, 2))}</pre>`;
-        html += `</details>`;
-      }
-    }
-    
-    html += `<div id="${msgId}" style="font-size:13px;color:var(--text);white-space:pre-wrap;word-break:break-word;line-height:1.6">`;
-    html += isTruncated ? escHtml(content.substring(0, 500)) + '...' : escHtml(content);
-    html += `</div>`;
-    
-    if (isTruncated) {
-      html += `<button onclick="expandMessage('${msgId}', ${i})" style="margin-top:8px;font-size:11px;color:var(--accent);background:none;border:none;cursor:pointer">Show more</button>`;
-    }
-    
-    // Copy button
-    html += `<button onclick="copyMessage(${i})" style="margin-top:8px;font-size:11px;color:var(--text3);background:none;border:none;cursor:pointer" title="Copy message">&#128203; Copy</button>`;
-    
-    html += `</div></div>`;
-  }
-  
-  listEl.innerHTML = html;
-}
+    async runCronJob(name) {
+      await this.apiPost('/api/cron/jobs/'+encodeURIComponent(name)+'/run', {});
+      await this.loadCron();
+    },
 
-function expandMessage(msgId, index) {
-  const el = document.getElementById(msgId);
-  const content = window._msgAll[index].content || '';
-  el.textContent = content;
-  el.nextElementSibling?.remove();
-}
+    // ── MCP ──
+    async loadMcp() {
+      const d = await this.api('/api/dashboard/mcp');
+      this.mcpEnabled = d.enabled || false;
+      this.mcpServers = d.servers || [];
+    },
 
-function copyMessage(index) {
-  const content = window._msgAll[index].content || '';
-  navigator.clipboard.writeText(content).then(() => {
-    // Optional: show toast notification
-  });
-}
+    // ── Users ──
+    async loadUsers() {
+      const d = await this.api('/api/dashboard/users');
+      this.authEnabled = d.enabled || false;
+      this.authUsers = d.users || [];
+    },
 
-function filterMessages(query) {
-  query = query.toLowerCase().trim();
-  const items = document.querySelectorAll('.message-item');
-  items.forEach(item => {
-    const text = item.textContent.toLowerCase();
-    item.style.display = text.includes(query) ? 'flex' : 'none';
-  });
-}
+    async updateRole(uid, role) {
+      await this.apiPatch('/api/dashboard/users/'+encodeURIComponent(uid)+'/role', {role});
+      await this.loadUsers();
+    },
 
-async function loadMoreMessages() {
-  const threadId = window._msgThread;
-  await loadMessages(threadId, window._msgAll.length, 50);
-}
+    async deleteUser(uid) {
+      if (!confirm('确认删除用户 '+uid+'？')) return;
+      await this.apiDelete('/api/dashboard/users/'+encodeURIComponent(uid));
+      await this.loadUsers();
+    },
 
-// ── Config Editor Functions ──
+    // ── Audit ──
+    async loadAuditStats() {
+      const d = await this.api('/api/dashboard/audit/stats?days=7');
+      this.auditStats = d.error ? {} : d;
+      this.auditTopTools = d.top_tools || [];
+      await this.loadAudit();
+    },
 
-let _currentConfig = {};
+    async loadAudit() {
+      let url = '/api/dashboard/audit?limit=100';
+      if (this.auditToolFilter) url += '&tool_name='+encodeURIComponent(this.auditToolFilter);
+      if (this.auditStatusFilter) url += '&status='+encodeURIComponent(this.auditStatusFilter);
+      const d = await this.api(url);
+      this.auditEntries = d.entries || [];
+    },
 
-async function loadConfig() {
-  const editor = document.getElementById('configEditor');
-  editor.innerHTML = '<div style="color:var(--text3);font-size:13px">Loading configuration...</div>';
-  try {
-    const data = await api('/api/dashboard/config');
-    _currentConfig = data;
-    renderConfigEditor(data);
-  } catch(e) {
-    editor.innerHTML = '<div style="color:var(--red);font-size:13px">Error: ' + escHtml(e.message) + '</div>';
-  }
-}
-
-function renderConfigEditor(config) {
-  const editor = document.getElementById('configEditor');
-  let html = '<div style="display:grid;gap:16px">';
-  
-  // Group config by section
-  const sections = Object.entries(config);
-  for (const [section, values] of sections) {
-    if (typeof values !== 'object' || values === null) continue;
-    
-    html += '<div class="card" style="margin:0">';
-    html += '<div class="card-header">' + escHtml(section.charAt(0).toUpperCase() + section.slice(1)) + '</div>';
-    html += '<div style="padding:12px 16px">';
-    html += renderConfigFields(section, values, 0);
-    html += '</div></div>';
-  }
-  
-  html += '</div>';
-  editor.innerHTML = html;
-}
-
-function renderConfigFields(section, values, depth) {
-  let html = '';
-  for (const [key, value] of Object.entries(values)) {
-    const fieldId = section + '_' + key;
-    html += '<div style="margin-bottom:12px">';
-    html += '<label style="display:block;font-size:12px;color:var(--text3);margin-bottom:4px;text-transform:capitalize">' + escHtml(key.replace(/_/g, ' ')) + '</label>';
-    
-    if (typeof value === 'boolean') {
-      html += '<input type="checkbox" id="' + fieldId + '" ' + (value ? 'checked' : '') + ' data-section="' + escHtml(section) + '" data-key="' + escHtml(key) + '" data-type="boolean" style="accent-color:var(--accent);width:16px;height:16px">';
-    } else if (typeof value === 'number') {
-      html += '<input type="number" id="' + fieldId + '" value="' + value + '" data-section="' + escHtml(section) + '" data-key="' + escHtml(key) + '" data-type="number" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;width:120px">';
-    } else if (typeof value === 'string') {
-      const isLong = value.length > 50;
-      if (isLong) {
-        html += '<textarea id="' + fieldId + '" data-section="' + escHtml(section) + '" data-key="' + escHtml(key) + '" data-type="string" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:13px;width:100%;min-height:60px;font-family:var(--mono)">' + escHtml(value) + '</textarea>';
-      } else {
-        html += '<input type="text" id="' + fieldId + '" value="' + escHtml(value) + '" data-section="' + escHtml(section) + '" data-key="' + escHtml(key) + '" data-type="string" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;width:100%;font-family:var(--mono)">';
-      }
-    } else if (Array.isArray(value)) {
-      html += '<textarea id="' + fieldId + '" data-section="' + escHtml(section) + '" data-key="' + escHtml(key) + '" data-type="array" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;color:var(--text);font-size:13px;width:100%;min-height:60px;font-family:var(--mono)">' + escHtml(JSON.stringify(value, null, 2)) + '</textarea>';
-    } else if (typeof value === 'object' && value !== null) {
-      // Nested object - show as read-only JSON (editing nested paths is not supported)
-      html += '<div style="font-size:12px;color:var(--text2);font-family:var(--mono);background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 12px;max-height:120px;overflow:auto">' + escHtml(JSON.stringify(value, null, 2)) + '</div>';
-      html += '<div style="font-size:10px;color:var(--text3);margin-top:4px">Nested object (edit via config file)</div>';
-    }
-    
-    html += '</div>';
-  }
-  return html;
-}
-
-async function saveConfig() {
-  const status = document.getElementById('configSaveStatus');
-  status.textContent = 'Saving configuration...';
-  status.style.color = 'var(--text2)';
-  
-  try {
-    // Collect all form values
-    const inputs = document.querySelectorAll('#configEditor input, #configEditor textarea');
-    const updates = {};
-    
-    for (const input of inputs) {
-      const section = input.dataset.section;
-      const key = input.dataset.key;
-      const type = input.dataset.type;
-      
-      if (!section || !key) continue;
-      
-      let value;
-      if (type === 'boolean') {
-        value = input.checked;
-      } else if (type === 'number') {
-        value = parseFloat(input.value);
-      } else if (type === 'array') {
+    // ── Logs ──
+    startLogStream() {
+      if (this._logEs) return;
+      const url = AUTH_TOKEN ? '/api/dashboard/stream?token='+AUTH_TOKEN : '/api/dashboard/stream';
+      this._logEs = new EventSource(url);
+      this._logEs.addEventListener('log', (e) => {
         try {
-          value = JSON.parse(input.value);
-        } catch(e) {
-          status.textContent = 'Error: Invalid JSON in ' + key;
-          status.style.color = 'var(--red)';
-          return;
-        }
-      } else {
-        value = input.value;
-      }
-      
-      if (!updates[section]) updates[section] = {};
-      updates[section][key] = value;
-    }
-    
-    const result = await api('/api/dashboard/config/update', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(updates),
-    });
-    
-    if (result.ok) {
-      status.textContent = 'Configuration saved successfully';
-      status.style.color = 'var(--green)';
-      setTimeout(() => { status.textContent = ''; status.style.color = ''; }, 3000);
-    } else {
-      status.textContent = 'Error: ' + (result.error || 'Unknown error');
-      status.style.color = 'var(--red)';
-    }
-  } catch(e) {
-    status.textContent = 'Error: ' + escHtml(e.message);
-    status.style.color = 'var(--red)';
-  }
-}
-
-// ── Analytics Functions ──
-
-async function loadAnalytics() {
-  try {
-    // Fetch stats
-    const statsData = await api('/api/dashboard/audit/stats?days=7');
-    if (!statsData.error) {
-      document.getElementById('analyticsTotalCalls').textContent = statsData.total_calls || 0;
-      document.getElementById('analyticsAvgDuration').textContent = (statsData.avg_duration_ms || 0).toFixed(0) + 'ms';
-      document.getElementById('analyticsSuccessRate').textContent = ((statsData.success_rate || 0) * 100).toFixed(1) + '%';
-      document.getElementById('analyticsErrorCount').textContent = statsData.error_count || 0;
-      
-      // Top tools
-      if (statsData.top_tools) {
-        const tbody = document.getElementById('analyticsTopTools');
-        if (statsData.top_tools.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:20px">No tool usage data</td></tr>';
-        } else {
-          let html = '';
-          for (const t of statsData.top_tools.slice(0, 10)) {
-            const successRate = t.success_rate ? (t.success_rate * 100).toFixed(1) + '%' : '-';
-            const avgDuration = t.avg_duration_ms ? t.avg_duration_ms.toFixed(0) + 'ms' : '-';
-            html += '<tr>';
-            html += '<td><span class="tag tag-blue">' + escHtml(t.tool) + '</span></td>';
-            html += '<td>' + t.count + '</td>';
-            html += '<td>' + successRate + '</td>';
-            html += '<td style="font-family:var(--mono);font-size:12px">' + avgDuration + '</td>';
-            html += '</tr>';
+          const entry = JSON.parse(e.data);
+          this.logLines.push(entry);
+          if (this.logLines.length > 2000) this.logLines.splice(0, this.logLines.length - 2000);
+          if (this.logAutoScroll) {
+            this.$nextTick(() => {
+              const box = this.$refs.logBox;
+              if (box) box.scrollTop = box.scrollHeight;
+            });
           }
-          tbody.innerHTML = html;
-        }
+        } catch(ex) {}
+      });
+      this._logEs.onerror = () => {};
+    },
+
+    // ── Memory ──
+    async loadMemories() {
+      const d = await this.api('/api/dashboard/memory/memories');
+      if (d.error) { this.memories = {}; this.filteredMemories = {}; return; }
+      this.memories = d;
+      this.filterMemories();
+    },
+
+    filterMemories() {
+      const q = this.memSearch.toLowerCase();
+      const result = {};
+      for (const [cat, items] of Object.entries(this.memories)) {
+        if (!Array.isArray(items)) continue;
+        const filtered = q ? items.filter(m => (m.key||'').toLowerCase().includes(q) || (m.content||'').toLowerCase().includes(q)) : items;
+        if (filtered.length) result[cat] = filtered;
       }
-    }
-    
-    // Recent errors
-    const errorData = await api('/api/dashboard/audit?limit=10&status=error');
-    const errorsDiv = document.getElementById('analyticsRecentErrors');
-    if (errorData.error || !errorData.entries || errorData.entries.length === 0) {
-      errorsDiv.innerHTML = '<div style="color:var(--text3);font-size:13px">No recent errors</div>';
-    } else {
-      let html = '';
-      for (const e of errorData.entries.slice(0, 10)) {
-        const time = new Date(e.timestamp * 1000).toLocaleString();
-        html += '<div style="padding:8px 0;border-bottom:1px solid var(--border)">';
-        html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
-        html += '<span class="tag tag-red">' + escHtml(e.tool_name) + '</span>';
-        html += '<span style="font-size:11px;color:var(--text3)">' + time + '</span>';
-        html += '</div>';
-        html += '<div style="font-size:12px;color:var(--text2);font-family:var(--mono)">' + escHtml(e.error || 'Unknown error') + '</div>';
-        html += '</div>';
+      this.filteredMemories = result;
+    },
+
+    async saveMemory() {
+      if (!this.memFormContent.trim()) return;
+      this.memFormStatus = '保存中...';
+      const d = await this.apiPost('/api/dashboard/memory/remember', {content: this.memFormContent, key: this.memFormKey});
+      this.memFormOk = d.ok;
+      this.memFormStatus = d.ok ? '已保存' : (d.error || '保存失败');
+      if (d.ok) {
+        this.memFormContent = '';
+        this.memFormKey = '';
+        this.showMemForm = false;
+        await this.loadMemories();
       }
-      errorsDiv.innerHTML = html;
-    }
-  } catch(e) {
-    console.error('Failed to load analytics:', e);
-  }
+      setTimeout(() => this.memFormStatus = '', 3000);
+    },
+
+    async forgetMemory(key) {
+      if (!confirm('确认删除 "'+key+'"？')) return;
+      await this.apiDelete('/api/dashboard/memory/forget/'+encodeURIComponent(key));
+      await this.loadMemories();
+    },
+
+    // ── Config ──
+    async loadConfig() {
+      this.configData = await this.api('/api/dashboard/config');
+    },
+
+    async saveConfig() {
+      this.configStatus = '保存中...';
+      const d = await this.apiPost('/api/dashboard/config/update', this.configData);
+      this.configOk = d.ok;
+      this.configStatus = d.ok ? '已保存' : (d.error || '保存失败');
+      setTimeout(() => this.configStatus = '', 3000);
+    },
+
+    // ── Analytics ──
+    async loadAnalytics() {
+      const stats = await this.api('/api/dashboard/audit/stats?days=7');
+      this.analyticsStats = stats.error ? {} : stats;
+      const errs = await this.api('/api/dashboard/audit?limit=10&status=error');
+      this.analyticsErrors = errs.entries || [];
+    },
+  };
 }
-
-// Load enhancement data on page load
-document.addEventListener('DOMContentLoaded', () => {
-  fetchCurationStatus();
-  fetchMemoryStats();
-  fetchAudit();
-});
-
-// ── Audit Log Functions ──
-
-async function fetchAudit() {
-  const toolFilter = document.getElementById('auditToolFilter')?.value || '';
-  const statusFilter = document.getElementById('auditStatusFilter')?.value || '';
-  const tbody = document.getElementById('auditTableBody');
-  const statsDiv = document.getElementById('auditStats');
-  const emptyDiv = document.getElementById('auditEmpty');
-  
-  try {
-    // Fetch stats
-    const statsData = await api('/api/dashboard/audit/stats?days=7');
-    if (!statsData.error) {
-      statsDiv.innerHTML = `
-        <span class="tag tag-blue">${statsData.total_calls || 0} calls (7d)</span>
-        <span class="tag tag-green">${statsData.success_count || 0} success</span>
-        <span class="tag tag-red">${statsData.error_count || 0} errors</span>
-        <span class="tag tag-yellow">${Math.round((statsData.success_rate || 0) * 100)}% success rate</span>
-        <span class="tag tag-purple">${statsData.avg_duration_ms || 0}ms avg</span>
-      `;
-      
-      // Update tool filter options - always refresh to reflect latest data
-      if (statsData.top_tools) {
-        // Clear existing options (keep first "All Tools" option)
-        while (toolFilter.options.length > 1) {
-          toolFilter.remove(toolFilter.options.length - 1);
-        }
-        for (const t of statsData.top_tools) {
-          const opt = document.createElement('option');
-          opt.value = t.tool;
-          opt.textContent = `${t.tool} (${t.count})`;
-          toolFilter.appendChild(opt);
-        }
-      }
-    }
-    
-    // Fetch entries
-    let url = '/api/dashboard/audit?limit=100';
-    if (toolFilter) url += '&tool_name=' + encodeURIComponent(toolFilter);
-    if (statusFilter) url += '&status=' + encodeURIComponent(statusFilter);
-    
-    const data = await api(url);
-    if (data.error) {
-      tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--red);padding:20px">Error: ' + escHtml(data.error) + '</td></tr>';
-      return;
-    }
-    
-    const entries = data.entries || [];
-    if (entries.length === 0) {
-      tbody.innerHTML = '';
-      emptyDiv.style.display = 'block';
-      return;
-    }
-    
-    emptyDiv.style.display = 'none';
-    let html = '';
-    for (const e of entries) {
-      const statusTag = e.success 
-        ? '<span class="tag tag-green">OK</span>' 
-        : '<span class="tag tag-red">ERR</span>';
-      const time = new Date(e.timestamp * 1000).toLocaleString();
-      const duration = e.duration_ms > 1000 
-        ? (e.duration_ms / 1000).toFixed(1) + 's' 
-        : Math.round(e.duration_ms) + 'ms';
-      
-      html += `<tr>
-        <td style="font-size:11px;color:var(--text3);white-space:nowrap">${time}</td>
-        <td><span class="tag tag-blue">${escHtml(e.tool_name)}</span></td>
-        <td style="font-size:11px;font-family:var(--mono)">${escHtml(e.sender_id || '-')}</td>
-        <td>${statusTag}</td>
-        <td style="font-size:11px;font-family:var(--mono)">${duration}</td>
-        <td style="font-size:11px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHtml(e.args_preview || '')}">${escHtml((e.args_preview || '').substring(0, 80))}</td>
-      </tr>`;
-    }
-    tbody.innerHTML = html;
-    
-  } catch(e) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--red);padding:20px">Error: ' + escHtml(e.message) + '</td></tr>';
-  }
-}
-
-startLogStream();
-startStateStream();
-startEventStream();
 </script>
 </body>
 </html>
