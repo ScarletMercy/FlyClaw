@@ -148,6 +148,10 @@ class AgentLoop:
     def get_store(self) -> StateStore:
         return self._store
 
+    def is_thread_busy(self, thread_id: str) -> bool:
+        lock = self._store._locks.get(thread_id)
+        return lock is not None and lock.locked()
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
@@ -294,18 +298,15 @@ class AgentLoop:
                         try:
                             result = await self._execute_tool(tc, state, thread_id)
                         except ApprovalPending:
-                            state.append_message({
-                                "role": "tool",
-                                "tool_call_id": tc_id,
-                                "content": "[pending approval]",
-                            })
-                            state.pending_approval = {
-                                "request_id": pending.get("request_id", ""),
-                                "tool_name": "exec_command",
-                                "command_preview": pending.get("command_preview", ""),
-                                "tool_call_id": tc_id,
-                            }
-                            await self._store.save(thread_id, state)
+                            for t in assistant_msg["tool_calls"]:
+                                tid = t.get("id", "")
+                                if tid and tid not in existing_results and tid != tc_id:
+                                    state.append_message({
+                                        "role": "tool",
+                                        "tool_call_id": tid,
+                                        "content": "[skipped] Execution paused due to pending approval.",
+                                    })
+                                    existing_results.add(tid)
                             raise
                         state.append_message({
                             "role": "tool",

@@ -184,6 +184,54 @@ class CronService:
                     job.consecutive_errors = 0
                     job.last_run_status = "success"
                     job.last_error = None
+                elif result.status == "deferred":
+                    logger.info("Job '%s' deferred, rescheduling", job.name)
+                    job.last_run_status = "deferred"
+                    job.last_error = None
+                    try:
+                        import json
+                        defer_info = json.loads(result.output or "{}")
+                        new_at = defer_info.get("new_at", "")
+                        if new_at and job.name.startswith("task:"):
+                            from .executor import execute_cron_job
+                            from .types import CronSchedule, CronJobCreate, CronPayload, CronDelivery
+                            schedule = CronSchedule(kind="at", at=new_at)
+                            payload = job.payload
+                            delivery = job.delivery
+                            create = CronJobCreate(
+                                name=job.name,
+                                description=job.description,
+                                enabled=True,
+                                schedule=schedule,
+                                payload=payload,
+                                delivery=delivery,
+                                session_target=job.session_target,
+                            )
+                            new_job = await self.add_job(create)
+                            logger.info("Rescheduled task checkpoint to %s (new job: %s)", new_at, new_job.id)
+
+                            parts = job.name.split(":")
+                            if len(parts) >= 4:
+                                run_id = parts[1]
+                                cp_id = parts[3]
+                                from src.task.store import get_task_store
+                                task_store = get_task_store(getattr(self._config.task, "db_path", "~/.myclaw/data/task_runs.db"))
+                                run = await task_store.get(run_id)
+                                if run:
+                                    for cp in run.checkpoints:
+                                        if cp.id == cp_id:
+                                            cp.cron_job_id = new_job.id
+                                            logger.info("Updated checkpoint %s cron_job_id to %s", cp_id, new_job.id)
+                                            break
+                                    await task_store.save(run)
+                    except Exception as e:
+                        logger.warning("Failed to reschedule deferred job: %s", e)
+                    finally:
+                        await self.store.remove_job(job.id)
+                        self._unschedule_job(job.id)
+                        if job.id in self._jobs:
+                            del self._jobs[job.id]
+                        return
                 else:
                     job.consecutive_errors += 1
                     job.last_run_status = result.status

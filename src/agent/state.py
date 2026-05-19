@@ -116,7 +116,12 @@ class StateStore:
         async with self._locks_lock:
             if thread_id not in self._locks:
                 if len(self._locks) > _MAX_LOCKS:
-                    self._locks.clear()
+                    to_remove = [
+                        tid for tid, lock in self._locks.items()
+                        if not lock.locked()
+                    ]
+                    for tid in to_remove[:len(self._locks) - _MAX_LOCKS // 2]:
+                        del self._locks[tid]
                 self._locks[thread_id] = asyncio.Lock()
             return self._locks[thread_id]
 

@@ -1013,6 +1013,36 @@ def register_builtin_commands(dispatcher, container, tools, skills):
 
     dispatcher.register_builtin("procedures", cmd_procedures)
 
+    async def cmd_auto(args: str, ctx: dict) -> str:
+        zh = container.config.agents.language == "zh"
+        arg = args.strip().lower()
+        if arg in ("on", "开启", "开"):
+            container.config.task.enabled = True
+            return "✅ 自主工作模式已开启。我会为复杂任务制定计划并自动检查进度。" if zh else "✅ Autonomous mode enabled."
+        elif arg in ("off", "关闭", "关"):
+            container.config.task.enabled = False
+            from src.task.store import get_task_store
+            store = get_task_store(container.config.task.db_path)
+            runs = await store.list_by_status("running", "planning")
+            cancelled = 0
+            for r in runs:
+                r.status = "cancelled"
+                for cp in r.checkpoints:
+                    if cp.cron_job_id and container.cron_service:
+                        try:
+                            await container.cron_service.remove_job(cp.cron_job_id)
+                        except Exception:
+                            pass
+                await store.save(r)
+                cancelled += 1
+            msg = f"❌ 自主工作模式已关闭。已取消 {cancelled} 个活跃任务。" if zh else f"❌ Autonomous mode disabled. {cancelled} tasks cancelled."
+            return msg
+        else:
+            status = "已开启" if container.config.task.enabled else "已关闭"
+            return f"自主工作模式当前: {status}。用法: /auto on 或 /auto off" if zh else f"Autonomous mode: {status}. Usage: /auto on or /auto off"
+
+    dispatcher.register_builtin("auto", cmd_auto)
+
     if container.config.auth.enabled and container.rbac:
         register_auth_commands(dispatcher, container)
 

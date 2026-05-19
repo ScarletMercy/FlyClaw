@@ -105,6 +105,54 @@ async def execute_cron_job(
 
     system_prompt = config.agents.system_prompt
 
+    is_task_job = job.name.startswith("task:")
+    if is_task_job:
+        try:
+            if agent_loop.is_thread_busy(thread_id):
+                defer_minutes = getattr(config.task, "defer_minutes", 5)
+                from datetime import datetime, timedelta, timezone
+                new_at = (datetime.now(timezone(timedelta(hours=8))) + timedelta(minutes=defer_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+                logger.info("Task checkpoint deferred: thread '%s' is busy, rescheduling to %s", thread_id, new_at)
+                return CronRunResult(
+                    job_id=job.id,
+                    status="deferred",
+                    error=f"Thread busy, deferred {defer_minutes}m",
+                    started_at=started_at,
+                    finished_at=time.time(),
+                    output=json.dumps({"deferred": True, "new_at": new_at, "defer_minutes": defer_minutes}),
+                )
+        except Exception:
+            pass
+
+        task_context = (
+            "\n\n## 自主任务检查点\n"
+            "这是一个自主任务的检查点触发。请先调用 task_status 查看当前任务进度，"
+            "然后继续执行下一步。完成后调用 task_advance 标记步骤完成。"
+        )
+        system_prompt += task_context
+
+        parts = job.name.split(":")
+        if len(parts) >= 4:
+            try:
+                run_id = parts[1]
+                cp_id = parts[3]
+                from src.task.store import get_task_store
+                task_store = get_task_store(getattr(config.task, "db_path", "~/.myclaw/data/task_runs.db"))
+                run = await task_store.get(run_id)
+                if run:
+                    task_detail = (
+                        f"\n\n## 当前任务详情\n"
+                        f"任务ID: {run.id}\n"
+                        f"目标: {run.goal}\n"
+                        f"当前步骤: {run.current_step}/{len(run.steps)}\n"
+                        f"下一步: {run.steps[run.current_step] if run.current_step < len(run.steps) else '全部完成'}\n"
+                        f"检查点提示: {job.payload.message or '检查任务进度并继续执行'}\n"
+                    )
+                    system_prompt += task_detail
+                    logger.info("Injected task context for run %s step %d/%d", run_id, run.current_step, len(run.steps))
+            except Exception:
+                logger.warning("Failed to load task context for job %s", job.name, exc_info=True)
+
     timeout = job.payload.timeout_seconds or _DEFAULT_TIMEOUT
     if job.payload.kind == "agent_turn":
         timeout = max(timeout, _AGENT_TURN_TIMEOUT)

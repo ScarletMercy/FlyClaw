@@ -141,6 +141,7 @@ class ServiceContainer:
             "src.tools.web_tools",
             "src.tools.tts_tools",
             "src.tools.memory_tools",
+            "src.tools.task_tools",
             "src.memory.memory_sync",
             "src.skills.manager",
             "src.skills.curator",
@@ -336,6 +337,11 @@ class ServiceContainer:
         if getattr(self.config, "memory_store", None) and self.config.memory_store.enabled:
             from src.tools.memory_tools import get_memory_store
             store = get_memory_store(self.config.memory_store.db_path)
+            await store.initialize()
+
+        if getattr(self.config, "task", None) and self.config.task.enabled:
+            from src.task.store import get_task_store
+            store = get_task_store(self.config.task.db_path)
             await store.initialize()
 
     def _setup_qq_channel(self):
@@ -616,6 +622,13 @@ class ServiceContainer:
                     from src.tools.memory_tools import get_memory_store
                     mem_store = get_memory_store()
                     await mem_store.close()
+                except Exception:
+                    pass
+            if getattr(self.config, "task", None) and self.config.task.enabled:
+                try:
+                    from src.task.store import get_task_store
+                    task_store = get_task_store()
+                    await task_store.close()
                 except Exception:
                     pass
             if self.config.skills.enabled and self.config.skills.watch:

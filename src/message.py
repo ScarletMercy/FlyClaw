@@ -126,6 +126,7 @@ class MessageHandler:
                             await reply_fn("✅ 已确认删除记忆" if decision == "allow_once" else "❌ 已取消删除记忆")
                         else:
                             await reply_fn(f"Approval {'granted' if decision == 'allow_once' else 'denied'}.")
+                        asyncio.create_task(self._resume_and_reply(req.thread_id, decision, chat_id))
                         return
 
             cmd_match = self._container.dispatcher.match(text)
@@ -152,11 +153,24 @@ class MessageHandler:
             from src.tools.browser.tools import set_browser_session
             set_browser_session(chat_id)
 
+            from src.tools.task_tools import set_task_context
+            set_task_context(chat_id=chat_id, sender_id=sender_id, thread_id=thread_id)
+
             from src.agent.state import AgentState
+
+            system_prompt = self._container.config.agents.system_prompt
+            if getattr(self._container.config, "task", None) and self._container.config.task.enabled:
+                system_prompt += (
+                    "\n\n## 自主工作模式\n"
+                    "自主工作模式已开启。如果用户提出复杂任务（研究、开发、调研、写作等），"
+                    "请先调用 task_plan 工具制定执行计划，包含步骤和检查点，然后再开始执行。"
+                    "在检查点触发时，调用 task_status 查看进度，然后继续执行下一步。"
+                    "完成任务后调用 task_advance 标记步骤完成。"
+                )
 
             input_state = AgentState(
                 messages=[{"role": "user", "content": text}],
-                system_prompt=self._container.config.agents.system_prompt,
+                system_prompt=system_prompt,
                 sender_id=sender_id,
                 chat_id=chat_id,
                 chat_type=chat_type,
@@ -385,48 +399,109 @@ class MessageHandler:
         chat_id: str,
     ):
         from src.tools.approval import get_approval_manager
+        from src.agent.loop import ApprovalPending
 
         try:
             mgr = get_approval_manager()
-            approval_timeout = getattr(exc, "timeout", None) or 120
-            auto_deny = getattr(exc, "auto_deny", False)
             zh = self._container.config.agents.language == "zh"
-            tool_name = getattr(exc, "tool_name", "exec_command")
+            current_exc = exc
+            consecutive_denies = 0
 
-            if chat_id.startswith(("c2c:", "group:", "channel:", "dm:")):
+            while True:
+                approval_timeout = getattr(current_exc, "timeout", None) or 120
+                auto_deny = getattr(current_exc, "auto_deny", False)
+                tool_name = getattr(current_exc, "tool_name", "exec_command")
+
+                if not chat_id.startswith(("c2c:", "group:", "channel:", "dm:")):
+                    return
+
                 if tool_name == "memory_delete":
-                    keys = getattr(exc, "keys", [])
-                    preview = exc.command_preview
+                    keys = getattr(current_exc, "keys", [])
+                    preview = current_exc.command_preview
                     msg_text = (
                         f"🗑️ 以下 {len(keys)} 条记忆将被删除：\n\n"
                         f"{preview}\n\n"
                         f"发送 /y 确认删除，发送 /n 或忽略取消（{approval_timeout}秒超时）"
                     )
                 else:
-                    warn = "DANGEROUS" if exc.denylisted else "requires approval"
+                    warn = "DANGEROUS" if current_exc.denylisted else "requires approval"
                     msg_text = (
-                        f"**Approval Required** ({warn})\n```\n{exc.command_preview}\n```\n"
-                        f"Reply 'yes' to allow or 'no' to deny. (request: {exc.request_id})"
+                        f"**Approval Required** ({warn})\n```\n{current_exc.command_preview}\n```\n"
+                        f"Reply 'yes' to allow or 'no' to deny. (request: {current_exc.request_id})"
                     )
 
                 await self._container.qq.send_text(chat_id, msg_text)
-                decision = await mgr.await_approval(exc.request_id, timeout=approval_timeout)
+                decision = await mgr.await_approval(current_exc.request_id, timeout=approval_timeout)
                 if decision == "timeout":
                     if tool_name == "memory_delete" or auto_deny:
                         timeout_msg = "⏰ 操作超时，记忆删除已取消。" if tool_name == "memory_delete" else ("操作超时，已自动拒绝。" if zh else "Operation timed out, auto-denied.")
                         await self._container.qq.send_text(chat_id, timeout_msg)
                     decision = "deny"
-                result_state = await self._container.agent_loop.resume(exc.thread_id, decision)
-                assistant_text = ""
-                for msg in reversed(result_state.messages):
-                    if msg.get("role") == "assistant" and msg.get("content"):
-                        assistant_text = msg["content"]
-                        break
-                if assistant_text:
-                    await self._container.qq.send_text(chat_id, assistant_text)
-                return
+
+                if decision == "deny":
+                    consecutive_denies += 1
+                else:
+                    consecutive_denies = 0
+
+                try:
+                    result_state = await self._container.agent_loop.resume(current_exc.thread_id, decision)
+                    assistant_text = ""
+                    for msg in reversed(result_state.messages):
+                        if msg.get("role") == "assistant" and msg.get("content"):
+                            assistant_text = msg["content"]
+                            break
+                    if assistant_text:
+                        await self._container.qq.send_text(chat_id, assistant_text)
+                    return
+                except ApprovalPending as next_exc:
+                    if consecutive_denies >= 3:
+                        state = await self._container.state_store.aload(current_exc.thread_id)
+                        if state:
+                            state.pending_approval = None
+                            await self._container.state_store.save(current_exc.thread_id, state)
+                        await self._container.qq.send_text(chat_id, "⚠️ 连续多次被拒绝后仍在重试，已终止操作。")
+                        return
+                    current_exc = next_exc
+                    continue
         except Exception:
             logger.exception("Error in _handle_approval_pending for request %s", exc.request_id)
+            try:
+                state = await self._container.state_store.aload(exc.thread_id)
+                if state and state.pending_approval:
+                    state.pending_approval = None
+                    await self._container.state_store.save(exc.thread_id, state)
+                    logger.info("Cleared orphaned pending_approval for thread %s", exc.thread_id)
+            except Exception:
+                pass
+
+    async def _resume_and_reply(self, thread_id: str, decision: str, chat_id: str):
+        """Fallback resume when _handle_approval_pending is not running.
+
+        Called when user sends /y but the original _handle_approval_pending
+        task has already exited (e.g. due to an exception or chained ApprovalPending).
+        If _handle_approval_pending is still running, resume() will fail with
+        a lock conflict and we silently ignore it.
+        """
+        try:
+            state = await self._container.state_store.aload(thread_id)
+            if not state or not state.pending_approval:
+                logger.debug("_resume_and_reply: no pending_approval for thread %s, skipping", thread_id)
+                return
+            result_state = await self._container.agent_loop.resume(thread_id, decision)
+            assistant_text = ""
+            for msg in reversed(result_state.messages):
+                if msg.get("role") == "assistant" and msg.get("content"):
+                    assistant_text = msg["content"]
+                    break
+            if assistant_text and self._container.qq:
+                await self._container.qq.send_text(chat_id, assistant_text)
+        except RuntimeError as e:
+            if "busy" in str(e).lower() or "lock" in str(e).lower():
+                logger.debug("_resume_and_reply: thread %s is busy, _handle_approval_pending is still running", thread_id)
+            else:
+                logger.warning("_resume_and_reply failed: %s", e)
+        except Exception:
+            logger.exception("_resume_and_reply failed for thread %s", thread_id)
 
     async def _memory_llm_judge(self, user_input: str, ai_response: str, reply_fn):
         try:

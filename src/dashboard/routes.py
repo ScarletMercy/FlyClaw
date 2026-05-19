@@ -289,6 +289,17 @@ def register_dashboard(app: FastAPI, application):
                 "enabled": cfg.cron.enabled,
                 "max_concurrent": cfg.cron.max_concurrent_runs,
             },
+            "memory_store": {
+                "enabled": getattr(cfg.memory_store, "enabled", False),
+                "db_path": cfg.memory_store.db_path,
+                "memory_judge_model": cfg.memory_store.memory_judge_model,
+            },
+            "task": {
+                "enabled": getattr(cfg.task, "enabled", False),
+                "max_parallel": cfg.task.max_parallel,
+                "default_timeout": cfg.task.default_timeout,
+                "defer_minutes": cfg.task.defer_minutes,
+            },
             "memory": {
                 "enabled": getattr(cfg.memory, "enabled", False),
             },

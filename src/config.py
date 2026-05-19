@@ -316,6 +316,16 @@ class MemoryStoreConfig(BaseModel):
     memory_judge_api_key: str = ""
 
 
+class TaskConfig(BaseModel):
+    """Autonomous task mode configuration."""
+
+    enabled: bool = False
+    max_parallel: int = 3
+    default_timeout: int = 7200
+    db_path: str = "~/.myclaw/data/task_runs.db"
+    defer_minutes: int = 5
+
+
 class AuthConfig(BaseModel):
     """Authentication and access control configuration."""
 
@@ -392,6 +402,7 @@ class AppConfig(BaseModel):
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     memory_store: MemoryStoreConfig = Field(default_factory=MemoryStoreConfig)
+    task: TaskConfig = Field(default_factory=TaskConfig)
     session_search: SessionSearchConfig = Field(default_factory=SessionSearchConfig)
     compression: CompressionConfig = Field(default_factory=CompressionConfig)
     canvas: CanvasConfig = Field(default_factory=CanvasConfig)
@@ -420,6 +431,9 @@ def _expand_paths(config: AppConfig) -> AppConfig:
 
     # Memory store
     config.memory_store.db_path = str(Path(config.memory_store.db_path).expanduser().resolve())
+
+    # Task
+    config.task.db_path = str(Path(config.task.db_path).expanduser().resolve())
     
     # Session search
     config.session_search.index_path = str(Path(config.session_search.index_path).expanduser().resolve())

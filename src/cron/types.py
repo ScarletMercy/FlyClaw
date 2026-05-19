@@ -148,7 +148,7 @@ class CronJobPatch(BaseModel):
 
 class CronRunResult(BaseModel):
     job_id: str
-    status: Literal["success", "error", "timeout"]
+    status: Literal["success", "error", "timeout", "deferred"]
     output: Optional[str] = None
     error: Optional[str] = None
     started_at: float

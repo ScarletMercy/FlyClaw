@@ -1,6 +1,7 @@
 """Tests for session search feature."""
 import os
 import sys
+from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -30,7 +31,7 @@ session_search:
         )
         cfg = load_config(config_file)
         assert cfg.session_search.enabled is True
-        assert cfg.session_search.index_path == "custom/index.db"
+        assert cfg.session_search.index_path == str(Path("custom/index.db").resolve())
         assert cfg.session_search.max_results == 20
 
     def test_parse_thread_id_legacy_p2p(self):
