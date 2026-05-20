@@ -158,17 +158,6 @@ def _build_tool_guidance(tools: list) -> list[str]:
             "",
         ]
 
-    if "mcp_manage" in tool_names:
-        lines += [
-            "## MCP 扩展工具",
-            "- mcp_manage(action=\"list\") 查看已安装的 MCP 服务器",
-            "- mcp_manage(action=\"add\", name=\"...\", command=\"...\", args=[...]) 添加 stdio 服务器",
-            "- mcp_manage(action=\"add\", name=\"...\", url=\"...\") 添加 HTTP 服务器",
-            "- mcp_manage(action=\"test\", name=\"...\") 测试连接并列出可用工具",
-            "- mcp_manage(action=\"remove\", name=\"...\") 删除服务器",
-            "",
-        ]
-
     return lines
 
 

@@ -248,18 +248,6 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 lines.append(f"Plugins: {reg.plugin_count} ({reg.tool_count} tools)")
         except Exception:
             pass
-        try:
-            from src.mcp.manager import get_mcp_manager
-
-            mcp_mgr = get_mcp_manager()
-            servers = await mcp_mgr.list_servers()
-            connected = sum(1 for s in servers if s.connected)
-            if zh:
-                lines.append(f"MCP: {connected}/{len(servers)} 个服务器已连接")
-            else:
-                lines.append(f"MCP: {connected}/{len(servers)} servers connected")
-        except Exception:
-            pass
         return "\n".join(lines)
 
     async def cmd_skills(args: str, ctx: dict) -> str:

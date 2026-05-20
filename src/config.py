@@ -9,7 +9,6 @@ from typing import Any, Literal, Optional
 import yaml
 from pydantic import BaseModel, Field, ValidationError
 
-from src.mcp.config_models import MCPConfig
 
 _log = logging.getLogger("myclaw.config")
 
@@ -396,7 +395,6 @@ class AppConfig(BaseModel):
     link_understanding: LinkUnderstandingConfig = Field(default_factory=LinkUnderstandingConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     timeouts: TimeoutsConfig = Field(default_factory=TimeoutsConfig)
-    mcp: MCPConfig = Field(default_factory=MCPConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     memory_store: MemoryStoreConfig = Field(default_factory=MemoryStoreConfig)
     task: TaskConfig = Field(default_factory=TaskConfig)

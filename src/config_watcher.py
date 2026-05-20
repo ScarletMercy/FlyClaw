@@ -44,7 +44,6 @@ class ReloadPlan:
         "skills.": "reload_skills",
         "memory.": "reload_memory",
         "link_understanding.": "reload_skills",
-        "mcp.": "reload_mcp",
         "auth.": "reload_auth",
         "security.": "reload_security",
         "compression.": "reload_model",

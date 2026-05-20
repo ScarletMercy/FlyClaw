@@ -194,21 +194,6 @@ def register_dashboard(app: FastAPI, application):
             "jobs": [j.model_dump() for j in jobs],
         }
 
-    @router.get("/api/dashboard/mcp")
-    async def dashboard_mcp(request: Request):
-        _check_auth(request, app)
-        cfg = _app_ref.config
-        mcp_enabled = getattr(cfg, "mcp", None) and cfg.mcp.enabled
-        if not mcp_enabled:
-            return {"enabled": False, "servers": []}
-        try:
-            from src.mcp.manager import get_mcp_manager
-            mgr = get_mcp_manager()
-            servers = [s.model_dump() for s in await mgr.list_servers()]
-            return {"enabled": True, "servers": servers}
-        except Exception as e:
-            return {"enabled": True, "servers": [], "error": str(e)}
-
     @router.get("/api/dashboard/tools")
     async def dashboard_tools(request: Request):
         _check_auth(request, app)
@@ -479,12 +464,6 @@ def register_dashboard(app: FastAPI, application):
         # Cron
         if _app_ref.cron_service:
             snapshot["cron_jobs"] = [j.model_dump() for j in _app_ref.cron_service.list_jobs()]
-        # MCP
-        try:
-            from src.mcp.manager import get_mcp_manager
-            snapshot["mcp_servers"] = [s.model_dump() for s in await get_mcp_manager().list_servers()]
-        except Exception:
-            snapshot["mcp_servers"] = []
         # Auth users
         if getattr(cfg.auth, "enabled", False):
             try:

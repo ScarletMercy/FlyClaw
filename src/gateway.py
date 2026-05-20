@@ -405,69 +405,6 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         except Exception:
             return {"commands": []}
 
-    @app.get("/api/mcp/servers")
-    async def mcp_list_servers(request: Request, _auth=Depends(require_auth)):
-        try:
-            return [s.model_dump() for s in await get_mcp_manager().list_servers()]
-        except Exception:
-            return []
-
-    @app.get("/api/mcp/servers/{server_name}")
-    async def mcp_get_server(server_name: str, request: Request, _auth=Depends(require_auth)):
-        try:
-            client = get_mcp_manager()._clients.get(server_name)
-            return {"name": server_name, "connected": client.is_connected, "tools": await client.list_tools()} if client else JSONResponse({"error": "not found"}, status_code=404)
-        except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=500)
-
-    @app.post("/api/mcp/servers")
-    async def mcp_add_server(request: Request, _auth=Depends(require_auth)):
-        try:
-            from src.mcp.manager import get_mcp_manager
-            from src.mcp.config_models import MCPServerConfig
-            body = await request.json()
-            name = body.get("name", "")
-            if not name:
-                return JSONResponse({"error": "name is required"}, status_code=400)
-            config = MCPServerConfig(**body.get("config", {}))
-            await get_mcp_manager().add_server(name, config)
-            try:
-                from src.config import load_config, save_config
-                cfg = load_config()
-                if cfg.mcp.servers is None:
-                    cfg.mcp.servers = {}
-                cfg.mcp.servers[name] = config
-                save_config(cfg)
-            except Exception:
-                pass
-            return {"added": name}
-        except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=422)
-
-    @app.delete("/api/mcp/servers/{server_name}")
-    async def mcp_remove_server(server_name: str, request: Request, _auth=Depends(require_auth)):
-        try:
-            await get_mcp_manager().remove_server(server_name)
-            try:
-                from src.config import load_config, save_config
-                cfg = load_config()
-                if cfg.mcp.servers and server_name in cfg.mcp.servers:
-                    del cfg.mcp.servers[server_name]
-                    save_config(cfg)
-            except Exception:
-                pass
-            return {"removed": server_name}
-        except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=500)
-
-    @app.post("/api/mcp/servers/{server_name}/tools/{tool_name}/call")
-    async def mcp_call_tool(server_name: str, tool_name: str, request: Request, _auth=Depends(require_auth)):
-        try:
-            client = await get_mcp_manager().ensure_connected(server_name)
-            return {"result": await client.call_tool(tool_name, (await request.json()).get("arguments", {}))}
-        except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=500)
-
     @app.post("/api/pair")
     async def pair_device(request: Request, rbac=Depends(require_rbac)):
         try:

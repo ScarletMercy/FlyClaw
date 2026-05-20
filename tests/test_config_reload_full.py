@@ -94,21 +94,6 @@ class TestReloadAuth:
         assert app.rbac == MockRBAC.return_value
 
 
-class TestReloadMCP:
-    @pytest.mark.asyncio
-    async def test_reload_mcp_calls_manager_reload(self):
-        app = _make_app()
-        executor = ReloadExecutor(app)
-        plan = ReloadPlan(actions=[ReloadAction(action="reload_mcp")])
-
-        mock_mgr = MagicMock()
-        mock_mgr.reload = AsyncMock()
-        with patch("src.mcp.manager.get_mcp_manager", return_value=mock_mgr):
-            await executor.execute(plan)
-
-        mock_mgr.reload.assert_awaited_once()
-
-
 class TestRequiresRestart:
     @pytest.mark.asyncio
     async def test_requires_restart_skips_all_actions(self):
