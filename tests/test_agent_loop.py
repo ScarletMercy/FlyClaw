@@ -343,3 +343,347 @@ class TestAgentLoopToolPolicy:
         assert "feishu_send" not in tool_names
         assert "qq_send" in tool_names
         assert "other_tool" in tool_names
+
+
+class TestToolLoopGuardrails:
+    def test_repeat_failure_blocks(self):
+        from src.agent.guardrails import ToolLoopGuardrails
+        g = ToolLoopGuardrails(repeat_fail_block=3)
+        args = {"cmd": "rm -rf /"}
+        for _ in range(2):
+            g.record("exec_command", args, success=False)
+        result = g.check("exec_command", args)
+        assert result is None
+        g.record("exec_command", args, success=False)
+        result = g.check("exec_command", args)
+        assert result is not None
+        assert result.blocked is True
+        assert "repeated failure" in result.reason
+
+    def test_storm_blocks(self):
+        from src.agent.guardrails import ToolLoopGuardrails
+        g = ToolLoopGuardrails(storm_block=4)
+        for i in range(3):
+            g.record("exec_command", {"cmd": f"cmd_{i}"}, success=False)
+        result = g.check("exec_command", {"cmd": "cmd_3"})
+        assert result is None
+        g.record("exec_command", {"cmd": "cmd_3"}, success=False)
+        result = g.check("exec_command", {"cmd": "cmd_4"})
+        assert result is not None
+        assert result.blocked is True
+        assert "failure storm" in result.reason
+
+    def test_idempotent_stall_blocks(self):
+        from src.agent.guardrails import ToolLoopGuardrails, _IDEMPOTENT_TOOLS
+        assert "read_file" in _IDEMPOTENT_TOOLS
+        g = ToolLoopGuardrails(stall_block=3)
+        for i in range(2):
+            g.record("read_file", {"path": "test.txt"}, success=True, result="same content")
+        result = g.check("read_file", {"path": "test.txt"})
+        assert result is None
+        g.record("read_file", {"path": "test.txt"}, success=True, result="same content")
+        result = g.check("read_file", {"path": "test.txt"})
+        assert result is not None
+        assert result.blocked is True
+        assert "idempotent stall" in result.reason
+
+    def test_reset_clears_history(self):
+        from src.agent.guardrails import ToolLoopGuardrails
+        g = ToolLoopGuardrails(repeat_fail_block=2)
+        args = {"cmd": "fail"}
+        g.record("exec_command", args, success=False)
+        g.reset()
+        result = g.check("exec_command", args)
+        assert result is None
+
+    def test_mixed_success_resets_count(self):
+        from src.agent.guardrails import ToolLoopGuardrails
+        g = ToolLoopGuardrails(repeat_fail_block=3)
+        args = {"cmd": "test"}
+        g.record("exec_command", args, success=False)
+        g.record("exec_command", args, success=False)
+        g.record("exec_command", args, success=True)
+        result = g.check("exec_command", args)
+        assert result is None
+
+
+class TestSanitizeApiMessages:
+    def test_inserts_stub_for_missing_result(self):
+        from src.agent.loop import AgentLoop
+        loop = AgentLoop.__new__(AgentLoop)
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+            ]},
+        ]
+        sanitized = loop._sanitize_api_messages(messages)
+        tool_msgs = [m for m in sanitized if m.get("role") == "tool"]
+        assert len(tool_msgs) == 1
+        assert tool_msgs[0]["tool_call_id"] == "tc1"
+        assert "removed by compression" in tool_msgs[0]["content"]
+
+    def test_removes_orphan_result(self):
+        from src.agent.loop import AgentLoop
+        loop = AgentLoop.__new__(AgentLoop)
+        messages = [
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+            ]},
+            {"role": "tool", "tool_call_id": "tc1", "content": "ok"},
+            {"role": "tool", "tool_call_id": "tc2", "content": "orphan"},
+        ]
+        sanitized = loop._sanitize_api_messages(messages)
+        tool_msgs = [m for m in sanitized if m.get("role") == "tool"]
+        assert len(tool_msgs) == 1
+        assert tool_msgs[0]["tool_call_id"] == "tc1"
+
+    def test_no_change_when_balanced(self):
+        from src.agent.loop import AgentLoop
+        loop = AgentLoop.__new__(AgentLoop)
+        messages = [
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+            ]},
+            {"role": "tool", "tool_call_id": "tc1", "content": "ok"},
+        ]
+        sanitized = loop._sanitize_api_messages(messages)
+        assert len(sanitized) == len(messages)
+
+
+class TestSanitizeSurrogates:
+    def test_replaces_lone_surrogates(self):
+        from src.agent.loop import AgentLoop
+        loop = AgentLoop.__new__(AgentLoop)
+        messages = [{"role": "user", "content": "hello\ud800world"}]
+        sanitized = loop._sanitize_surrogates(messages)
+        assert "\ud800" not in sanitized[0]["content"]
+        assert "\ufffd" in sanitized[0]["content"]
+
+    def test_handles_nested_dicts(self):
+        from src.agent.loop import AgentLoop
+        loop = AgentLoop.__new__(AgentLoop)
+        messages = [{"role": "assistant", "tool_calls": [
+            {"id": "tc1", "function": {"name": "x", "arguments": '{"a": "\udc00"}'}},
+        ]}]
+        sanitized = loop._sanitize_surrogates(messages)
+        assert "\udc00" not in sanitized[0]["tool_calls"][0]["function"]["arguments"]
+
+    def test_preserves_valid_content(self):
+        from src.agent.loop import AgentLoop
+        loop = AgentLoop.__new__(AgentLoop)
+        messages = [{"role": "user", "content": "normal text"}]
+        sanitized = loop._sanitize_surrogates(messages)
+        assert sanitized[0]["content"] == "normal text"
+
+
+class TestGracePeriod:
+    @pytest.mark.asyncio
+    async def test_grace_period_on_max_rounds(self, store, config):
+        config.agents.max_tool_rounds = 1
+        tool = _make_tool("always_call")
+        client = AsyncMock()
+
+        call_count = 0
+
+        async def fake_chat(messages, tools=None, **kw):
+            nonlocal call_count
+            call_count += 1
+            has_tools = tools is not None and len(tools) > 0
+            if has_tools:
+                return ChatResponse(content="", tool_calls=[_make_tc("always_call")])
+            return ChatResponse(content="Summary: budget exhausted.", tool_calls=[])
+
+        client.chat.side_effect = fake_chat
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        state = AgentState(messages=[{"role": "user", "content": "go"}])
+        result = await loop.run(state, "grace_test")
+
+        last = result.messages[-1]
+        assert last["role"] == "assistant"
+        assert "Summary" in last["content"]
+        assert call_count >= 2
+
+
+class TestInterruptFlag:
+    def test_interrupt_sets_flag(self):
+        from src.agent.interrupt import InterruptFlag
+        flag = InterruptFlag()
+        flag.interrupt("stop now")
+        is_int, msg = flag.check()
+        assert is_int is True
+        assert msg == "stop now"
+
+    def test_steer_sets_text(self):
+        from src.agent.interrupt import InterruptFlag
+        flag = InterruptFlag()
+        assert flag.steer("focus on X") is True
+        assert flag.drain_steer() == "focus on X"
+        assert flag.drain_steer() is None
+
+    def test_interrupt_clears_steer(self):
+        from src.agent.interrupt import InterruptFlag
+        flag = InterruptFlag()
+        flag.steer("steer text")
+        flag.interrupt("stop")
+        assert flag.drain_steer() is None
+        is_int, msg = flag.check()
+        assert is_int is True
+
+    def test_steer_concatenates(self):
+        from src.agent.interrupt import InterruptFlag
+        flag = InterruptFlag()
+        flag.steer("first")
+        flag.steer("second")
+        assert flag.drain_steer() == "first\nsecond"
+
+    def test_steer_rejected_during_interrupt(self):
+        from src.agent.interrupt import InterruptFlag
+        flag = InterruptFlag()
+        flag.interrupt()
+        assert flag.steer("ignored") is False
+
+    def test_clear_resets_all(self):
+        from src.agent.interrupt import InterruptFlag
+        flag = InterruptFlag()
+        flag.interrupt("msg")
+        flag.clear()
+        is_int, msg = flag.check()
+        assert is_int is False
+        assert msg is None
+        assert flag.drain_steer() is None
+
+
+class TestInterruptInLoop:
+    @pytest.mark.asyncio
+    async def test_interrupt_stops_loop(self, store, config):
+        tool = _make_tool("echo")
+        client = AsyncMock()
+
+        call_count = 0
+
+        async def fake_chat(messages, tools=None, **kw):
+            nonlocal call_count
+            call_count += 1
+            return ChatResponse(content="", tool_calls=[_make_tc("echo", {"text": "hi"})])
+
+        client.chat.side_effect = fake_chat
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        # Set interrupt before running
+        flag = store.get_interrupt_flag("int_test")
+        flag.interrupt("stop this")
+
+        state = AgentState(messages=[{"role": "user", "content": "go"}])
+        result = await loop.run(state, "int_test")
+
+        # Loop should have stopped immediately
+        assert call_count == 0
+        # Interrupt message should be in state
+        assert any(m.get("content") == "stop this" for m in result.messages)
+
+    @pytest.mark.asyncio
+    async def test_steer_injected_into_tool_result(self, store, config):
+        config.agents.max_tool_rounds = 2
+        tool = _make_tool("echo")
+        client = AsyncMock()
+
+        call_count = 0
+        steer_event = asyncio.Event()
+
+        async def fake_chat(messages, tools=None, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # Signal that we're in the loop, then wait for steer
+                steer_event.set()
+                await asyncio.sleep(0.1)  # Give time for steer to be set
+                return ChatResponse(content="", tool_calls=[_make_tc("echo", {"text": "hi"})])
+            return ChatResponse(content="Done with steer.", tool_calls=[])
+
+        client.chat.side_effect = fake_chat
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        state = AgentState(messages=[{"role": "user", "content": "go"}])
+
+        async def run_and_steer():
+            await steer_event.wait()
+            flag = store.get_interrupt_flag("steer_test")
+            flag.steer("change direction")
+
+        asyncio.create_task(run_and_steer())
+        result = await loop.run(state, "steer_test")
+
+        # Check that steer text was injected into a tool message
+        tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+        assert any("User guidance" in m.get("content", "") for m in tool_msgs)
+
+
+class TestToolCache:
+    def test_small_content_not_cached(self):
+        from src.agent.tool_cache import cache_large_output
+        content = "short text"
+        truncated, path = cache_large_output(content, "test_thread")
+        assert truncated == content
+        assert path is None
+
+    def test_large_content_cached(self):
+        from src.agent.tool_cache import cache_large_output
+        content = "x" * 3000
+        truncated, path = cache_large_output(content, "test_large")
+        assert len(truncated) < len(content)
+        assert "truncated" in truncated
+        assert path is not None
+        assert "test_large" in path
+
+    def test_cached_file_contains_original(self):
+        from src.agent.tool_cache import cache_large_output
+        from pathlib import Path
+        content = "x" * 3000
+        _, path = cache_large_output(content, "test_verify")
+        assert path is not None
+        saved = Path(path).read_text(encoding="utf-8")
+        assert saved == content
+
+    def test_clear_thread_cache(self):
+        from src.agent.tool_cache import cache_large_output, clear_thread_cache
+        content = "x" * 3000
+        cache_large_output(content, "test_clear")
+        clear_thread_cache("test_clear")
+        clear_thread_cache("test_clear")
+
+    def test_cache_deterministic_filename(self):
+        from src.agent.tool_cache import cache_large_output
+        content = "A" * 3000
+        t1, p1 = cache_large_output(content, "det_test")
+        t2, p2 = cache_large_output(content, "det_test")
+        assert t1 == t2
+        assert p1 == p2
+
+    def test_truncate_skips_already_truncated(self):
+        from src.agent.loop import AgentLoop
+        loop = AgentLoop.__new__(AgentLoop)
+        big = "B" * 3000
+        from src.agent.tool_cache import cache_large_output
+        truncated, _ = cache_large_output(big, "skip_test")
+        messages = [
+            {"role": "tool", "tool_call_id": "tc1", "content": truncated, "_truncated": True},
+        ]
+        result = loop._truncate_large_outputs(messages, "skip_test")
+        assert result[0]["content"] == truncated
+        assert result[0].get("_truncated") is True
+
+    def test_sanitize_strips_truncated_flag(self):
+        from src.agent.loop import AgentLoop
+        loop = AgentLoop.__new__(AgentLoop)
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+            ]},
+            {"role": "tool", "tool_call_id": "tc1", "content": "ok", "_truncated": True},
+        ]
+        sanitized = loop._sanitize_api_messages(messages)
+        tool_msg = [m for m in sanitized if m.get("role") == "tool"][0]
+        assert "_truncated" not in tool_msg

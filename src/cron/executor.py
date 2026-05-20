@@ -195,6 +195,8 @@ async def execute_cron_job(
             finished_at=time.time(),
         )
 
+    from src.tools.exec import _current_thread_id as _exec_thread_id
+    _tid_token = _exec_thread_id.set(thread_id)
     try:
         result = await asyncio.wait_for(
             agent_loop.run(input_state, thread_id),
@@ -236,6 +238,8 @@ async def execute_cron_job(
             started_at=started_at,
             finished_at=finished_at,
         )
+    finally:
+        _exec_thread_id.reset(_tid_token)
 
 
 async def execute_with_retry(

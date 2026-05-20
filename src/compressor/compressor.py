@@ -12,7 +12,10 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from src.agent.client import ChatClient, FallbackChain
 
 logger = logging.getLogger("myclaw.compressor")
 
@@ -84,11 +87,12 @@ def _tool_result_summary(name: str, content: str) -> str:
 
 
 class ContextCompressor:
-    """Compresses long conversations using LLM summarization."""
+    """Compresses long conversations using the current model for summarization."""
 
-    def __init__(self, config, main_config=None):
+    def __init__(self, config, main_config=None, client: ChatClient | FallbackChain | None = None):
         self.config = config
         self._main_config = main_config
+        self._client = client
         self._previous_summary: Optional[str] = None
         self._compression_count = 0
 
@@ -96,17 +100,6 @@ class ContextCompressor:
         estimated = _estimate_tokens(messages)
         threshold = int(100000 * self.config.threshold_percent)
         return estimated > threshold
-
-    def _get_model_config(self):
-        if self._main_config is None:
-            from src.config import load_config
-
-            self._main_config = load_config()
-        main = self._main_config
-        model_name = self.config.model or "LongCat-Flash-Lite"
-        base_url = self.config.base_url or main.model.base_url
-        api_key = self.config.api_key or main.model.api_key
-        return model_name, base_url, api_key
 
     async def compress(
         self,
@@ -233,12 +226,8 @@ class ContextCompressor:
         return "\n".join(lines)
 
     async def _llm_summarize(self, turns_text: str) -> Optional[str]:
-        model_name, base_url, api_key = self._get_model_config()
-
-        if not base_url or not api_key:
-            logger.warning(
-                "Compression: no model config available, using static fallback"
-            )
+        if self._client is None:
+            logger.warning("Compression: no client available, using static fallback")
             return None
 
         if len(turns_text) > 12000:
@@ -251,27 +240,15 @@ class ContextCompressor:
             user_msg = f"请摘要以下对话：\n\n{turns_text}"
 
         try:
-            import httpx
-
-            async with httpx.AsyncClient(
-                timeout=httpx.Timeout(30.0)
-            ) as client:
-                resp = await client.post(
-                    f"{base_url.rstrip('/')}/chat/completions",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json={
-                        "model": model_name,
-                        "messages": [
-                            {"role": "system", "content": _SUMMARY_SYSTEM},
-                            {"role": "user", "content": user_msg},
-                        ],
-                        "temperature": 0.0,
-                        "max_tokens": self.config.max_summary_tokens,
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                return data["choices"][0]["message"]["content"]
+            resp = await self._client.chat(
+                [
+                    {"role": "system", "content": _SUMMARY_SYSTEM},
+                    {"role": "user", "content": user_msg},
+                ],
+                tools=None,
+                max_tokens=self.config.max_summary_tokens,
+            )
+            return resp.content or None
         except Exception as e:
             logger.warning("LLM summarization failed: %s", e)
             return None

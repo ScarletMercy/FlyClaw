@@ -20,8 +20,13 @@ class MCPToolAdapter:
         async def execute(**kwargs):
             from src.mcp.manager import get_mcp_manager
             manager = get_mcp_manager()
-            client = await manager.ensure_connected(server_name)
-            result = await client.call_tool(raw_name, kwargs)
+            try:
+                client = await manager.ensure_connected(server_name)
+                result = await client.call_tool(raw_name, kwargs)
+            except ConnectionError as e:
+                return f"[MCP connection error] {e}"
+            except Exception as e:
+                return f"[MCP tool error] {type(e).__name__}: {e}"
             return self._format_result(result)
         tool = ToolDef.from_schema(name=tool_name, description=description, parameters=schema or {"type":"object","properties":{}}, fn=execute)
         return tool
@@ -33,17 +38,28 @@ class MCPToolAdapter:
 
     @staticmethod
     def _format_result(result: Any) -> str:
+        if isinstance(result, str):
+            return result
         if isinstance(result, dict):
             content = result.get("content", [])
+            is_error = result.get("isError", False)
             parts = []
             for item in content:
                 if isinstance(item, dict):
-                    if item.get("type") == "text": parts.append(item.get("text", ""))
-                    elif item.get("type") == "image": parts.append("[image]")
-                    elif item.get("type") == "resource": parts.append(f"[resource: {item.get('resource', {}).get('uri', '')}]")
-                    else: parts.append(str(item))
-                else: parts.append(str(item))
-            return "\n".join(parts) if parts else str(result)
+                    if item.get("type") == "text":
+                        parts.append(item.get("text", ""))
+                    elif item.get("type") == "image":
+                        parts.append("[image]")
+                    elif item.get("type") == "resource":
+                        parts.append(f"[resource: {item.get('resource', {}).get('uri', '')}]")
+                    else:
+                        parts.append(str(item))
+                else:
+                    parts.append(str(item))
+            text = "\n".join(parts) if parts else str(result)
+            if is_error:
+                text = f"[MCP error] {text}"
+            return text
         return str(result)
 
 def get_mcp_tools() -> list[ToolDef]:

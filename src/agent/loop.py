@@ -10,17 +10,111 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
-import uuid
+import random
+import re
 from typing import Any
 
 from src.agent.client import ChatClient, ChatResponse, FallbackChain
+from src.agent.guardrails import ToolLoopGuardrails
 from src.agent.state import AgentState, StateStore
 from src.agent.tooldef import ToolDef
 
 logger = logging.getLogger("myclaw.agent.loop")
 
+_SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
+
 _CHARS_PER_TOKEN = 4
+
+
+def _escape_control_in_json_strings(s: str) -> str:
+    out: list[str] = []
+    in_str = False
+    esc = False
+    for ch in s:
+        if esc:
+            out.append(ch)
+            esc = False
+            continue
+        if ch == "\\":
+            out.append(ch)
+            esc = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            out.append(ch)
+            continue
+        if in_str and ord(ch) < 0x20:
+            out.append(f"\\u{ord(ch):04x}")
+            continue
+        out.append(ch)
+    return "".join(out)
+
+
+def _repair_tool_args(args_str: str) -> str:
+    if not args_str:
+        return "{}"
+
+    try:
+        json.loads(args_str, strict=False)
+        return args_str
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    s = args_str.strip()
+
+    for i in range(min(len(s), len(s) - 1)):
+        try:
+            json.loads(s[:len(s) - i], strict=False)
+            return s[:len(s) - i]
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    s = re.sub(r",\s*([}\]])", r"\1", s)
+
+    opens_brace = s.count("{") - s.count("}")
+    opens_bracket = s.count("[") - s.count("]")
+    if opens_brace > 0:
+        s += "}" * opens_brace
+    if opens_bracket > 0:
+        s += "]" * opens_bracket
+    try:
+        json.loads(s, strict=False)
+        return s
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    for _ in range(min(len(s), 50)):
+        if s.endswith("}") or s.endswith("]"):
+            trimmed = s[:-1]
+            try:
+                json.loads(trimmed, strict=False)
+                return trimmed
+            except (json.JSONDecodeError, TypeError):
+                s = trimmed
+        else:
+            break
+
+    s = _escape_control_in_json_strings(args_str)
+    try:
+        json.loads(s, strict=False)
+        return s
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    return "{}"
+
+_PARALLEL_SAFE_TOOLS = frozenset({
+    "read_file", "list_dir", "grep_files", "glob_files",
+    "web_search", "web_fetch", "session_search",
+    "describe_image", "transcribe_audio", "describe_video",
+    "memory_get", "memory_list", "memory_search",
+    "qq_list_guilds", "qq_list_channels", "qq_list_members", "qq_get_member",
+    "cron_list", "skill_manage",
+})
+
+_PATH_SCOPED_TOOLS = frozenset({
+    "read_file", "write_file", "edit_file", "grep_files", "glob_files",
+})
 
 
 def _estimate_tokens_simple(messages: list[dict]) -> int:
@@ -78,7 +172,7 @@ class AgentLoop:
         # Compressor
         if config:
             from src.compressor.compressor import ContextCompressor
-            self._compressor = ContextCompressor(config.compression, main_config=config)
+            self._compressor = ContextCompressor(config.compression, main_config=config, client=client)
 
             from src.bootstrap import load_bootstrap_files
             agents_cfg = getattr(config, "agents", None)
@@ -92,9 +186,8 @@ class AgentLoop:
         self._cached_history: list[dict] | None = None
         self._cached_history_count: int = 0
 
-        # KV cache optimization: pre-build static system prompt
-        self._static_system_prompt: str = ""
-        self._static_system_built: bool = False
+        # Per-loop guardrails instance (shared across calls, reset on new run)
+        self._guardrails = ToolLoopGuardrails()
 
     # ------------------------------------------------------------------
     # Public API
@@ -127,6 +220,11 @@ class AgentLoop:
             return await self._run_inner(state, thread_id, max_rounds)
         finally:
             lock.release()
+            try:
+                from src.agent.tool_cache import clear_thread_cache
+                clear_thread_cache(thread_id)
+            except Exception:
+                pass
 
     async def resume(self, thread_id: str, decision: str) -> AgentState:
         """Resume after approval with per-thread locking."""
@@ -169,16 +267,36 @@ class AgentLoop:
         max_tool_rounds = self._get_max_tool_rounds()
         tool_round = 0
 
+        self._guardrails.reset()
+
         for _ in range(max_rounds):
+            # 0. Check interrupt
+            flag = self._store.get_interrupt_flag(thread_id)
+            is_interrupted, interrupt_msg = flag.check()
+            if is_interrupted:
+                flag.clear()
+                if interrupt_msg:
+                    state.append_message({"role": "user", "content": interrupt_msg})
+                duration_ms = (_time.monotonic() - start_ts) * 1000
+                await emit_async(
+                    "agent_loop.interrupted",
+                    thread_id=thread_id,
+                    interrupt_message=interrupt_msg,
+                    duration_ms=duration_ms,
+                    total_rounds=tool_round,
+                )
+                await self._store.save(thread_id, state)
+                return state
+
             # 1. Prepare messages — proactive compression if over budget
-            messages = await self._prepare_messages(state)
+            messages = await self._prepare_messages(state, thread_id)
 
             # 2. Build tool list
             active_tools = self._filter_tools(state)
             openai_tools = [t.to_openai_tool() for t in active_tools] if active_tools else None
 
-            # 3. Call model
-            response = await self._client.chat(messages, tools=openai_tools)
+            # 3. Call model (with retry)
+            response = await self._call_model_with_retry(messages, tools=openai_tools)
 
             # 4. Append assistant message
             assistant_msg = self._build_assistant_msg(response)
@@ -188,6 +306,12 @@ class AgentLoop:
             if not response.tool_calls:
                 self._redact_last_assistant(state)
                 await self._store.save(thread_id, state)
+                try:
+                    from src.tools.approval import get_approval_manager
+                    get_approval_manager().clear_session(thread_id)
+                except Exception:
+                    pass
+                flag.clear()
                 duration_ms = (_time.monotonic() - start_ts) * 1000
                 await emit_async(
                     "agent_loop.completed",
@@ -201,15 +325,35 @@ class AgentLoop:
             # Checkpoint: save assistant message (with tool_calls) before execution
             await self._store.save(thread_id, state)
 
-            # 6. Execute tool calls
+            # 6. Execute tool calls (parallel when safe)
             tool_round += 1
-            for tc in response.tool_calls:
-                tool_result = await self._execute_tool(tc, state, thread_id)
-                state.append_message({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": tool_result,
-                })
+            if self._should_parallelize(response.tool_calls):
+                parallel_results = await self._execute_tools_parallel(response.tool_calls, state, thread_id)
+                for tc_id, result in parallel_results:
+                    state.append_message({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": result,
+                    })
+                await self._store.save(thread_id, state)
+            else:
+                for tc in response.tool_calls:
+                    tool_result = await self._execute_tool(tc, state, thread_id)
+                    state.append_message({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": tool_result,
+                    })
+                    await self._store.save(thread_id, state)
+
+            # 7. Inject pending steer text into last tool result
+            steer_text = flag.drain_steer()
+            if steer_text:
+                for i in range(len(state.messages) - 1, -1, -1):
+                    if state.messages[i].get("role") == "tool":
+                        state.messages[i]["content"] += f"\n\nUser guidance: {steer_text}"
+                        logger.info("Steer injected after tool batch (%d chars): %s", len(steer_text), steer_text[:120])
+                        break
                 await self._store.save(thread_id, state)
 
         duration_ms = (_time.monotonic() - start_ts) * 1000
@@ -220,6 +364,22 @@ class AgentLoop:
             duration_ms=duration_ms,
             total_rounds=tool_round,
         )
+
+        # Grace period: budget exhausted, let the model summarize
+        state.append_message({
+            "role": "user",
+            "content": "工具调用预算已用完。请总结当前进度和结果，不要再调用工具。",
+        })
+        try:
+            summary_resp = await self._call_model_with_retry(state.messages, tools=None)
+            state.append_message({
+                "role": "assistant",
+                "content": summary_resp.content,
+            })
+            await self._store.save(thread_id, state)
+        except Exception as e:
+            logger.warning("Grace period summary failed: %s", e)
+
         return state
 
     async def _resume_inner(self, thread_id: str, decision: str) -> AgentState:
@@ -255,65 +415,79 @@ class AgentLoop:
         # Handle the pending tool call
         if decision in ("allow_once", "allow_always"):
             pending_tool = pending.get("tool_name", "exec_command")
+            command_preview = pending.get("command_preview", "")
             memory_keys = pending.get("memory_keys")
 
-            if pending_tool == "memory_delete" and memory_keys:
-                deleted = []
-                try:
-                    from src.tools.memory_tools import get_memory_store
-                    mem_store = get_memory_store()
-                    for k in memory_keys:
-                        await mem_store.forget(k)
-                        deleted.append(k)
-                except Exception as exc:
-                    import logging as _log
-                    _log.getLogger("myclaw.loop").warning("memory_delete resume failed: %s", exc)
-                result_content = json.dumps(
-                    {"ok": True, "deleted": deleted, "count": len(deleted)},
-                    ensure_ascii=False,
-                )
-                state.append_message({
-                    "role": "tool",
-                    "tool_call_id": pending_tc_id,
-                    "content": result_content,
-                })
-                existing_results.add(pending_tc_id)
-            elif pending_tc_id and assistant_msg_idx is not None:
-                assistant_msg = state.messages[assistant_msg_idx]
-                for tc in assistant_msg["tool_calls"]:
-                    if tc.get("id") == pending_tc_id:
-                        result = await self._execute_tool(tc, state, thread_id)
-                        state.append_message({
-                            "role": "tool",
-                            "tool_call_id": tc["id"],
-                            "content": result,
-                        })
-                        break
-                existing_results.add(pending_tc_id)
+            from src.tools.approval import get_approval_manager
+            from src.tools.exec import _current_thread_id
+            try:
+                _approval_mgr = get_approval_manager()
+                _approval_mgr.approve_session(thread_id, pending_tool, command_preview)
+            except Exception:
+                pass
+            _tid_token = _current_thread_id.set(thread_id)
 
-                # Execute any other tool_calls from the same message that lack results
-                for tc in assistant_msg["tool_calls"]:
-                    tc_id = tc.get("id", "")
-                    if tc_id and tc_id not in existing_results:
-                        try:
+            try:
+                if pending_tool == "memory_delete" and memory_keys:
+                    deleted = []
+                    try:
+                        from src.tools.memory_tools import get_memory_store
+                        mem_store = get_memory_store()
+                        for k in memory_keys:
+                            await mem_store.forget(k)
+                            deleted.append(k)
+                    except Exception as exc:
+                        import logging as _log
+                        _log.getLogger("myclaw.loop").warning("memory_delete resume failed: %s", exc)
+                    result_content = json.dumps(
+                        {"ok": True, "deleted": deleted, "count": len(deleted)},
+                        ensure_ascii=False,
+                    )
+                    state.append_message({
+                        "role": "tool",
+                        "tool_call_id": pending_tc_id,
+                        "content": result_content,
+                    })
+                    existing_results.add(pending_tc_id)
+                elif pending_tc_id and assistant_msg_idx is not None:
+                    assistant_msg = state.messages[assistant_msg_idx]
+                    for tc in assistant_msg["tool_calls"]:
+                        if tc.get("id") == pending_tc_id:
                             result = await self._execute_tool(tc, state, thread_id)
-                        except ApprovalPending:
-                            for t in assistant_msg["tool_calls"]:
-                                tid = t.get("id", "")
-                                if tid and tid not in existing_results and tid != tc_id:
-                                    state.append_message({
-                                        "role": "tool",
-                                        "tool_call_id": tid,
-                                        "content": "[skipped] Execution paused due to pending approval.",
-                                    })
-                                    existing_results.add(tid)
-                            raise
-                        state.append_message({
-                            "role": "tool",
-                            "tool_call_id": tc_id,
-                            "content": result,
-                        })
-                        existing_results.add(tc_id)
+                            state.append_message({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": result,
+                            })
+                            break
+                    existing_results.add(pending_tc_id)
+
+                    # Execute any other tool_calls from the same message that lack results
+                    for tc in assistant_msg["tool_calls"]:
+                        tc_id = tc.get("id", "")
+                        if tc_id and tc_id not in existing_results:
+                            try:
+                                result = await self._execute_tool(tc, state, thread_id)
+                            except ApprovalPending:
+                                for t in assistant_msg["tool_calls"]:
+                                    tid = t.get("id", "")
+                                    if tid and tid not in existing_results and tid != tc_id:
+                                        state.append_message({
+                                            "role": "tool",
+                                            "tool_call_id": tid,
+                                            "content": "[skipped] Execution paused due to pending approval.",
+                                        })
+                                        existing_results.add(tid)
+                                await self._store.save(thread_id, state)
+                                raise
+                            state.append_message({
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "content": result,
+                            })
+                            existing_results.add(tc_id)
+            finally:
+                _current_thread_id.reset(_tid_token)
         else:
             if pending_tc_id:
                 pending_tool = pending.get("tool_name", "exec_command")
@@ -351,11 +525,49 @@ class AgentLoop:
             return 50
         return getattr(agents_cfg, "max_tool_rounds", 0) or 50
 
+    async def _call_model_with_retry(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        max_retries: int = 3,
+    ) -> ChatResponse:
+        last_exc: Exception | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                return await self._client.chat(messages, tools=tools)
+            except Exception as e:
+                last_exc = e
+                if attempt >= max_retries:
+                    break
+                err_str = str(e).lower()
+                status = getattr(getattr(e, "status_code", None), "value", getattr(e, "status_code", None))
+                if status in (401, 403) or "auth" in err_str:
+                    raise
+                if "context" in err_str and ("length" in err_str or "token" in err_str or "overflow" in err_str):
+                    if self._compressor is not None:
+                        messages = await self._compressor.compress(messages, self._ctx_window_tokens)
+                        continue
+                    raise
+                if status == 400 and "context" not in err_str:
+                    raise
+                base = 5.0
+                if status == 429 or "rate" in err_str:
+                    base = 10.0
+                elif status in (503, 529) or "overload" in err_str:
+                    base = 15.0
+                delay = min(base * (2 ** attempt) + random.uniform(0, base), 60.0)
+                logger.warning(
+                    "Model API error (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1, max_retries, delay, e,
+                )
+                await asyncio.sleep(delay)
+        raise last_exc
+
     # ------------------------------------------------------------------
     # Message preparation — two modes
     # ------------------------------------------------------------------
 
-    async def _prepare_messages(self, state: AgentState) -> list[dict]:
+    async def _prepare_messages(self, state: AgentState, thread_id: str = "") -> list[dict]:
         """Prepare messages for model call with proactive compression.
 
         hermes-style: check token budget BEFORE calling the model.
@@ -365,10 +577,7 @@ class AgentLoop:
         history = state.messages
 
         # Always truncate large tool outputs (cheap, no LLM)
-        history = self._truncate_large_outputs(history)
-
-        # Validate and fix tool_calls arguments (LongCat returns 200 with empty choices on bad JSON)
-        history = self._fix_tool_calls_args(history)
+        history = self._truncate_large_outputs(history, thread_id)
 
         # Proactive compression check
         if self._compressor is not None and self._compressor.should_compress(history):
@@ -380,38 +589,32 @@ class AgentLoop:
                 history = self._static_fallback(history)
 
         system_text = self._build_system_prompt(state, self._get_active_tool_defs(state))
+        history = self._sanitize_api_messages(history)
+        history = self._sanitize_surrogates(history)
         return [{"role": "system", "content": system_text}] + list(history)
 
-    def _truncate_large_outputs(self, messages: list[dict]) -> list[dict]:
-        """Truncate large tool outputs to keep payload small. Non-destructive."""
+    def _truncate_large_outputs(self, messages: list[dict], thread_id: str = "") -> list[dict]:
+        """Truncate large tool outputs, caching full content to temp files.
+
+        Skips messages already truncated (``_truncated=True``) to keep
+        the truncated text identical across calls — essential for KV cache
+        prefix stability.
+        """
+        from src.agent.tool_cache import cache_large_output
+
         result = []
         for m in messages:
             if m.get("role") == "tool":
+                if m.get("_truncated"):
+                    result.append(m)
+                    continue
                 content = m.get("content", "")
                 if isinstance(content, str) and len(content) > 2000:
-                    result.append({**m, "content": content[:500] + f"\n... [truncated, {len(content)} chars total]"})
+                    truncated, _ = cache_large_output(content, thread_id)
+                    result.append({**m, "content": truncated, "_truncated": True})
                     continue
             result.append(m)
         return result
-
-    def _fix_tool_calls_args(self, messages: list[dict]) -> list[dict]:
-        """Validate tool_calls arguments (data should be fixed at save time).
-
-        Arguments are now repaired in _build_assistant_msg() before saving to DB,
-        so this method only checks for remaining issues (defensive programming).
-        """
-        for m in messages:
-            if m.get("role") == "assistant" and m.get("tool_calls"):
-                for tc in m["tool_calls"]:
-                    fn = tc.get("function", {})
-                    args_str = fn.get("arguments", "")
-                    try:
-                        json.loads(args_str)
-                    except (json.JSONDecodeError, TypeError):
-                        # Should not happen if save-time fix is working
-                        logger.error("Invalid arguments for %s - save-time fix may have a bug",
-                                   fn.get("name", "unknown"))
-        return messages
 
     def _static_fallback(self, messages: list[dict]) -> list[dict]:
         """Emergency static truncation when no compressor is configured."""
@@ -465,6 +668,65 @@ class AgentLoop:
         return [{"role": "system", "content": summary}] + tail_msgs
 
     # ------------------------------------------------------------------
+    # Sanitization helpers
+    # ------------------------------------------------------------------
+
+    def _sanitize_api_messages(self, messages: list[dict]) -> list[dict]:
+        """Fix orphan tool_call/result pairs after compression.
+
+        1. If a tool_call has no matching tool result → insert stub result
+        2. If a tool result has no matching tool_call → remove it
+        """
+        tc_ids: list[str] = []
+        for m in messages:
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                for tc in m["tool_calls"]:
+                    tid = tc.get("id", "")
+                    if tid:
+                        tc_ids.append(tid)
+
+        result_ids: set[str] = set()
+        result_indices: list[int] = []
+        for i, m in enumerate(messages):
+            if m.get("role") == "tool":
+                tid = m.get("tool_call_id", "")
+                result_ids.add(tid)
+                result_indices.append(i)
+
+        sanitized = list(messages)
+
+        for tid in tc_ids:
+            if tid not in result_ids:
+                stub = {"role": "tool", "tool_call_id": tid, "content": "[result removed by compression]"}
+                sanitized.append(stub)
+
+        for i in reversed(result_indices):
+            tid = messages[i].get("tool_call_id", "")
+            if tid not in tc_ids:
+                sanitized.pop(i)
+
+        for m in sanitized:
+            m.pop("_truncated", None)
+
+        return sanitized
+
+    def _sanitize_surrogates(self, messages: list[dict]) -> list[dict]:
+        """Remove lone surrogate characters (U+D800-U+DFFF) that crash json.dumps.
+
+        Ollama and some local models emit lone surrogates.
+        """
+        def _clean(obj: Any) -> Any:
+            if isinstance(obj, str):
+                return _SURROGATE_RE.sub("\ufffd", obj)
+            if isinstance(obj, dict):
+                return {k: _clean(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_clean(v) for v in obj]
+            return obj
+
+        return _clean(messages)
+
+    # ------------------------------------------------------------------
     # Tool handling
     # ------------------------------------------------------------------
 
@@ -511,18 +773,14 @@ class AgentLoop:
         return None
 
     def _build_system_prompt(self, state: AgentState, active_tools: list[ToolDef]) -> str:
-        """Build static system prompt (cached for KV prefix cache stability)."""
-        if not self._static_system_built:
-            from src.prompt import build_system_prompt
-            self._static_system_prompt = build_system_prompt(
-                config=self._config,
-                tools=active_tools,
-                skills_prompt=self._skills_prompt,
-                context_files=self._context_files,
-                extra_system_prompt=state.system_prompt,
-            )
-            self._static_system_built = True
-        return self._static_system_prompt
+        from src.prompt import build_system_prompt
+        return build_system_prompt(
+            config=self._config,
+            tools=active_tools,
+            skills_prompt=self._skills_prompt,
+            context_files=self._context_files,
+            extra_system_prompt=state.system_prompt,
+        )
 
     def _build_assistant_msg(self, response: ChatResponse) -> dict:
         msg: dict[str, Any] = {"role": "assistant", "content": response.content}
@@ -530,26 +788,15 @@ class AgentLoop:
             fixed_calls = []
             for tc in response.tool_calls:
                 args_str = tc.function.arguments
-                # Fix truncated JSON before saving to DB
-                try:
-                    json.loads(args_str)
-                except (json.JSONDecodeError, TypeError):
-                    if args_str and args_str[-1] not in ("}", "]"):
-                        try:
-                            json.loads(args_str + "}")
-                            args_str = args_str + "}"
-                            logger.warning("Fixed truncated arguments for %s", tc.function.name)
-                        except (json.JSONDecodeError, TypeError):
-                            args_str = "{}"
-                    else:
-                        args_str = "{}"
-
+                repaired = _repair_tool_args(args_str)
+                if repaired != args_str:
+                    logger.warning("Repaired arguments for %s", tc.function.name)
                 fixed_calls.append({
                     "id": tc.id,
                     "type": "function",
                     "function": {
                         "name": tc.function.name,
-                        "arguments": args_str,
+                        "arguments": repaired,
                     },
                 })
             msg["tool_calls"] = fixed_calls
@@ -587,6 +834,10 @@ class AgentLoop:
         if tool_def is None:
             return f"[error] Unknown tool: {tool_name}"
 
+        guard = self._guardrails.check(tool_name, args)
+        if guard is not None:
+            return guard.synthetic_result
+
         import time as _time
         start = _time.monotonic()
         args_preview = json.dumps(args, ensure_ascii=False)[:200] if args else ""
@@ -607,6 +858,7 @@ class AgentLoop:
                 result = redact(result)
             except Exception:
                 pass
+            self._guardrails.record(tool_name, args, success=True, result=result if isinstance(result, str) else "")
 
             await emit_async(
                 "tool.exec_completed",
@@ -634,6 +886,7 @@ class AgentLoop:
                 )
                 return await self._handle_approval(e, tc, state, thread_id)
             logger.error("Tool %s failed: %s", tool_name, e)
+            self._guardrails.record(tool_name, args, success=False)
 
             await emit_async(
                 "tool.exec_failed",
@@ -648,6 +901,67 @@ class AgentLoop:
                 channel=getattr(state, 'channel', ''),
             )
             return f"[error] {type(e).__name__}: {e}"
+
+    def _should_parallelize(self, tool_calls: list[Any]) -> bool:
+        if len(tool_calls) <= 1:
+            return False
+        for tc in tool_calls:
+            name = tc.function.name if hasattr(tc, "function") else tc.get("function", {}).get("name", "")
+            if name not in _PARALLEL_SAFE_TOOLS:
+                return False
+        paths: list[str] = []
+        for tc in tool_calls:
+            name = tc.function.name if hasattr(tc, "function") else tc.get("function", {}).get("name", "")
+            if name not in _PATH_SCOPED_TOOLS:
+                continue
+            try:
+                args_str = tc.function.arguments if hasattr(tc, "function") else tc.get("function", {}).get("arguments", "")
+                args = json.loads(args_str) if args_str else {}
+                p = args.get("path", args.get("file_path", args.get("directory", "")))
+                if p:
+                    paths.append(str(p).lower().rstrip("/\\"))
+            except (json.JSONDecodeError, TypeError):
+                return False
+        if paths and len(paths) > 1:
+            seen: set[str] = set()
+            for p in paths:
+                for s in seen:
+                    if p.startswith(s) or s.startswith(p):
+                        return False
+                seen.add(p)
+        return True
+
+    async def _execute_tools_parallel(self, tool_calls: list[Any], state: AgentState, thread_id: str) -> list[tuple[str, str]]:
+        results: list[tuple[str, str] | BaseException] = [NotImplemented] * len(tool_calls)
+
+        async def _run_one(idx: int, tc: Any) -> None:
+            tc_id = tc.id if hasattr(tc, "id") else tc.get("id", "")
+            try:
+                result = await self._execute_tool(tc, state, thread_id)
+                results[idx] = (tc_id, result)
+            except BaseException as exc:
+                results[idx] = exc
+
+        tasks = [asyncio.create_task(_run_one(i, tc)) for i, tc in enumerate(tool_calls)]
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        final: list[tuple[str, str]] = []
+        for i, r in enumerate(results):
+            tc_id = tool_calls[i].id if hasattr(tool_calls[i], "id") else tool_calls[i].get("id", "")
+            if isinstance(r, ApprovalPending):
+                for j in range(i + 1, len(results)):
+                    if results[j] is NotImplemented:
+                        tc_j = tool_calls[j]
+                        tc_j_id = tc_j.id if hasattr(tc_j, "id") else tc_j.get("id", "")
+                        final.append((tc_j_id, "[skipped] Execution paused due to pending approval."))
+                    elif not isinstance(results[j], BaseException):
+                        final.append(results[j])
+                raise r
+            if isinstance(r, BaseException):
+                final.append((tc_id, f"[error] {type(r).__name__}: {r}"))
+            else:
+                final.append(r)
+        return final
 
     async def _handle_approval(self, error: Exception, tc: Any, state: AgentState, thread_id: str) -> str:
         """Handle approval-needed error by saving state and raising ApprovalPending."""

@@ -142,6 +142,7 @@ class ServiceContainer:
             "src.tools.tts_tools",
             "src.tools.memory_tools",
             "src.tools.task_tools",
+            "src.tools.mcp_tools",
             "src.memory.memory_sync",
             "src.skills.manager",
             "src.skills.curator",
@@ -191,13 +192,20 @@ class ServiceContainer:
             self.plugin_registry.register_plugin(record)
         logger.info("Plugins: %d loaded, %d tools", self.plugin_registry.plugin_count, self.plugin_registry.tool_count)
 
-    def _setup_mcp(self):
-        if not (getattr(self.config, "mcp", None) and self.config.mcp.enabled and self.config.mcp.servers is not None):
-            return
+    async def _setup_mcp(self):
         from src.mcp.manager import MCPManager
         self.mcp_manager = MCPManager()
-        self.mcp_manager.load_config(self.config.mcp.servers)
-        logger.info("MCP: %d servers configured", len(self.config.mcp.servers))
+        if getattr(self.config, "mcp", None) and self.config.mcp.enabled and self.config.mcp.servers:
+            self.mcp_manager.load_config(self.config.mcp.servers)
+            logger.info("MCP: %d servers configured", len(self.config.mcp.servers))
+            # Eagerly connect all servers so tools are available at startup
+            for name in list(self.config.mcp.servers):
+                try:
+                    await self.mcp_manager.ensure_connected(name)
+                except Exception as e:
+                    logger.warning("MCP server '%s' failed at startup: %s", name, e)
+        else:
+            logger.info("MCP: manager initialized, no servers configured")
 
     def _setup_agents(self):
         if not self.config.agents.subagents:
@@ -369,7 +377,7 @@ class ServiceContainer:
 
         # Phase 1: independent subsystems
         self._setup_plugins()
-        self._setup_mcp()
+        await self._setup_mcp()
         self._setup_agents()
         await self._setup_memory()
         self._setup_auth()

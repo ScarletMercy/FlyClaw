@@ -83,7 +83,7 @@ class AgentConfig(BaseModel):
     subagent_max_depth: int = 2  # Max nesting depth for sub-agent calls
     timezone: str = "Asia/Shanghai"
     language: Literal["zh", "en"] = "zh"
-    tool_progress_notifications: bool = True
+    tool_progress_notifications: bool = False
     bootstrap_files: list[str] = Field(
         default_factory=lambda: ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md"]
     )
@@ -356,11 +356,8 @@ class SessionSearchConfig(BaseModel):
 
 
 class CompressionConfig(BaseModel):
-    """LLM-based context compression configuration."""
+    """Context compression configuration."""
     enabled: bool = True
-    model: str = ""  # Empty = use LongCat-Flash-Lite
-    base_url: str = ""  # Empty = inherit from main model
-    api_key: str = ""  # Empty = inherit from main model
     threshold_percent: float = 0.7
     tail_messages: int = 10
     max_summary_tokens: int = 2000

@@ -1043,6 +1043,30 @@ def register_builtin_commands(dispatcher, container, tools, skills):
 
     dispatcher.register_builtin("auto", cmd_auto)
 
+    async def cmd_interrupt(args: str, ctx: dict) -> str:
+        zh = container.config.agents.language == "zh"
+        thread_id = ctx.get("thread_id", "")
+        flag = container.state_store.get_interrupt_flag(thread_id)
+        msg = args.strip() if args.strip() else None
+        flag.interrupt(msg)
+        if zh:
+            return "⚡ 已发送中断信号" + (f"，附带消息: {msg[:80]}" if msg else "")
+        return "⚡ Interrupt signal sent" + (f", message: {msg[:80]}" if msg else "")
+
+    dispatcher.register_builtin("interrupt", cmd_interrupt)
+
+    async def cmd_steer(args: str, ctx: dict) -> str:
+        zh = container.config.agents.language == "zh"
+        thread_id = ctx.get("thread_id", "")
+        flag = container.state_store.get_interrupt_flag(thread_id)
+        if flag.steer(args):
+            return "📡 引导消息已发送" if zh else "📡 Steer message sent"
+        if zh:
+            return "引导消息为空或 agent 正在中断中"
+        return "Steer text empty or agent is interrupting"
+
+    dispatcher.register_builtin("steer", cmd_steer)
+
     if container.config.auth.enabled and container.rbac:
         register_auth_commands(dispatcher, container)
 

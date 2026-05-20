@@ -17,6 +17,7 @@ def _make_container():
     container = MagicMock()
     container.config = AppConfig()
     container.agent_loop = AsyncMock()
+    container.agent_loop.is_thread_busy = MagicMock(return_value=False)
     container.state_store = MemoryStateStore()
     container.session_tracker = MagicMock()
     container.session_tracker.touch = MagicMock()

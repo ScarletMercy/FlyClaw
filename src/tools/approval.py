@@ -44,6 +44,7 @@ class ApprovalManager:
         self._data_dir = Path(data_dir).expanduser().resolve()
         self._pending: dict[str, _PendingApproval] = {}
         self._durable: dict[str, list[str]] = {}
+        self._session_approved: dict[str, set[str]] = {}
         self._durable_path = self._data_dir / "approvals.json"
         self._load_durable()
 
@@ -96,6 +97,18 @@ class ApprovalManager:
         digest = self._make_digest(tool_name, args[:200])
         entries = self._durable.get(tool_name, [])
         return digest in entries
+
+    def approve_session(self, thread_id: str, tool_name: str, args: str):
+        digest = self._make_digest(tool_name, args[:200])
+        self._session_approved.setdefault(thread_id, set()).add(digest)
+        logger.info("Session approval granted for %s in thread %s", tool_name, thread_id)
+
+    def has_session_approval(self, thread_id: str, tool_name: str, args: str) -> bool:
+        digest = self._make_digest(tool_name, args[:200])
+        return digest in self._session_approved.get(thread_id, set())
+
+    def clear_session(self, thread_id: str):
+        self._session_approved.pop(thread_id, None)
 
     def request_approval(
         self,

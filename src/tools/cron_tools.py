@@ -66,13 +66,19 @@ async def cron_add(
     Args:
         name: Job name (e.g. "daily_summary")
         message: The prompt to send to the agent when the job runs
-        schedule_kind: "cron" (cron expression), "every" (interval in seconds), or "at" (one-shot ISO datetime)
+        schedule_kind: "cron" (recurring cron expression), "every" (interval in seconds), or "at" (one-shot datetime)
         cron_expr: Cron expression like "0 9 * * 1-5" (required if schedule_kind="cron")
         every_seconds: Interval in seconds (required if schedule_kind="every")
         run_at: ISO datetime string like "2026-04-18 11:12:00" (required if schedule_kind="at")
         enabled: Whether the job is active
         description: Optional description
         depends_on: Comma-separated job IDs this job depends on (must all succeed before this job runs)
+
+    Note:
+        - schedule_kind="at" creates a ONE-SHOT job that auto-deletes after execution.
+          Use this for one-time tasks (e.g. "2026-05-19 23:12:00").
+        - schedule_kind="cron" creates RECURRING jobs that never auto-delete.
+          Do NOT use cron for one-time tasks.
     """
     svc = _get_service()
     if not svc:

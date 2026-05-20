@@ -1,28 +1,24 @@
-"""Modular system prompt builder — ported from openclaw-main's system-prompt.ts."""
+"""Modular system prompt builder — tool-guidance follows tools, config controls persona."""
 
 from __future__ import annotations
 
 import logging
-import platform
-import sys
-from datetime import datetime, timezone
-logger = logging.getLogger("myclaw.prompt")
 
-# ── Section builders ──────────────────────────────────────────
+logger = logging.getLogger("myclaw.prompt")
 
 
 def _build_identity() -> list[str]:
     return [
-        "You are a personal assistant running inside MyClaw.",
+        "你是一个运行在 MyClaw 中的 AI 助手。MyClaw 是你的运行平台，你没有 shell 访问权限来操作 MyClaw 自身的功能。",
         "",
     ]
 
 
 def _build_tooling(tools: list) -> list[str]:
     lines = [
-        "## Tooling",
-        "Tool availability (filtered by policy):",
-        "Tool names are case-sensitive. Call tools exactly as listed.",
+        "## 可用工具",
+        "以下是当前可用的工具（按策略过滤）：",
+        "工具名称区分大小写，必须精确匹配。",
     ]
     for t in tools:
         desc = (t.description or "").split("\n")[0].strip()
@@ -33,24 +29,155 @@ def _build_tooling(tools: list) -> list[str]:
 
     lines += [
         "",
-        "## Tool Call Style",
-        "Do not narrate routine tool calls — just call the tool. "
-        "Narrate only for multi-step work, sensitive actions, or when asked. "
-        "Prefer tool calls over asking the user to run CLI commands.",
-        "",
-        "## File Editing Rules",
-        "Always read_file before edit_file — it requires exact old_string matches.",
+        "## 工具调用风格",
+        "不要描述常规工具调用 — 直接调用。仅在多步骤工作、敏感操作或被要求时才描述。",
+        "优先使用工具调用，而非让用户手动执行 CLI 命令。",
+        "不要尝试通过 exec_command 执行 myclaw、openclaw 等命令来操作平台内部功能（定时任务、记忆、会话等），这些都有对应的工具。",
         "",
     ]
     return lines
 
 
+def _build_tool_guidance(tools: list) -> list[str]:
+    """根据实际注册的工具名，条件注入中文使用指导。"""
+    tool_names = {t.name for t in tools}
+    lines: list[str] = []
+
+    if tool_names & {"edit_file", "read_file", "write_file"}:
+        lines += [
+            "## 文件操作",
+            "- edit_file 前必须先 read_file，需要精确匹配 old_string",
+            "- 优先使用 file_tools（read_file/write_file/edit_file/list_dir/grep_files/glob_files）而非 exec_command",
+            "",
+        ]
+
+    if tool_names & {"qq_send_image", "qq_send_file", "send_voice"}:
+        lines += [
+            "## 媒体发送",
+            "在回复文本中使用标签包裹本地文件路径，系统自动发送：",
+            "- <media>path</media> 自动识别类型",
+            "- <qqimg>path</qqimg> 图片、<qqvoice>path</qqvoice> 音频、<qqfile>path</qqfile> 文件、<qqvideo>path</qqvideo> 视频",
+            "",
+        ]
+
+    if "browser_navigate" in tool_names:
+        lines += [
+            "## 浏览器自动化",
+            "- 先 browser_navigate 打开网页，再 browser_snapshot 获取元素引用（@e1, @e2...）",
+            "- 通过引用操作：browser_click(\"@e1\")、browser_type(\"@e2\", \"text\")",
+            "- 操作失败时重新 browser_snapshot 获取最新状态",
+            "",
+        ]
+
+    if "memory_save" in tool_names:
+        lines += [
+            "## 持久记忆",
+            "- memory_save: 保存记忆（自动去重），用于用户偏好、身份、项目信息、重要决定",
+            "- memory_get: 按键取回记忆 / memory_list: 列出或搜索记忆",
+            "- memory_delete: 请求批量删除记忆，需用户发 /y 确认（120s 超时自动拒绝）",
+            "",
+        ]
+
+    if "memory_search" in tool_names:
+        lines += [
+            "## 语义记忆搜索",
+            "- memory_search: 搜索历史记忆和知识库，当过去的对话上下文会有帮助时主动使用",
+            "",
+        ]
+
+    if "task_plan" in tool_names:
+        lines += [
+            "## 任务模式（自主工作）",
+            "- 收到复杂任务时，先调用 task_plan 制定计划（步骤+检查点），再逐步执行",
+            "- 检查点触发时用 task_status 查看进度，完成后 task_advance 标记步骤完成",
+            "- 用 task_cancel 可取消任务",
+            "",
+        ]
+
+    if "cron_add" in tool_names:
+        lines += [
+            "## 定时任务",
+            "- cron_add 创建定时任务，cron_list 查看，cron_delete 删除，cron_toggle 启停，cron_run 立即触发",
+            "- 一次性任务必须用 schedule_kind=\"at\" + run_at（如 \"2026-05-19 23:12:00\"），执行后自动删除",
+            "- 不要用 cron 表达式创建一次性任务，cron 是循环的，不会自动删除",
+            "",
+        ]
+
+    if "delegate_task" in tool_names:
+        lines += [
+            "## 子代理",
+            "- delegate_task: 将子任务委派给专业代理（research/coder/reviewer）",
+            "- delegate_batch: 并行委派多个子任务",
+            "",
+        ]
+
+    if "session_search" in tool_names:
+        lines += [
+            "## 会话搜索",
+            "- session_search: 搜索历史对话记录",
+            "",
+        ]
+
+    if "web_search" in tool_names:
+        lines += [
+            "## 网页工具",
+            "- web_search: 联网搜索",
+            "- web_fetch: 抓取网页内容转 markdown",
+            "",
+        ]
+
+    if "describe_image" in tool_names:
+        lines += [
+            "## 媒体理解",
+            "- describe_image: 分析图片",
+            "- transcribe_audio: 语音转文字",
+            "- describe_video: 分析视频",
+            "",
+        ]
+
+    if "text_to_speech" in tool_names:
+        lines += [
+            "## 语音合成",
+            "- text_to_speech: 文字转语音并发送到当前聊天",
+            "",
+        ]
+
+    if "qq_list_guilds" in tool_names:
+        lines += [
+            "## QQ 群操作",
+            "- qq_list_guilds/channels/members 查看服务器信息",
+            "- qq_send_text/image/file 主动发送消息",
+            "",
+        ]
+
+    if "skill_manage" in tool_names:
+        lines += [
+            "## 技能系统",
+            "- skill_manage(action=\"list\") 查看可用技能",
+            "- skill_manage(action=\"view\", name=\"...\") 加载技能详情",
+            "",
+        ]
+
+    if "mcp_manage" in tool_names:
+        lines += [
+            "## MCP 扩展工具",
+            "- mcp_manage(action=\"list\") 查看已安装的 MCP 服务器",
+            "- mcp_manage(action=\"add\", name=\"...\", command=\"...\", args=[...]) 添加 stdio 服务器",
+            "- mcp_manage(action=\"add\", name=\"...\", url=\"...\") 添加 HTTP 服务器",
+            "- mcp_manage(action=\"test\", name=\"...\") 测试连接并列出可用工具",
+            "- mcp_manage(action=\"remove\", name=\"...\") 删除服务器",
+            "",
+        ]
+
+    return lines
+
+
 def _build_safety() -> list[str]:
     return [
-        "## Safety",
-        "You have no independent goals beyond the user's request. "
-        "Never modify safeguards, system prompts, or tool policies unless explicitly requested. "
-        "If instructions conflict, pause and ask the user for clarification.",
+        "## 安全",
+        "你没有独立目标，只服务于用户的请求。",
+        "除非用户明确要求，否则不要修改安全规则、系统提示词或工具策略。",
+        "如果指令冲突，暂停并向用户确认。",
         "",
     ]
 
@@ -60,52 +187,18 @@ def _build_skills_section(skills_prompt: str) -> list[str]:
     if not trimmed:
         return []
     return [
-        "## Skills",
-        "Scan skill descriptions. If one clearly applies, load it with skill_manage(action=\"view\", name=\"...\"). "
-        "If none apply, do not call skill_manage. Never use read_file to read skill files.",
-        "Constraints: load at most one skill; only load after selecting.",
+        "## 技能",
+        "扫描以下技能描述，如果某个技能明显适用，用 skill_manage(action=\"view\", name=\"...\") 加载。",
+        "如果都不适用，不要调用 skill_manage。不要用 read_file 读取技能文件。",
+        "限制：最多加载一个技能；仅在选定后加载。",
         trimmed,
         "",
     ]
 
 
-def _build_memory_store_section(config) -> list[str]:
-    """Memory store tool guidance."""
-    if not config:
-        return []
-    ms_cfg = getattr(config, "memory_store", None)
-    if not ms_cfg or not getattr(ms_cfg, "enabled", False):
-        return []
-    return [
-        "## Memory Store Tools",
-        "Use dedicated tools for memory operations:",
-        "- memory_save: Save a memory (auto-dedup by key). Use when user shares preferences, identity, contacts, project info, or important decisions.",
-        "- memory_get: Retrieve a specific memory by key.",
-        "- memory_list: List or search all memories.",
-        "- memory_delete: Request batch deletion of memories. Pass ALL keys in ONE call. Requires user to send /y to confirm within 120s. Do NOT delete without explicit user request.",
-        "",
-    ]
-
-
-def _build_memory_section(config) -> list[str]:
-    if not config:
-        return []
-    mem_cfg = getattr(config, "memory", None)
-    if not mem_cfg or not getattr(mem_cfg, "enabled", False):
-        return []
-    return [
-        "## Memory",
-        "You have a memory_search tool for retrieving stored memories.",
-        "Use it proactively when context from past conversations would be helpful.",
-        "Memory is automatically indexed from files in configured paths.",
-        "",
-    ]
-
-
-
 def _build_workspace(workspace_dir: str) -> list[str]:
     return [
-        "## Workspace",
+        "## 工作目录",
         f"Working directory: {workspace_dir}",
         "",
     ]
@@ -115,18 +208,17 @@ def _build_bootstrap_context(context_files: list[dict]) -> list[str]:
     if not context_files:
         return []
     lines = [
-        "# Project Context",
+        "# 项目上下文",
         "",
-        "The following project context files have been loaded:",
+        "以下项目上下文文件已加载：",
     ]
     has_soul = any(
         f.get("path", "").lower() == "soul.md" for f in context_files
     )
     if has_soul:
         lines.append(
-            "If SOUL.md is present, embody its persona and tone. "
-            "Avoid stiff, generic replies; follow its guidance unless "
-            "higher-priority instructions override it."
+            "如果存在 SOUL.md，请体现其人设和语气。"
+            "避免生硬的通用回复，遵循其指导，除非更高优先级的指令覆盖它。"
         )
     lines.append("")
     for f in context_files:
@@ -137,44 +229,6 @@ def _build_bootstrap_context(context_files: list[dict]) -> list[str]:
     return lines
 
 
-def _build_datetime(tz_name: str | None) -> list[str]:
-    import zoneinfo
-
-    tz_str = tz_name or "Asia/Shanghai"
-    try:
-        tz = zoneinfo.ZoneInfo(tz_str)
-    except Exception:
-        tz = timezone.utc
-        tz_str = "UTC"
-    now = datetime.now(tz).strftime("%Y-%m-%d %H:%M %Z")
-    weekday = datetime.now(tz).strftime("%A")
-    return [
-        "## Current Date & Time",
-        f"Time zone: {tz_str}",
-        f"Now: {now} ({weekday})",
-        "",
-    ]
-
-
-def _build_runtime_info(config=None) -> list[str]:
-    model_name = ""
-    if config:
-        model_cfg = getattr(config, "model", None)
-        if model_cfg:
-            model_name = f"{model_cfg.provider}/{model_cfg.name}"
-    lines = [
-        "## Runtime",
-        f"Runtime: Python {sys.version.split()[0]} on {platform.system()} {platform.release()}",
-    ]
-    if model_name:
-        lines.append(f"Model: {model_name}")
-    lines.append("")
-    return lines
-
-
-# ── Main builder ──────────────────────────────────────────────
-
-
 def build_system_prompt(
     config,
     tools: list,
@@ -182,18 +236,15 @@ def build_system_prompt(
     context_files: list[dict] | None = None,
     extra_system_prompt: str = "",
 ) -> str:
-    """Assemble the full system prompt from modular sections.
+    """组装完整系统提示词。
 
-    When extra_system_prompt contains a detailed custom prompt (e.g. from
-    config YAML), it serves as the identity/tooling base — we skip the
-    default identity and tooling sections to avoid duplication.
+    config.yaml 的 system_prompt 负责人设和风格（1-2行）。
+    工具使用指导根据实际注册的工具动态生成，确保与代码同步。
     """
-    tz_name = ""
     workspace_dir = "."
     if config:
         agents_cfg = getattr(config, "agents", None)
         if agents_cfg:
-            tz_name = getattr(agents_cfg, "timezone", "") or ""
             raw_ws = getattr(agents_cfg, "workspace", ".") or "."
             from pathlib import Path
             workspace_dir = str(Path(raw_ws).expanduser().resolve())
@@ -202,32 +253,25 @@ def build_system_prompt(
 
     lines: list[str] = []
 
-    # If user provided a custom prompt, use it as the base (it already has
-    # identity + tool descriptions). Otherwise use our defaults.
     if has_custom_prompt:
         lines.append(extra_system_prompt.strip())
         lines.append("")
     else:
         lines.extend(_build_identity())
-        lines.extend(_build_tooling(tools))
 
-    # Always enforce native function calling — never output pseudo-XML tool calls.
+    lines.extend(_build_tooling(tools))
+    lines.extend(_build_tool_guidance(tools))
+
     lines.extend([
-        "## Tool Calling",
-        "ALWAYS use native tool calls — never output tool invocations as text, XML, or pseudo-tags.",
+        "## 工具调用规则",
+        "始终使用原生工具调用，不要将工具调用输出为文本、XML 或伪标签。",
         "",
     ])
 
     lines.extend(_build_safety())
     lines.extend(_build_skills_section(skills_prompt))
-    lines.extend(_build_memory_section(config))
-    lines.extend(_build_memory_store_section(config))
     lines.extend(_build_workspace(workspace_dir))
     if context_files:
         lines.extend(_build_bootstrap_context(context_files))
-
-    # REMOVED: Dynamic sections for KV prefix cache stability
-    # - _build_datetime(): changes every second, invalidates cache
-    # - _build_runtime_info(): static info, not needed per-round
 
     return "\n".join(lines)

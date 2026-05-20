@@ -9,10 +9,13 @@ import asyncio
 import json
 import logging
 import sqlite3
+import threading
 import time
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
+
+from src.agent.interrupt import InterruptFlag
 
 logger = logging.getLogger("myclaw.agent.state")
 
@@ -93,6 +96,7 @@ class StateStore:
         self._db: sqlite3.Connection | None = None
         self._locks: dict[str, asyncio.Lock] = {}
         self._locks_lock = asyncio.Lock()
+        self._interrupt_flags = InterruptFlagStore()
         from pathlib import Path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
@@ -188,11 +192,46 @@ class StateStore:
             self._db.close()
             self._db = None
 
+    def get_interrupt_flag(self, thread_id: str) -> InterruptFlag:
+        return self._interrupt_flags.get_flag(thread_id)
+
+    def clear_interrupt_flag(self, thread_id: str) -> None:
+        self._interrupt_flags.clear_flag(thread_id)
+
 
 class MemoryStateStore(StateStore):
     def __init__(self):
         self._db_path = ":memory:"
         self._locks: dict[str, asyncio.Lock] = {}
         self._locks_lock = asyncio.Lock()
+        self._interrupt_flags = InterruptFlagStore()
         self._db: sqlite3.Connection | None = None
         self._init_db()
+
+
+_MAX_FLAGS = 4096
+
+
+class InterruptFlagStore:
+    """Manages per-thread InterruptFlag instances with LRU cleanup."""
+
+    def __init__(self) -> None:
+        self._flags: dict[str, InterruptFlag] = {}
+        self._lock = threading.Lock()
+
+    def get_flag(self, thread_id: str) -> InterruptFlag:
+        with self._lock:
+            if thread_id not in self._flags:
+                if len(self._flags) > _MAX_FLAGS:
+                    to_remove = [
+                        tid for tid, flag in self._flags.items()
+                        if not flag.check()[0] and flag.drain_steer() is None
+                    ]
+                    for tid in to_remove[:len(self._flags) - _MAX_FLAGS // 2]:
+                        del self._flags[tid]
+                self._flags[thread_id] = InterruptFlag()
+            return self._flags[thread_id]
+
+    def clear_flag(self, thread_id: str) -> None:
+        with self._lock:
+            self._flags.pop(thread_id, None)

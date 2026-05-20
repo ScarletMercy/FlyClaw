@@ -6,11 +6,14 @@ import json
 import logging
 import threading
 import time
+from contextvars import ContextVar
 from typing import Optional
 
 from src.tools.exceptions import ToolExecutionError
 
 logger = logging.getLogger("myclaw.exec")
+
+_current_thread_id: ContextVar[str] = ContextVar("_current_thread_id", default="")
 
 _cached_config = None
 
@@ -390,8 +393,9 @@ async def exec_command(
 
         mgr = get_approval_manager()
         if not mgr.has_durable_approval("exec_command", command):
-            logger.info("[exec-audit] Delete operation requires approval ('%s'): %.200s", delete_pattern, command)
-            raise ApprovalNeededError(command, False, timeout=30, auto_deny=True)
+            if not mgr.has_session_approval(_current_thread_id.get(""), "exec_command", command):
+                logger.info("[exec-audit] Delete operation requires approval ('%s'): %.200s", delete_pattern, command)
+                raise ApprovalNeededError(command, False, timeout=30, auto_deny=True)
 
     bypass, bypass_detail = _has_shell_bypass(command)
     if bypass and approval_mode == "off":
@@ -410,8 +414,9 @@ async def exec_command(
 
         mgr = get_approval_manager()
         if not mgr.has_durable_approval("exec_command", command):
-            logger.info("[exec-audit] Shell bypass detected ('%s'), requiring approval: %.200s", bypass_detail, command)
-            raise ApprovalNeededError(command, False)
+            if not mgr.has_session_approval(_current_thread_id.get(""), "exec_command", command):
+                logger.info("[exec-audit] Shell bypass detected ('%s'), requiring approval: %.200s", bypass_detail, command)
+                raise ApprovalNeededError(command, False)
 
     if approval_mode != "off":
         from src.tools.approval import get_approval_manager
@@ -419,7 +424,8 @@ async def exec_command(
         mgr = get_approval_manager()
         needs = mgr.needs_approval("exec_command", command, approval_mode, blocked)
         if needs and not mgr.has_durable_approval("exec_command", command):
-            raise ApprovalNeededError(command, blocked)
+            if not mgr.has_session_approval(_current_thread_id.get(""), "exec_command", command):
+                raise ApprovalNeededError(command, blocked)
 
     sem = _get_semaphore(max_concurrent)
     if sem.locked():

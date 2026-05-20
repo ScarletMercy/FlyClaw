@@ -70,6 +70,7 @@ _SILENT_TOOLS = frozenset({
 class MessageHandler:
     def __init__(self, container):
         self._container = container
+        self._approval_handler_threads: set[str] = set()
 
     @staticmethod
     def _resolve_session_key(sender_id: str, chat_type: str, chat_id: str, scope: str) -> str:
@@ -112,6 +113,22 @@ class MessageHandler:
 
             self._container.session_tracker.touch(thread_id)
 
+            from src.tools.exec import _current_thread_id
+            _tid_token = _current_thread_id.set(thread_id)
+            try:
+                await _on_message_inner(
+                    text, sender_id, chat_id, chat_type, message_id,
+                    reply_fn, stream_fn, thread_id, is_command, channel_prefix,
+                    session_scope, legacy_thread_id, session_key,
+                )
+            finally:
+                _current_thread_id.reset(_tid_token)
+
+        async def _on_message_inner(
+                text, sender_id, chat_id, chat_type, message_id,
+                reply_fn, stream_fn, thread_id, is_command, channel_prefix,
+                session_scope, legacy_thread_id, session_key,
+        ):
             if channel_prefix == "qq" and text.strip().lower() in ("yes", "no", "/y", "/n"):
                 from src.tools.approval import get_approval_manager
                 mgr = get_approval_manager()
@@ -126,7 +143,8 @@ class MessageHandler:
                             await reply_fn("✅ 已确认删除记忆" if decision == "allow_once" else "❌ 已取消删除记忆")
                         else:
                             await reply_fn(f"Approval {'granted' if decision == 'allow_once' else 'denied'}.")
-                        asyncio.create_task(self._resume_and_reply(req.thread_id, decision, chat_id))
+                        if req.thread_id not in self._approval_handler_threads:
+                            asyncio.create_task(self._resume_and_reply(req.thread_id, decision, chat_id))
                         return
 
             cmd_match = self._container.dispatcher.match(text)
@@ -184,6 +202,14 @@ class MessageHandler:
                     await reply_fn("⏳ 有待审批的操作，请先回复审批后再发新消息。")
                     return
                 input_state.messages = existing.messages + input_state.messages
+
+            # Auto-interrupt if agent is currently running on this thread
+            if self._container.agent_loop.is_thread_busy(thread_id):
+                flag = self._container.state_store.get_interrupt_flag(thread_id)
+                flag.interrupt(text)
+                zh = self._container.config.agents.language == "zh"
+                await reply_fn("⚡ 已中断当前任务，正在处理你的新消息..." if zh else "⚡ Interrupted current task, processing your message...")
+                return
 
             assistant_text = None
             identity_written = False
@@ -275,6 +301,32 @@ class MessageHandler:
                     if msg.get("role") == "assistant" and msg.get("content"):
                         assistant_text = msg["content"].lstrip("\n")
                         break
+
+                # Send intermediate assistant messages (non-empty content,
+                # skipping pure tool_calls wrappers).  The final message is
+                # sent later with full formatting + media delivery.
+                _final_msg = None
+                for m in reversed(messages):
+                    if m.get("role") == "assistant" and (m.get("content") or "").strip():
+                        _final_msg = m
+                        break
+                _sent_hashes: set[int] = set()
+                for msg in messages[pre_msg_count:]:
+                    if msg.get("role") != "assistant":
+                        continue
+                    content = (msg.get("content") or "").strip()
+                    if not content:
+                        continue
+                    if msg is _final_msg:
+                        continue
+                    h = hash(content)
+                    if h in _sent_hashes:
+                        continue
+                    _sent_hashes.add(h)
+                    try:
+                        await reply_fn(_format_display(content))
+                    except Exception:
+                        pass
 
                 for msg in messages[pre_msg_count:]:
                     if msg.get("role") != "tool":
@@ -401,6 +453,8 @@ class MessageHandler:
         from src.tools.approval import get_approval_manager
         from src.agent.loop import ApprovalPending
 
+        thread_id = exc.thread_id
+        self._approval_handler_threads.add(thread_id)
         try:
             mgr = get_approval_manager()
             zh = self._container.config.agents.language == "zh"
@@ -473,6 +527,8 @@ class MessageHandler:
                     logger.info("Cleared orphaned pending_approval for thread %s", exc.thread_id)
             except Exception:
                 pass
+        finally:
+            self._approval_handler_threads.discard(thread_id)
 
     async def _resume_and_reply(self, thread_id: str, decision: str, chat_id: str):
         """Fallback resume when _handle_approval_pending is not running.
@@ -495,6 +551,8 @@ class MessageHandler:
                     break
             if assistant_text and self._container.qq:
                 await self._container.qq.send_text(chat_id, assistant_text)
+        except ApprovalPending as exc:
+            asyncio.create_task(self._handle_approval_pending(exc, chat_id))
         except RuntimeError as e:
             if "busy" in str(e).lower() or "lock" in str(e).lower():
                 logger.debug("_resume_and_reply: thread %s is busy, _handle_approval_pending is still running", thread_id)

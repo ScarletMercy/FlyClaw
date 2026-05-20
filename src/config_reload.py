@@ -93,6 +93,17 @@ class ReloadExecutor:
                 await mgr.reload(self._app.config.mcp)
         except Exception as e:
             logger.warning("MCP reload failed: %s", e)
+        # Sync MCP tools to AgentLoop
+        try:
+            from src.mcp.manager import get_mcp_manager
+            mgr = get_mcp_manager()
+            mcp_tools = mgr.get_all_tools() if mgr else []
+            if self._app.agent_loop:
+                loop = self._app.agent_loop
+                loop._tools = [t for t in loop._tools if not t.name.startswith("mcp__")] + mcp_tools
+                loop._tool_map = {t.name: t for t in loop._tools}
+        except Exception as e:
+            logger.warning("MCP tool sync failed: %s", e)
 
     async def _do_reload_auth(self):
         try:

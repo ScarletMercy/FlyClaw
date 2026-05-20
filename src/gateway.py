@@ -429,7 +429,17 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             name = body.get("name", "")
             if not name:
                 return JSONResponse({"error": "name is required"}, status_code=400)
-            await get_mcp_manager().add_server(name, MCPServerConfig(**body.get("config", {})))
+            config = MCPServerConfig(**body.get("config", {}))
+            await get_mcp_manager().add_server(name, config)
+            try:
+                from src.config import load_config, save_config
+                cfg = load_config()
+                if cfg.mcp.servers is None:
+                    cfg.mcp.servers = {}
+                cfg.mcp.servers[name] = config
+                save_config(cfg)
+            except Exception:
+                pass
             return {"added": name}
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=422)
@@ -438,6 +448,14 @@ def create_gateway(app_config, agent_loop, cron_service=None):
     async def mcp_remove_server(server_name: str, request: Request, _auth=Depends(require_auth)):
         try:
             await get_mcp_manager().remove_server(server_name)
+            try:
+                from src.config import load_config, save_config
+                cfg = load_config()
+                if cfg.mcp.servers and server_name in cfg.mcp.servers:
+                    del cfg.mcp.servers[server_name]
+                    save_config(cfg)
+            except Exception:
+                pass
             return {"removed": server_name}
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
