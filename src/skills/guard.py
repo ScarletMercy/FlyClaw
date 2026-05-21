@@ -4,11 +4,8 @@ import hashlib
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 from .types import Finding, ScanResult
-
-logger = __import__("logging").getLogger("myclaw.skills.guard")
 
 TRUSTED_REPOS = {"openai/skills", "anthropics/skills"}
 
@@ -536,15 +533,7 @@ def content_hash(skill_path: Path) -> str:
     return f"sha256:{h.hexdigest()[:16]}"
 
 
-def bundle_content_hash(bundle: "SkillBundle") -> str:
-    h = hashlib.sha256()
-    for rel_path in sorted(bundle.files):
-        c = bundle.files[rel_path]
-        if isinstance(c, bytes):
-            h.update(c)
-        else:
-            h.update(c.encode("utf-8"))
-    return f"sha256:{h.hexdigest()[:16]}"
+
 
 
 def _check_structure(skill_dir: Path) -> list[Finding]:

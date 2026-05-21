@@ -20,13 +20,9 @@ import httpx
 
 from .guard import (
     TRUSTED_REPOS,
-    bundle_content_hash,
     content_hash,
-    format_scan_report,
-    scan_skill,
-    should_allow_install,
 )
-from .types import Finding, ScanResult, SkillBundle, SkillMeta
+from .types import ScanResult, SkillBundle, SkillMeta
 
 logger = logging.getLogger("myclaw.skills.hub")
 
@@ -92,6 +88,14 @@ def _guarded_http_get(url: str, *, timeout: int = 20) -> Optional[httpx.Response
                 return None
             from urllib.parse import urljoin
             current_url = urljoin(current_url, location)
+            try:
+                from src.security.url_safety import is_safe_url
+                safe, _ = is_safe_url(current_url)
+                if not safe:
+                    logger.warning("Blocked unsafe redirect target: %s", current_url)
+                    return None
+            except ImportError:
+                pass
             continue
         return resp
     return None
@@ -301,7 +305,6 @@ class SkillsShSource(SkillSource):
             resp = _guarded_http_get(skill_md_url, timeout=15)
             if resp and resp.status_code == 200:
                 files["SKILL.md"] = resp.text
-                refs_url = f"https://raw.githubusercontent.com/{repo}/{branch}/{skill_path}/references"
                 for ref_candidate in self._try_ref_files(repo, branch, skill_path):
                     name, content = ref_candidate
                     files[f"references/{name}"] = content
@@ -1091,12 +1094,13 @@ def parallel_search(
             pass
 
     _TRUST_RANK = {"builtin": 2, "trusted": 1, "community": 0}
-    seen: dict[str, SkillMeta] = {}
+    seen: dict[tuple[str, str], SkillMeta] = {}
     for r in all_results:
-        if r.name not in seen:
-            seen[r.name] = r
-        elif _TRUST_RANK.get(r.trust_level, 0) > _TRUST_RANK.get(seen[r.name].trust_level, 0):
-            seen[r.name] = r
+        key = (r.source, r.name)
+        if key not in seen:
+            seen[key] = r
+        elif _TRUST_RANK.get(r.trust_level, 0) > _TRUST_RANK.get(seen[key].trust_level, 0):
+            seen[key] = r
 
     return list(seen.values())[:limit]
 
@@ -1108,13 +1112,13 @@ def resolve_source(
         for s in sources:
             if s.source_id() == "skills-sh":
                 return s
+        return None
     if identifier.startswith("http://") or identifier.startswith("https://"):
         if identifier.lower().endswith(".md"):
             for s in sources:
                 if s.source_id() == "url":
                     return s
-        else:
-            return None
+        return None
     for s in sources:
         if s.source_id() == "clawhub":
             return s

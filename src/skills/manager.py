@@ -285,9 +285,10 @@ def get_tools() -> list:
             query: Search query (for search_hub)
             identifier: Skill identifier from search results (for inspect_hub, install_hub)
         """
+        from src._container import get_container
+        container = get_container()
+        
         if action == "list":
-            from src._container import get_container
-            container = get_container()
             skills = container.skills_cache or []
             config = container.config
             result = []
@@ -311,8 +312,6 @@ def get_tools() -> list:
         elif action == "view":
             if not name:
                 return json.dumps({"error": "name is required for view"})
-            from src._container import get_container
-            container = get_container()
             skills = container.skills_cache or []
             for s in skills:
                 if s.name == name:
@@ -368,9 +367,7 @@ def get_tools() -> list:
         elif action == "toggle":
             if not name:
                 return json.dumps({"error": "name is required for toggle"})
-            from src._container import get_container
             from src.config import save_config
-            container = get_container()
             skills = container.skills_cache or []
             if not any(s.name == name for s in skills):
                 return json.dumps({"error": f"Skill not found: {name}"})
@@ -420,9 +417,7 @@ def get_tools() -> list:
         elif action == "uninstall":
             if not name:
                 return json.dumps({"error": "name is required for uninstall"})
-            from src._container import get_container
             from src.config import save_config
-            container = get_container()
             skills = container.skills_cache or []
             skill_dir = None
             for s in skills:
@@ -512,6 +507,7 @@ def get_tools() -> list:
         elif action == "install_hub":
             if not identifier:
                 return json.dumps({"error": "identifier is required for install_hub"})
+            quarantine_path = None
             try:
                 from src.skills.hub import (
                     create_sources, resolve_source,
@@ -519,7 +515,6 @@ def get_tools() -> list:
                     ensure_hub_dirs,
                 )
                 from src.skills.guard import scan_skill, should_allow_install, format_scan_report
-                from src._container import get_container
 
                 sources = create_sources()
                 src = resolve_source(identifier, sources)
@@ -541,8 +536,6 @@ def get_tools() -> list:
                     scan_result = scan_skill(quarantine_path, source=bundle.source)
                     allowed, reason = should_allow_install(scan_result)
                     if not allowed:
-                        import shutil
-                        shutil.rmtree(quarantine_path, ignore_errors=True)
                         report = format_scan_report(scan_result)
                         return json.dumps({
                             "error": f"Install blocked: {reason}",
@@ -575,23 +568,27 @@ def get_tools() -> list:
             except Exception as e:
                 logger.error("Hub install failed: %s", e)
                 return json.dumps({"error": f"Install failed: {str(e)}"})
+            finally:
+                if quarantine_path and quarantine_path.exists():
+                    import shutil
+                    shutil.rmtree(quarantine_path, ignore_errors=True)
 
         elif action == "scan_hub":
             if not name:
                 return json.dumps({"error": "name is required for scan_hub"})
             try:
-                from src._container import get_container
                 from src.skills.guard import scan_skill, format_scan_report
-                container = get_container()
                 skills = container.skills_cache or []
                 skill_dir = None
+                skill_source = "community"
                 for s in skills:
                     if s.name == name:
                         skill_dir = s.base_dir
+                        skill_source = getattr(s, 'source', 'community')
                         break
                 if not skill_dir:
                     return json.dumps({"error": f"Skill not found: {name}"})
-                result = scan_skill(skill_dir, source="community")
+                result = scan_skill(skill_dir, source=skill_source)
                 report = format_scan_report(result)
                 return json.dumps({
                     "name": name,
@@ -693,5 +690,5 @@ def _reload_skills_from_manager() -> None:
         from src._container import get_container
         container = get_container()
         _reload_skills(container)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to reload skills after install: %s", e)
