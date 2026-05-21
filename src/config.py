@@ -269,6 +269,13 @@ class CronConfig(BaseModel):
     max_transient_retries: int = 3
 
 
+class HubConfig(BaseModel):
+    enabled: bool = True
+    cache_ttl_seconds: int = 3600
+    guard_enabled: bool = True
+    search_timeout_seconds: int = 30
+
+
 class SkillsConfig(BaseModel):
     enabled: bool = True
     extra_dirs: list[str] = Field(default_factory=list)
@@ -276,6 +283,7 @@ class SkillsConfig(BaseModel):
     watch: bool = True
     disabled: list[str] = Field(default_factory=list)
     channel_disabled: dict[str, list[str]] = Field(default_factory=dict)
+    hub: HubConfig = HubConfig()
 
 
 class PluginsConfig(BaseModel):

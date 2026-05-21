@@ -267,19 +267,23 @@ def get_tools() -> list:
         enabled: bool = True,
         channel: str = "",
         source: str = "",
+        query: str = "",
+        identifier: str = "",
     ) -> str:
-        """技能管理工具。加载 skill 时必须使用此工具而非 read_file。
+        """Skill management tool. Must use this (not read_file) to load skills.
 
         Args:
-            action: 操作类型 (list, view, create, edit, delete, usage, toggle, install, uninstall)
-                    action="view" 用于加载指定 skill 的完整指令内容
-            name: 技能名称（view 时必填）
-            content: 技能内容（create/edit 时需要）
-            description: 技能描述
-            category: 技能分类
-            enabled: 是否启用（toggle 时需要）
-            channel: 渠道名称（toggle 时可选，如 qq）
-            source: 安装来源（install 时需要，URL 或本地路径）
+            action: Operation type (list, view, create, edit, delete, usage, toggle, install, uninstall, search_hub, inspect_hub, install_hub, scan_hub)
+                    action="view" loads the full instruction content of a specified skill
+            name: Skill name (required for view)
+            content: Skill content (needed for create/edit)
+            description: Skill description
+            category: Skill category
+            enabled: Whether to enable (needed for toggle)
+            channel: Channel name (optional for toggle, e.g. qq)
+            source: Install source (needed for install; URL or local path)
+            query: Search query (for search_hub)
+            identifier: Skill identifier from search results (for inspect_hub, install_hub)
         """
         if action == "list":
             from src._container import get_container
@@ -445,10 +449,162 @@ def get_tools() -> list:
                 _reload_skills(container)
             except Exception as e:
                 return json.dumps({"error": f"Failed to save config: {str(e)}"})
+            try:
+                from src.skills.hub import HubLockFile, append_audit_log
+                lock = HubLockFile()
+                entry = lock.get_installed(name)
+                if entry:
+                    lock.record_uninstall(name)
+                    append_audit_log("UNINSTALL", name, entry["source"], entry["trust_level"], "n/a", "user_request")
+            except Exception:
+                pass
             return json.dumps({"success": True, "uninstalled": name})
 
+        elif action == "search_hub":
+            if not query:
+                return json.dumps({"error": "query is required for search_hub"})
+            try:
+                from src.skills.hub import create_sources, parallel_search
+                sources = create_sources()
+                results = parallel_search(
+                    sources, query, limit=20,
+                    source_filter=source or "all",
+                )
+                items = []
+                for r in results:
+                    items.append({
+                        "name": r.name,
+                        "description": r.description[:200],
+                        "source": r.source,
+                        "identifier": r.identifier,
+                        "trust_level": r.trust_level,
+                    })
+                return json.dumps({"results": items}, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.error("Hub search failed: %s", e)
+                return json.dumps({"error": f"Search failed: {str(e)}"})
+
+        elif action == "inspect_hub":
+            if not identifier:
+                return json.dumps({"error": "identifier is required for inspect_hub"})
+            try:
+                from src.skills.hub import create_sources, resolve_source
+                sources = create_sources()
+                src = resolve_source(identifier, sources)
+                if not src:
+                    return json.dumps({"error": f"No source found for identifier: {identifier}"})
+                meta = src.inspect(identifier)
+                if not meta:
+                    return json.dumps({"error": f"Skill not found: {identifier}"})
+                return json.dumps({
+                    "name": meta.name,
+                    "description": meta.description,
+                    "source": meta.source,
+                    "identifier": meta.identifier,
+                    "trust_level": meta.trust_level,
+                    "repo": meta.repo,
+                    "tags": meta.tags,
+                }, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.error("Hub inspect failed: %s", e)
+                return json.dumps({"error": f"Inspect failed: {str(e)}"})
+
+        elif action == "install_hub":
+            if not identifier:
+                return json.dumps({"error": "identifier is required for install_hub"})
+            try:
+                from src.skills.hub import (
+                    create_sources, resolve_source,
+                    quarantine_bundle, install_from_quarantine,
+                    ensure_hub_dirs,
+                )
+                from src.skills.guard import scan_skill, should_allow_install, format_scan_report
+                from src._container import get_container
+
+                sources = create_sources()
+                src = resolve_source(identifier, sources)
+                if not src:
+                    return json.dumps({"error": f"No source found for identifier: {identifier}"})
+                bundle = src.fetch(identifier)
+                if not bundle:
+                    return json.dumps({"error": f"Failed to fetch skill: {identifier}"})
+                if not bundle.name:
+                    return json.dumps({"error": "Could not determine skill name from remote content"})
+
+                ensure_hub_dirs()
+                quarantine_path = quarantine_bundle(bundle)
+
+                container = get_container()
+                guard_enabled = getattr(container.config.skills.hub, "guard_enabled", True)
+
+                if guard_enabled:
+                    scan_result = scan_skill(quarantine_path, source=bundle.source)
+                    allowed, reason = should_allow_install(scan_result)
+                    if not allowed:
+                        import shutil
+                        shutil.rmtree(quarantine_path, ignore_errors=True)
+                        report = format_scan_report(scan_result)
+                        return json.dumps({
+                            "error": f"Install blocked: {reason}",
+                            "scan_report": report,
+                        }, ensure_ascii=False)
+                else:
+                    from src.skills.types import ScanResult
+                    scan_result = ScanResult(
+                        skill_name=bundle.name, source=bundle.source,
+                        trust_level=bundle.trust_level, verdict="safe",
+                        scanned_at="", summary="Guard disabled",
+                    )
+
+                install_dir = install_from_quarantine(
+                    quarantine_path, bundle.name, bundle, scan_result,
+                )
+                _reload_skills_from_manager()
+
+                return json.dumps({
+                    "success": True,
+                    "action": "installed",
+                    "skill": {
+                        "name": bundle.name,
+                        "source": bundle.source,
+                        "trust_level": bundle.trust_level,
+                        "scan_verdict": scan_result.verdict,
+                        "install_path": str(install_dir),
+                    },
+                }, ensure_ascii=False)
+            except Exception as e:
+                logger.error("Hub install failed: %s", e)
+                return json.dumps({"error": f"Install failed: {str(e)}"})
+
+        elif action == "scan_hub":
+            if not name:
+                return json.dumps({"error": "name is required for scan_hub"})
+            try:
+                from src._container import get_container
+                from src.skills.guard import scan_skill, format_scan_report
+                container = get_container()
+                skills = container.skills_cache or []
+                skill_dir = None
+                for s in skills:
+                    if s.name == name:
+                        skill_dir = s.base_dir
+                        break
+                if not skill_dir:
+                    return json.dumps({"error": f"Skill not found: {name}"})
+                result = scan_skill(skill_dir, source="community")
+                report = format_scan_report(result)
+                return json.dumps({
+                    "name": name,
+                    "verdict": result.verdict,
+                    "findings_count": len(result.findings),
+                    "report": report,
+                }, ensure_ascii=False)
+            except Exception as e:
+                logger.error("Hub scan failed: %s", e)
+                return json.dumps({"error": f"Scan failed: {str(e)}"})
+
         else:
-            return json.dumps({"error": f"Unknown action: {action}. Valid actions: list, view, create, edit, delete, usage, toggle, install, uninstall"})
+            return json.dumps({"error": f"Unknown action: {action}. Valid actions: list, view, create, edit, delete, usage, toggle, install, uninstall, search_hub, inspect_hub, install_hub, scan_hub"})
 
     return [
         ToolDef.from_function(skill_manage),
