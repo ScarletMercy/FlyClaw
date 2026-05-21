@@ -153,6 +153,10 @@ def _build_tool_guidance(tools: list) -> list[str]:
             "## 技能系统",
             "- skill_manage(action=\"list\") 查看可用技能",
             "- skill_manage(action=\"view\", name=\"...\") 加载技能详情",
+            "- skill_manage(action=\"search_hub\", query=\"...\") 搜索远程技能库（skills.sh、ClawHub）",
+            "- skill_manage(action=\"inspect_hub\", identifier=\"...\") 查看远程技能详情",
+            "- skill_manage(action=\"install_hub\", identifier=\"...\") 安装远程技能（自动安全扫描）",
+            "- skill_manage(action=\"scan_hub\", name=\"...\") 扫描已安装技能的安全性",
             "",
         ]
 
@@ -186,6 +190,8 @@ def _build_skills_section(skills_prompt: str) -> list[str]:
         "## 技能",
         "扫描以下技能描述，如果某个技能明显适用，用 skill_manage(action=\"view\", name=\"...\") 加载。",
         "如果都不适用，不要调用 skill_manage。不要用 read_file 读取技能文件。",
+        "如果用户需要的功能在本地技能中找不到，用 skill_manage(action=\"search_hub\", query=\"...\") 搜索远程技能库。",
+        "搜索到合适的技能后，用 skill_manage(action=\"inspect_hub\", identifier=\"...\") 查看详情，确认后用 skill_manage(action=\"install_hub\", identifier=\"...\") 安装。",
         "限制：最多加载一个技能；仅在选定后加载。",
         trimmed,
         "",
