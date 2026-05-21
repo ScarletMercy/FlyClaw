@@ -8,7 +8,6 @@ from typing import Optional
 
 logger = logging.getLogger("myclaw.qq_tools")
 
-# Auto-injected by QQ channel before each message callback
 _current_qq_chat_id: ContextVar[str] = ContextVar("_current_qq_chat_id", default="")
 
 
@@ -18,12 +17,10 @@ def set_current_qq_chat_id(chat_id: str):
 
 def _get_qq_channel():
     from src.channels.qq import get_qq_channel
-
     return get_qq_channel()
 
 
 def _get_http_and_token():
-    """Get the QQ channel's http client and token manager."""
     ch = _get_qq_channel()
     if ch and ch._http_client and ch._token_manager:
         return ch._http_client, ch._token_manager
@@ -31,7 +28,6 @@ def _get_http_and_token():
 
 
 async def _qq_get(path: str, description: str = "QQ API"):
-    """Authenticated GET to QQ API."""
     import httpx
     from src.channels.qq import API_BASE
     from src.channels.base import api_request_with_retry

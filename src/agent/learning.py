@@ -115,21 +115,3 @@ class LearningLoop:
             logger.warning("Full learning cycle curation failed: %s", e)
 
         return result
-
-
-def get_tools() -> list:
-    """返回学习循环工具。"""
-    from src._container import get_container
-    from src.agent.tooldef import ToolDef
-
-    async def trigger_learning() -> str:
-        """手动触发完整学习循环（记忆同步 + 技能审查）。"""
-        import json
-        container = get_container()
-        loop = LearningLoop(container.config)
-        result = await loop.trigger_full_learning_cycle()
-        return json.dumps(result, ensure_ascii=False, indent=2)
-
-    return [
-        ToolDef.from_function(trigger_learning),
-    ]

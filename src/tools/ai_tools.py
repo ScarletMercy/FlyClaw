@@ -1,53 +1,10 @@
-"""AI-powered tools: memory search and sub-agent status."""
+"""AI-powered tools: sub-agent status."""
 
 from __future__ import annotations
 
 import logging
 
-from src._container import get_container
-
 logger = logging.getLogger("myclaw.tools.ai")
-
-# ── Memory search ──────────────────────────────────────────
-
-
-async def memory_search(query: str, max_results: int = 6) -> str:
-    """Search the memory/knowledge base for relevant information.
-
-    Use this when you need to recall previously indexed documents, notes,
-    or knowledge that may help answer the user's question.
-
-    Args:
-        query: The search query describing what information you need.
-        max_results: Maximum number of results to return (default 6).
-    """
-    searcher = get_container().memory_searcher
-    if not searcher:
-        return "Memory search is not available (not configured or not initialized)."
-
-    try:
-        results = await searcher.search(query, max_results=max_results)
-        if not results:
-            return f"No results found for: {query}"
-
-        lines = []
-        for i, r in enumerate(results):
-            source = r.get("path", "unknown")
-            score = r.get("score", 0)
-            content = r.get("content", "")
-            lines.append(f"[{i + 1}] (score={score}, source={source})")
-            lines.append(content[:300])
-            if len(content) > 300:
-                lines.append("...")
-            lines.append("")
-
-        return "\n".join(lines)
-    except Exception as e:
-        logger.error("Memory search failed: %s", e)
-        return f"Memory search error: {e}"
-
-
-# ── Sub-agent status ───────────────────────────────────────
 
 
 async def subagent_status() -> str:
@@ -79,6 +36,5 @@ async def subagent_status() -> str:
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef
     return [
-        ToolDef.from_function(memory_search),
         ToolDef.from_function(subagent_status),
     ]

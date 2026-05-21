@@ -26,7 +26,6 @@ _MEMORY_MD_HEADER = """\
 # MEMORY.md — Agent-curated memory
 
 > This file is auto-generated from memories. Do not edit manually.
-> Run `sync_curated_memory()` to refresh.
 
 """
 
@@ -92,15 +91,10 @@ async def sync_memories_to_curated_files(workspace: Path) -> dict[str, str]:
     Returns:
         生成的文件路径字典 {"memory_md": "...", "user_md": "..."}
     """
-    from src.tools.memory_tools import memory_list
+    from src.tools.memory_tools import get_memory_store
 
-    result = await memory_list()
-    try:
-        memories = json.loads(result)
-        if not isinstance(memories, list):
-            memories = []
-    except (json.JSONDecodeError, TypeError):
-        memories = []
+    s = get_memory_store()
+    memories = await s.list_all()
 
     grouped = _format_memories_by_category(memories)
 
@@ -117,20 +111,3 @@ async def sync_memories_to_curated_files(workspace: Path) -> dict[str, str]:
         "memory_md": str(memory_md),
         "user_md": str(user_md),
     }
-
-
-def get_tools():
-    """返回策展记忆同步工具。"""
-    from src.agent.tooldef import ToolDef
-
-    async def sync_curated_memory() -> str:
-        """手动触发记忆 → 策展文件同步。"""
-        from src._container import get_container
-        container = get_container()
-        workspace = Path(container.config.agents.workspace).expanduser().resolve()
-        result = await sync_memories_to_curated_files(workspace)
-        return f"Synced: {result['memory_md']}, {result['user_md']}"
-
-    return [
-        ToolDef.from_function(sync_curated_memory),
-    ]

@@ -90,20 +90,52 @@ def _parse_relative_time(at_str: str) -> Optional[str]:
     return None
 
 
-async def task_plan(goal: str, plan_json: str) -> str:
-    """Create an autonomous task execution plan with checkpoints.
+_TASK_TOOL_DESCRIPTION = (
+    "管理自主任务执行计划。用 action 参数指定操作。\n\n"
+    "ACTIONS:\n"
+    "- plan: 制定任务计划（步骤+检查点）。需要 goal 和 plan_json\n"
+    "- status: 查看所有活跃任务\n"
+    "- advance: 标记步骤完成。需要 step_index，可选 run_id, result_summary\n"
+    "- cancel: 取消任务。可选 run_id\n"
+)
 
-    Call this when autonomous mode is active and the user gives a task.
-    Generate a plan with steps and time-based checkpoints, then call this tool.
+
+async def task_manage(action: str, goal: str = "", plan_json: str = "",
+                      step_index: int = -1, result_summary: str = "",
+                      run_id: str = "") -> str:
+    """Manage autonomous task plans with a single compressed tool.
 
     Args:
-        goal: The original task goal from the user.
-        plan_json: JSON object with the plan. Must have format:
-            {"steps": ["step1", "step2", ...], "checkpoints": [{"at": "30分钟后", "prompt": "检查进度并继续执行"}, ...]}
-            The "at" field supports: ISO datetime, "X分钟/小时/天", "Xm/Xh".
+        action: One of: plan, status, advance, cancel
+        goal: Task goal (required for plan)
+        plan_json: JSON plan with steps and checkpoints (required for plan)
+        step_index: 0-based step index to mark complete (required for advance)
+        result_summary: Brief summary of what was accomplished (for advance)
+        run_id: Task run ID (optional for advance/cancel)
     """
+    normalized = (action or "").strip().lower()
+
+    if normalized == "plan":
+        return await _task_plan_impl(goal, plan_json)
+
+    if normalized == "status":
+        return await _task_status_impl()
+
+    if normalized == "advance":
+        return await _task_advance_impl(step_index, result_summary, run_id)
+
+    if normalized == "cancel":
+        return await _task_cancel_impl(run_id)
+
+    return json.dumps({"error": f"Unknown action '{action}'. Use: plan, status, advance, cancel"}, ensure_ascii=False)
+
+
+async def _task_plan_impl(goal: str, plan_json: str) -> str:
     from src.task.store import get_task_store
     from src.task.types import TaskRun, TaskCheckpoint
+
+    if not goal:
+        return json.dumps({"error": "goal is required for plan action"}, ensure_ascii=False)
 
     plan = _parse_plan_json(plan_json)
     if not plan:
@@ -125,7 +157,7 @@ async def task_plan(goal: str, plan_json: str) -> str:
     active = await store.list_by_status("running")
     max_parallel = getattr(container.config.task, "max_parallel", 3)
     if len(active) >= max_parallel:
-        return json.dumps({"error": f"已达最大并行任务数 {max_parallel}，请等待现有任务完成或使用 task_cancel 取消"}, ensure_ascii=False)
+        return json.dumps({"error": f"已达最大并行任务数 {max_parallel}，请等待现有任务完成或取消"}, ensure_ascii=False)
 
     now = datetime.now(timezone(timedelta(hours=8)))
     checkpoints = []
@@ -210,8 +242,7 @@ async def task_plan(goal: str, plan_json: str) -> str:
     }, ensure_ascii=False)
 
 
-async def task_status() -> str:
-    """Check status of all active autonomous tasks. Call this at checkpoints to see progress."""
+async def _task_status_impl() -> str:
     from src.task.store import get_task_store
     container = get_container()
     store = get_task_store(container.config.task.db_path)
@@ -234,17 +265,13 @@ async def task_status() -> str:
     return json.dumps({"active_tasks": len(result), "tasks": result}, ensure_ascii=False)
 
 
-async def task_advance(step_index: int, result_summary: str = "", run_id: str = "") -> str:
-    """Mark a task step as completed and advance to the next step.
-
-    Args:
-        step_index: The 0-based index of the completed step.
-        result_summary: Brief summary of what was accomplished.
-        run_id: The task run ID. If provided, advances this specific task. Otherwise advances the first active task.
-    """
+async def _task_advance_impl(step_index: int, result_summary: str, run_id: str) -> str:
     from src.task.store import get_task_store
     container = get_container()
     store = get_task_store(container.config.task.db_path)
+
+    if step_index < 0:
+        return json.dumps({"error": "step_index is required for advance action"}, ensure_ascii=False)
 
     if run_id:
         run = await store.get(run_id)
@@ -258,7 +285,7 @@ async def task_advance(step_index: int, result_summary: str = "", run_id: str = 
             return json.dumps({"error": "No active tasks"}, ensure_ascii=False)
         run = runs[0]
 
-    if step_index < 0 or step_index >= len(run.steps):
+    if step_index >= len(run.steps):
         return json.dumps({"error": f"Invalid step_index {step_index}, must be 0-{len(run.steps) - 1}"}, ensure_ascii=False)
 
     run.current_step = step_index + 1
@@ -282,12 +309,7 @@ async def task_advance(step_index: int, result_summary: str = "", run_id: str = 
     }, ensure_ascii=False)
 
 
-async def task_cancel(run_id: str = "") -> str:
-    """Cancel an autonomous task and remove its scheduled checkpoints.
-
-    Args:
-        run_id: The task run ID to cancel. If empty, cancels the first active task.
-    """
+async def _task_cancel_impl(run_id: str) -> str:
     from src.task.store import get_task_store
     container = get_container()
     store = get_task_store(container.config.task.db_path)
@@ -316,8 +338,40 @@ async def task_cancel(run_id: str = "") -> str:
 
 def get_tools() -> list[ToolDef]:
     return [
-        ToolDef.from_function(task_plan),
-        ToolDef.from_function(task_status),
-        ToolDef.from_function(task_advance),
-        ToolDef.from_function(task_cancel),
+        ToolDef.from_schema(
+            name="task_manage",
+            description=_TASK_TOOL_DESCRIPTION,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["plan", "status", "advance", "cancel"],
+                        "description": "操作类型",
+                    },
+                    "goal": {
+                        "type": "string",
+                        "description": "任务目标（plan 必填）",
+                    },
+                    "plan_json": {
+                        "type": "string",
+                        "description": "计划 JSON，格式: {\"steps\": [...], \"checkpoints\": [{\"at\": \"30分钟后\", \"prompt\": \"...\"}]}（plan 必填）",
+                    },
+                    "step_index": {
+                        "type": "integer",
+                        "description": "完成的步骤索引，0-based（advance 必填）",
+                    },
+                    "result_summary": {
+                        "type": "string",
+                        "description": "步骤完成摘要（advance 可选）",
+                    },
+                    "run_id": {
+                        "type": "string",
+                        "description": "任务 ID（advance/cancel 可选，默认操作第一个活跃任务）",
+                    },
+                },
+                "required": ["action"],
+            },
+            fn=task_manage,
+        ),
     ]

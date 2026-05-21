@@ -357,8 +357,8 @@ class SessionSearchConfig(BaseModel):
 class CompressionConfig(BaseModel):
     """Context compression configuration."""
     enabled: bool = True
-    threshold_percent: float = 0.7
-    tail_messages: int = 10
+    threshold_percent: float = 0.6
+    tail_messages: int = 20
     max_summary_tokens: int = 2000
 
 

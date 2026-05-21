@@ -59,11 +59,7 @@ async def get_snapshot(page, compact: bool = True) -> dict:
     title = await page.title()
 
     try:
-        # Reuse CDP session if already cached on page
-        cdp = getattr(page, "_ax_cdp_session", None)
-        if cdp is None or cdp._was_closed:  # type: ignore[attr-defined]
-            cdp = await page.context.new_cdp_session(page)
-            page._ax_cdp_session = cdp  # type: ignore[attr-defined]
+        cdp = await page.context.new_cdp_session(page)
         result = await cdp.send("Accessibility.getFullAXTree")
     except Exception as e:
         logger.warning("CDP accessibility snapshot failed: %s", e)

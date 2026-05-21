@@ -126,8 +126,8 @@ async def execute_cron_job(
 
         task_context = (
             "\n\n## 自主任务检查点\n"
-            "这是一个自主任务的检查点触发。请先调用 task_status 查看当前任务进度，"
-            "然后继续执行下一步。完成后调用 task_advance 标记步骤完成。"
+            "这是一个自主任务的检查点触发。请先调用 task_manage(action=\"status\") 查看当前任务进度，"
+            "然后继续执行下一步。完成后调用 task_manage(action=\"advance\") 标记步骤完成。"
         )
         system_prompt += task_context
 

@@ -96,9 +96,9 @@ class ContextCompressor:
         self._previous_summary: Optional[str] = None
         self._compression_count = 0
 
-    def should_compress(self, messages: list[dict]) -> bool:
+    def should_compress(self, messages: list[dict], context_window_tokens: int = 100000) -> bool:
         estimated = _estimate_tokens(messages)
-        threshold = int(100000 * self.config.threshold_percent)
+        threshold = int(context_window_tokens * self.config.threshold_percent)
         return estimated > threshold
 
     async def compress(

@@ -47,7 +47,7 @@ def _build_tool_guidance(tools: list) -> list[str]:
         lines += [
             "## 文件操作",
             "- edit_file 前必须先 read_file，需要精确匹配 old_string",
-            "- 优先使用 file_tools（read_file/write_file/edit_file/list_dir/grep_files/glob_files）而非 exec_command",
+            "- 优先使用 file_tools（read_file/write_file/edit_file/list_dir/search_files）而非 exec_command",
             "",
         ]
 
@@ -69,35 +69,33 @@ def _build_tool_guidance(tools: list) -> list[str]:
             "",
         ]
 
-    if "memory_save" in tool_names:
+    if "memory" in tool_names:
         lines += [
             "## 持久记忆",
-            "- memory_save: 保存记忆（自动去重），用于用户偏好、身份、项目信息、重要决定",
-            "- memory_get: 按键取回记忆 / memory_list: 列出或搜索记忆",
-            "- memory_delete: 请求批量删除记忆，需用户发 /y 确认（120s 超时自动拒绝）",
+            "- memory(action=\"save\", content=\"...\"): 保存记忆（自动去重），用于用户偏好、身份、项目信息",
+            "- memory(action=\"list\"): 列出所有记忆 / memory(action=\"list\", query=\"关键词\"): 搜索",
+            "- memory(action=\"get\", key=\"...\"): 按键取回",
+            "- memory(action=\"delete\", keys=[\"...\"]): 请求删除，需用户发 /y 确认（120s 超时自动拒绝）",
+            "- memory(action=\"search\", query=\"...\"): 语义搜索历史记忆和知识库",
             "",
         ]
 
-    if "memory_search" in tool_names:
-        lines += [
-            "## 语义记忆搜索",
-            "- memory_search: 搜索历史记忆和知识库，当过去的对话上下文会有帮助时主动使用",
-            "",
-        ]
-
-    if "task_plan" in tool_names:
+    if "task_manage" in tool_names:
         lines += [
             "## 任务模式（自主工作）",
-            "- 收到复杂任务时，先调用 task_plan 制定计划（步骤+检查点），再逐步执行",
-            "- 检查点触发时用 task_status 查看进度，完成后 task_advance 标记步骤完成",
-            "- 用 task_cancel 可取消任务",
+            "- 收到复杂任务时，先调用 task_manage(action=\"plan\", goal=\"...\", plan_json=\"...\") 制定计划",
+            "- 检查点触发时用 task_manage(action=\"status\") 查看进度",
+            "- 完成步骤后 task_manage(action=\"advance\", step_index=N) 标记完成",
+            "- 用 task_manage(action=\"cancel\") 可取消任务",
             "",
         ]
 
-    if "cron_add" in tool_names:
+    if "cronjob" in tool_names:
         lines += [
             "## 定时任务",
-            "- cron_add 创建定时任务，cron_list 查看，cron_delete 删除，cron_toggle 启停，cron_run 立即触发",
+            "- cronjob(action=\"create\", name=\"...\", message=\"...\", schedule_kind=\"...\") 创建定时任务",
+            "- cronjob(action=\"list\") 查看，cronjob(action=\"delete\", job_id=\"...\") 删除",
+            "- cronjob(action=\"toggle\", job_id=\"...\") 启停，cronjob(action=\"run\", job_id=\"...\") 立即触发",
             "- 一次性任务必须用 schedule_kind=\"at\" + run_at（如 \"2026-05-19 23:12:00\"），执行后自动删除",
             "- 不要用 cron 表达式创建一次性任务，cron 是循环的，不会自动删除",
             "",
@@ -106,8 +104,8 @@ def _build_tool_guidance(tools: list) -> list[str]:
     if "delegate_task" in tool_names:
         lines += [
             "## 子代理",
-            "- delegate_task: 将子任务委派给专业代理（research/coder/reviewer）",
-            "- delegate_batch: 并行委派多个子任务",
+            "- delegate_task(agent_name=\"...\", task=\"...\"): 委派单个子任务",
+            "- delegate_task(tasks=\"[{...}, {...}]\"): 并行委派多个子任务",
             "",
         ]
 
@@ -155,6 +153,15 @@ def _build_tool_guidance(tools: list) -> list[str]:
             "## 技能系统",
             "- skill_manage(action=\"list\") 查看可用技能",
             "- skill_manage(action=\"view\", name=\"...\") 加载技能详情",
+            "",
+        ]
+
+    if "procedure_search" in tool_names:
+        lines += [
+            "## 工作流模式记忆",
+            "- procedure_search: 遇到多步骤任务时，先搜索是否已有现成流程可复用",
+            "- procedure_learn: 成功完成新的多步骤任务后，保存为流程供未来复用",
+            "- procedure_list: 查看已保存的所有工作流模式",
             "",
         ]
 

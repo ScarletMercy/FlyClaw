@@ -153,31 +153,4 @@ class SkillCurator:
             logger.warning("Failed to update skill state: %s", e)
 
 
-def get_tools() -> list:
-    """返回策展工具。"""
-    from src.agent.tooldef import ToolDef
 
-    curator = SkillCurator()
-
-    async def curate_skills(dry_run: bool = False) -> str:
-        """触发技能库审查。
-        
-        Args:
-            dry_run: 如果为 true，只报告变更不执行
-        """
-        result = await curator.review_skills(dry_run=dry_run)
-        return json.dumps(result, ensure_ascii=False, indent=2)
-
-    async def curator_status() -> str:
-        """查看策展人状态。"""
-        return json.dumps({
-            "last_review": curator.state.get("last_review"),
-            "total_reviews": curator.state.get("total_reviews", 0),
-            "days_since_review": curator.days_since_last_review(),
-            "review_interval_days": curator.review_interval_days,
-        }, ensure_ascii=False, indent=2)
-
-    return [
-        ToolDef.from_function(curate_skills),
-        ToolDef.from_function(curator_status),
-    ]

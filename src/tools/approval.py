@@ -37,6 +37,7 @@ class _PendingApproval:
         self.request = request
         self.event = asyncio.Event()
         self.decision: str = ""
+        self.user_response: str = ""
 
 
 class ApprovalManager:
@@ -134,10 +135,11 @@ class ApprovalManager:
         logger.info("Approval requested: %s (id=%s)", tool_name, req.id)
         return req
 
-    async def await_approval(self, request_id: str, timeout: Optional[int] = None) -> str:
+    async def await_approval(self, request_id: str, timeout: Optional[int] = None) -> tuple[str, str]:
+        """Returns (decision, user_response)."""
         pending = self._pending.get(request_id)
         if pending is None:
-            return "deny"
+            return ("deny", "")
         effective_timeout = timeout or pending.request.timeout_seconds
         try:
             await asyncio.wait_for(pending.event.wait(), timeout=effective_timeout)
@@ -147,8 +149,9 @@ class ApprovalManager:
             else:
                 logger.warning("Approval timed out: %s", request_id)
                 self._pending.pop(request_id, None)
-                return "timeout"
+                return ("timeout", "")
         decision = pending.decision
+        user_response = pending.user_response
         self._pending.pop(request_id, None)
 
         if decision == "allow_always":
@@ -161,9 +164,9 @@ class ApprovalManager:
                 self._save_durable()
             logger.info("Durable approval saved for %s (%s)", tool_name, digest)
 
-        return decision
+        return (decision, user_response)
 
-    def resolve(self, request_id: str, decision: str) -> bool:
+    def resolve(self, request_id: str, decision: str, user_response: str = "") -> bool:
         if decision not in ("allow_once", "allow_always", "deny"):
             logger.warning("Invalid approval decision: %s", decision)
             return False
@@ -172,6 +175,7 @@ class ApprovalManager:
             logger.warning("Unknown approval request: %s", request_id)
             return False
         pending.decision = decision
+        pending.user_response = user_response
         pending.event.set()
         logger.info("Approval resolved: %s -> %s", request_id, decision)
         return True

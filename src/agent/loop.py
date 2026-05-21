@@ -104,16 +104,15 @@ def _repair_tool_args(args_str: str) -> str:
     return "{}"
 
 _PARALLEL_SAFE_TOOLS = frozenset({
-    "read_file", "list_dir", "grep_files", "glob_files",
+    "read_file", "list_dir", "search_files",
     "web_search", "web_fetch", "session_search",
     "describe_image", "transcribe_audio", "describe_video",
-    "memory_get", "memory_list", "memory_search",
     "qq_list_guilds", "qq_list_channels", "qq_list_members", "qq_get_member",
-    "cron_list", "skill_manage",
+    "memory", "cronjob", "task_manage", "skill_manage",
 })
 
 _PATH_SCOPED_TOOLS = frozenset({
-    "read_file", "write_file", "edit_file", "grep_files", "glob_files",
+    "read_file", "write_file", "edit_file", "search_files",
 })
 
 
@@ -220,11 +219,6 @@ class AgentLoop:
             return await self._run_inner(state, thread_id, max_rounds)
         finally:
             lock.release()
-            try:
-                from src.agent.tool_cache import clear_thread_cache
-                clear_thread_cache(thread_id)
-            except Exception:
-                pass
 
     async def resume(self, thread_id: str, decision: str) -> AgentState:
         """Resume after approval with per-thread locking."""
@@ -301,6 +295,16 @@ class AgentLoop:
             # 4. Append assistant message
             assistant_msg = self._build_assistant_msg(response)
             state.append_message(assistant_msg)
+
+            # Emit event for intermediate assistant messages (has tool_calls + content)
+            if response.tool_calls and assistant_msg.get("content"):
+                await emit_async(
+                    "agent_loop.assistant_message",
+                    thread_id=thread_id,
+                    content=assistant_msg["content"],
+                    has_tool_calls=True,
+                    message_count=len(state.messages),
+                )
 
             # 5. No tool calls → done
             if not response.tool_calls:
@@ -428,7 +432,7 @@ class AgentLoop:
             _tid_token = _current_thread_id.set(thread_id)
 
             try:
-                if pending_tool == "memory_delete" and memory_keys:
+                if pending_tool in ("memory_delete", "memory") and memory_keys:
                     deleted = []
                     try:
                         from src.tools.memory_tools import get_memory_store
@@ -438,7 +442,7 @@ class AgentLoop:
                             deleted.append(k)
                     except Exception as exc:
                         import logging as _log
-                        _log.getLogger("myclaw.loop").warning("memory_delete resume failed: %s", exc)
+                        _log.getLogger("myclaw.loop").warning("memory delete resume failed: %s", exc)
                     result_content = json.dumps(
                         {"ok": True, "deleted": deleted, "count": len(deleted)},
                         ensure_ascii=False,
@@ -491,7 +495,7 @@ class AgentLoop:
         else:
             if pending_tc_id:
                 pending_tool = pending.get("tool_name", "exec_command")
-                deny_msg = "[denied] 记忆删除已取消。" if pending_tool == "memory_delete" else "[denied] Command execution was denied by user."
+                deny_msg = "[denied] 记忆删除已取消。" if pending_tool in ("memory_delete", "memory") else "[denied] Command execution was denied by user."
                 state.append_message({
                     "role": "tool",
                     "tool_call_id": pending_tc_id,
@@ -574,16 +578,14 @@ class AgentLoop:
         If over threshold, compress first; otherwise send raw history.
         Large tool outputs are always truncated to keep payload small.
         """
+        self._truncate_large_outputs(state.messages, thread_id)
+
         history = state.messages
 
-        # Always truncate large tool outputs (cheap, no LLM)
-        history = self._truncate_large_outputs(history, thread_id)
-
         # Proactive compression check
-        if self._compressor is not None and self._compressor.should_compress(history):
+        if self._compressor is not None and self._compressor.should_compress(history, self._ctx_window_tokens):
             history = await self._compressor.compress(history, self._ctx_window_tokens)
         elif self._compressor is None:
-            # No compressor configured — do a quick static check
             estimated = _estimate_tokens_simple(history)
             if estimated > int(self._ctx_window_tokens * 0.8):
                 history = self._static_fallback(history)
@@ -593,28 +595,21 @@ class AgentLoop:
         history = self._sanitize_surrogates(history)
         return [{"role": "system", "content": system_text}] + list(history)
 
-    def _truncate_large_outputs(self, messages: list[dict], thread_id: str = "") -> list[dict]:
-        """Truncate large tool outputs, caching full content to temp files.
+    def _truncate_large_outputs(self, messages: list[dict], thread_id: str = "") -> None:
+        """Truncate large tool outputs in-place, caching full content to temp files.
 
-        Skips messages already truncated (``_truncated=True``) to keep
-        the truncated text identical across calls — essential for KV cache
-        prefix stability.
+        Modifies ``state.messages`` directly so that the ``_truncated`` flag
+        and truncated content persist across loop iterations.
         """
         from src.agent.tool_cache import cache_large_output
 
-        result = []
         for m in messages:
-            if m.get("role") == "tool":
-                if m.get("_truncated"):
-                    result.append(m)
-                    continue
+            if m.get("role") == "tool" and not m.get("_truncated"):
                 content = m.get("content", "")
-                if isinstance(content, str) and len(content) > 2000:
+                if isinstance(content, str) and len(content) > 8000:
                     truncated, _ = cache_large_output(content, thread_id)
-                    result.append({**m, "content": truncated, "_truncated": True})
-                    continue
-            result.append(m)
-        return result
+                    m["content"] = truncated
+                    m["_truncated"] = True
 
     def _static_fallback(self, messages: list[dict]) -> list[dict]:
         """Emergency static truncation when no compressor is configured."""

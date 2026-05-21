@@ -23,11 +23,10 @@ from dataclasses import dataclass, field
 logger = logging.getLogger("myclaw.agent.guardrails")
 
 _IDEMPOTENT_TOOLS: frozenset[str] = frozenset({
-    "read_file", "list_dir", "grep_files", "glob_files",
+    "read_file", "list_dir", "search_files",
     "web_search", "web_fetch", "session_search",
-    "memory_get", "memory_list", "memory_search",
     "qq_list_guilds", "qq_list_channels", "qq_list_members",
-    "qq_get_member", "cron_list",
+    "qq_get_member", "cronjob", "task_manage",
 })
 
 

@@ -63,7 +63,7 @@ def _format_display(text: str) -> str:
 _SILENT_TOOLS = frozenset({
     "text_to_speech", "send_image_to_chat", "send_file_to_chat", "send_voice",
     "qq_send_image", "qq_send_file",
-    "skill_manage", "curate_skills", "curator_status",
+    "skill_manage",
 })
 
 
@@ -135,11 +135,11 @@ class MessageHandler:
                 pending_list = mgr.list_pending()
                 for req in pending_list:
                     if req.chat_id == chat_id:
+                        zh = self._container.config.agents.language == "zh"
                         decision_text = text.strip().lower()
                         decision = "allow_once" if decision_text in ("yes", "/y") else "deny"
                         mgr.resolve(req.id, decision)
-                        zh = self._container.config.agents.language == "zh"
-                        if req.tool_name == "memory_delete":
+                        if req.tool_name in ("memory_delete", "memory"):
                             await reply_fn("✅ 已确认删除记忆" if decision == "allow_once" else "❌ 已取消删除记忆")
                         else:
                             await reply_fn(f"Approval {'granted' if decision == 'allow_once' else 'denied'}.")
@@ -181,9 +181,9 @@ class MessageHandler:
                 system_prompt += (
                     "\n\n## 自主工作模式\n"
                     "自主工作模式已开启。如果用户提出复杂任务（研究、开发、调研、写作等），"
-                    "请先调用 task_plan 工具制定执行计划，包含步骤和检查点，然后再开始执行。"
-                    "在检查点触发时，调用 task_status 查看进度，然后继续执行下一步。"
-                    "完成任务后调用 task_advance 标记步骤完成。"
+                    "请先调用 task_manage(action=\"plan\") 工具制定执行计划，包含步骤和检查点，然后再开始执行。"
+                    "在检查点触发时，调用 task_manage(action=\"status\") 查看进度，然后继续执行下一步。"
+                    "完成任务后调用 task_manage(action=\"advance\") 标记步骤完成。"
                 )
 
             input_state = AgentState(
@@ -264,6 +264,26 @@ class MessageHandler:
             from src.events import subscribe_async, unsubscribe
             _progress_unsub = subscribe_async("tool.*", _on_tool_event)
 
+            # Subscribe to intermediate assistant message events for real-time delivery
+            _assistant_msg_unsub = None
+
+            async def _on_assistant_message(event: str, **kwargs):
+                """Send intermediate assistant messages in real-time."""
+                tid = kwargs.get("thread_id", "")
+                if tid != thread_id:
+                    return
+                content = kwargs.get("content", "")
+                if not content:
+                    return
+
+                try:
+                    formatted = _format_display(content)
+                    await reply_fn(formatted)
+                except Exception:
+                    pass
+
+            _assistant_msg_unsub = subscribe_async("agent_loop.assistant_message", _on_assistant_message)
+
             try:
                 logger.debug("[flow] agent_loop run start, state has %d messages", pre_msg_count)
 
@@ -302,32 +322,6 @@ class MessageHandler:
                         assistant_text = msg["content"].lstrip("\n")
                         break
 
-                # Send intermediate assistant messages (non-empty content,
-                # skipping pure tool_calls wrappers).  The final message is
-                # sent later with full formatting + media delivery.
-                _final_msg = None
-                for m in reversed(messages):
-                    if m.get("role") == "assistant" and (m.get("content") or "").strip():
-                        _final_msg = m
-                        break
-                _sent_hashes: set[int] = set()
-                for msg in messages[pre_msg_count:]:
-                    if msg.get("role") != "assistant":
-                        continue
-                    content = (msg.get("content") or "").strip()
-                    if not content:
-                        continue
-                    if msg is _final_msg:
-                        continue
-                    h = hash(content)
-                    if h in _sent_hashes:
-                        continue
-                    _sent_hashes.add(h)
-                    try:
-                        await reply_fn(_format_display(content))
-                    except Exception:
-                        pass
-
                 for msg in messages[pre_msg_count:]:
                     if msg.get("role") != "tool":
                         continue
@@ -351,6 +345,8 @@ class MessageHandler:
             finally:
                 if _progress_unsub:
                     unsubscribe("tool.*", _on_tool_event)
+                if _assistant_msg_unsub:
+                    unsubscribe("agent_loop.assistant_message", _on_assistant_message)
 
             if assistant_text:
                 if getattr(self._container.config, "link_understanding", None) and self._container.config.link_understanding.enabled:
@@ -437,7 +433,7 @@ class MessageHandler:
                         for msg in messages[pre_msg_count:]:
                             if msg.get("role") == "tool":
                                 tc_name = call_id_to_name.get(msg.get("tool_call_id", ""), "")
-                                if "memory_save" in tc_name:
+                                if tc_name == "memory" and "save" in msg.get("content", ""):
                                     await reply_fn("\U0001f4be update memory: 已保存到记忆")
                                     break
                     except Exception:
@@ -469,7 +465,7 @@ class MessageHandler:
                 if not chat_id.startswith(("c2c:", "group:", "channel:", "dm:")):
                     return
 
-                if tool_name == "memory_delete":
+                if tool_name in ("memory_delete", "memory"):
                     keys = getattr(current_exc, "keys", [])
                     preview = current_exc.command_preview
                     msg_text = (
@@ -485,10 +481,10 @@ class MessageHandler:
                     )
 
                 await self._container.qq.send_text(chat_id, msg_text)
-                decision = await mgr.await_approval(current_exc.request_id, timeout=approval_timeout)
+                decision, user_response = await mgr.await_approval(current_exc.request_id, timeout=approval_timeout)
                 if decision == "timeout":
-                    if tool_name == "memory_delete" or auto_deny:
-                        timeout_msg = "⏰ 操作超时，记忆删除已取消。" if tool_name == "memory_delete" else ("操作超时，已自动拒绝。" if zh else "Operation timed out, auto-denied.")
+                    if tool_name in ("memory_delete", "memory") or auto_deny:
+                        timeout_msg = "⏰ 操作超时，记忆删除已取消。" if tool_name in ("memory_delete", "memory") else ("操作超时，已自动拒绝。" if zh else "Operation timed out, auto-denied.")
                         await self._container.qq.send_text(chat_id, timeout_msg)
                     decision = "deny"
 

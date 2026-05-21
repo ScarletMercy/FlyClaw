@@ -88,20 +88,23 @@ class CronStore:
         )
         await conn.commit()
         if cursor.rowcount == 0:
-            # Check if job exists at all
             async with conn.execute("SELECT id FROM cron_jobs WHERE id = ?", (job.id,)) as check_cursor:
                 if await check_cursor.fetchone() is None:
-                    # Job doesn't exist, insert it
                     await conn.execute(
                         "INSERT INTO cron_jobs (id, data, version) VALUES (?, ?, ?)",
                         (job.id, job.model_dump_json(), new_version),
                     )
                     await conn.commit()
                 else:
-                    # Job exists but version mismatch - concurrent update
-                    raise ConcurrentUpdateError(
-                        f"Concurrent update conflict for job {job.id}: expected version {job.version}"
+                    logger.warning(
+                        "Cron job %s version mismatch (expected %d), forcing update",
+                        job.id, job.version,
                     )
+                    await conn.execute(
+                        "UPDATE cron_jobs SET data = ?, version = ? WHERE id = ?",
+                        (job.model_dump_json(), new_version, job.id),
+                    )
+                    await conn.commit()
         job.version = new_version
 
     async def remove_job(self, job_id: str) -> bool:

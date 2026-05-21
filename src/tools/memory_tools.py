@@ -429,85 +429,149 @@ async def save_memory(content: str, key: str = "", category: str = "fact") -> st
 
 
 # ---------------------------------------------------------------------------
-# Tools exposed to the LLM
+# Unified memory tool (hermes pattern: single tool with action parameter)
 # ---------------------------------------------------------------------------
 
-async def memory_save(content: str, key: str = "") -> str:
-    """Save a persistent memory that survives across sessions.
-
-    Use this to remember user preferences, facts, decisions, or any important info.
-    If a memory with the same key exists, it will be updated.
-
-    Args:
-        content: The memory content to save.
-        key: Optional explicit key. Auto-generated from content if empty.
-    """
-    return await save_memory(content, key)
-
-
-async def memory_get(key: str) -> str:
-    """Retrieve a specific memory by its key.
-
-    Args:
-        key: The memory key to look up.
-    """
-    s = get_memory_store()
-    return await s.recall(key)
+_MEMORY_TOOL_DESCRIPTION = (
+    "管理持久记忆（跨会话保存）。用 action 参数指定操作。\n\n"
+    "WHEN TO SAVE（主动保存，不要等用户要求）:\n"
+    "- 用户纠正你或说\"记住这个\"\"以后别这样\"\n"
+    "- 用户分享偏好、习惯、个人细节（名字、角色、时区、编码风格）\n"
+    "- 你发现了环境信息（OS、工具、项目结构）\n"
+    "- 你学到了约定、API 怪癖、工作流\n\n"
+    "ACTIONS:\n"
+    "- save: 保存记忆（自动去重）。需要 content，可选 key/category\n"
+    "- get: 按键取回记忆。需要 key\n"
+    "- list: 列出/搜索记忆。可选 query 过滤\n"
+    "- delete: 请求删除记忆，需用户发 /y 确认。需要 keys 数组\n"
+    "- search: 语义搜索历史记忆和知识库。需要 query\n\n"
+    "不要保存：任务进度、闲聊、一次性指令、通用知识。"
+)
 
 
-async def memory_list(query: str = "") -> str:
-    """List all memories, or search by keyword.
+async def memory(action: str, content: str = "", key: str = "", category: str = "fact",
+                 query: str = "", keys: list = None, max_results: int = 6) -> str:
+    """Manage persistent memories that survive across sessions.
 
     Args:
-        query: Optional search keyword. Empty to list all.
+        action: Operation to perform: save, get, list, delete, search
+        content: Memory content (for save)
+        key: Memory key (for save/get)
+        category: Memory category: preference|identity|contact|project|fact (for save, default fact)
+        query: Search keyword (for list) or semantic search query (for search)
+        keys: List of memory keys to delete (for delete)
+        max_results: Max results for semantic search (default 6)
     """
-    s = get_memory_store()
-    items = await s.list_all(query)
-    return json.dumps(items, ensure_ascii=False)
+    normalized = (action or "").strip().lower()
 
+    if normalized == "save":
+        if not content:
+            return json.dumps({"error": "content is required for save action"}, ensure_ascii=False)
+        return await save_memory(content, key, category)
 
-async def memory_delete(keys: list[str]) -> str:
-    """Request deletion of memories by their keys. Requires user confirmation.
+    if normalized == "get":
+        if not key:
+            return json.dumps({"error": "key is required for get action"}, ensure_ascii=False)
+        s = get_memory_store()
+        return await s.recall(key)
 
-    This tool does NOT delete immediately. It lists the memories to be deleted
-    and waits for the user to confirm by sending /y within 120 seconds.
-    If the user sends /n, other messages, or times out, the deletion is cancelled.
+    if normalized == "list":
+        s = get_memory_store()
+        items = await s.list_all(query)
+        return json.dumps(items, ensure_ascii=False)
 
-    ALWAYS pass all keys you want to delete in a SINGLE call.
+    if normalized == "delete":
+        if not keys:
+            return json.dumps({"error": "keys is required for delete action"}, ensure_ascii=False)
+        unique_keys = list(dict.fromkeys(k for k in keys if k))
+        if not unique_keys:
+            return json.dumps({"error": "No valid keys specified"}, ensure_ascii=False)
+        s = get_memory_store()
+        found_keys = []
+        previews = []
+        for k in unique_keys:
+            raw = await s.recall(k)
+            try:
+                data = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                data = {}
+            if "error" not in data:
+                found_keys.append(k)
+                c = data.get("content", "")
+                previews.append(f"- [{k}]: {c[:80]}")
+        if not previews:
+            return json.dumps({"error": "None of the specified keys exist"}, ensure_ascii=False)
+        raise MemoryDeleteNeedsApproval(found_keys, previews)
 
-    Args:
-        keys: List of memory keys to delete. Must be non-empty.
-    """
-    if not keys:
-        return json.dumps({"error": "No keys specified"}, ensure_ascii=False)
-    unique_keys = list(dict.fromkeys(k for k in keys if k))
-    if not unique_keys:
-        return json.dumps({"error": "No valid keys specified"}, ensure_ascii=False)
-
-    s = get_memory_store()
-    found_keys = []
-    previews = []
-    for k in unique_keys:
-        raw = await s.recall(k)
+    if normalized == "search":
+        from src._container import get_container
+        searcher = get_container().memory_searcher
+        if not searcher:
+            return "Memory search is not available (not configured or not initialized)."
         try:
-            data = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            data = {}
-        if "error" not in data:
-            found_keys.append(k)
-            content = data.get("content", "")
-            previews.append(f"- [{k}]: {content[:80]}")
+            results = await searcher.search(query, max_results=max_results)
+            if not results:
+                return f"No results found for: {query}"
+            lines = []
+            for i, r in enumerate(results):
+                source = r.get("path", "unknown")
+                score = r.get("score", 0)
+                c = r.get("content", "")
+                lines.append(f"[{i + 1}] (score={score}, source={source})")
+                lines.append(c[:300])
+                if len(c) > 300:
+                    lines.append("...")
+                lines.append("")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.error("Memory search failed: %s", e)
+            return f"Memory search error: {e}"
 
-    if not previews:
-        return json.dumps({"error": "None of the specified keys exist"}, ensure_ascii=False)
-
-    raise MemoryDeleteNeedsApproval(found_keys, previews)
+    return json.dumps({"error": f"Unknown action '{action}'. Use: save, get, list, delete, search"}, ensure_ascii=False)
 
 
 def get_tools() -> list[ToolDef]:
     return [
-        ToolDef.from_function(memory_save),
-        ToolDef.from_function(memory_get),
-        ToolDef.from_function(memory_list),
-        ToolDef.from_function(memory_delete),
+        ToolDef.from_schema(
+            name="memory",
+            description=_MEMORY_TOOL_DESCRIPTION,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["save", "get", "list", "delete", "search"],
+                        "description": "操作类型",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "记忆内容（save 时必填）",
+                    },
+                    "key": {
+                        "type": "string",
+                        "description": "记忆键名（save 可选，get 必填）",
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": ["preference", "identity", "contact", "project", "fact"],
+                        "description": "记忆分类（默认 fact）",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "搜索关键词（list 用关键词过滤，search 用语义搜索）",
+                    },
+                    "keys": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "要删除的记忆键名列表（delete 必填）",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "语义搜索最大结果数（默认 6）",
+                    },
+                },
+                "required": ["action"],
+            },
+            fn=memory,
+        ),
     ]

@@ -619,6 +619,7 @@ async def procedure_search(query: str, max_results: int = 3) -> str:
         for r in results:
             steps_text = "\n".join(
                 f"    {i + 1}. {s.get('tool', '?')}: {s.get('purpose', s.get('args_summary', ''))}"
+                if isinstance(s, dict) else f"    {i + 1}. {s}"
                 for i, s in enumerate(r["steps"])
             )
             output.append(

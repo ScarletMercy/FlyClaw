@@ -154,9 +154,6 @@ async def _run_single(
         }
 
     finally:
-        if agent_loop:
-            agent_loop.close()
-        # Progress: child done
         try:
             from src.events import emit_async
             await emit_async("delegate.child_completed", agent_name=agent_name)
@@ -271,5 +268,47 @@ async def delegate_batch(tasks: str) -> str:
         set_current_depth(current_depth)
 
 
+async def _delegate_unified(agent_name: str = "", task: str = "", context: str = "",
+                            tasks: str = "") -> str:
+    if tasks:
+        return await delegate_batch(tasks)
+    if not agent_name or not task:
+        return "[error] Provide either (agent_name + task) for single delegation or tasks JSON array for batch."
+    return await delegate_task(agent_name, task, context)
+
+
 def get_tools() -> list[ToolDef]:
-    return [ToolDef.from_function(delegate_task), ToolDef.from_function(delegate_batch)]
+    return [
+        ToolDef.from_schema(
+            name="delegate_task",
+            description=(
+                "将子任务委派给专业代理。支持单个和批量模式。\n\n"
+                "单个任务: 提供 agent_name + task，可选 context。\n"
+                "批量并行: 提供 tasks JSON 数组，每个元素: {\"agent_name\": \"...\", \"task\": \"...\", \"context\": \"...\"}\n\n"
+                "可用代理: research, coder, reviewer（用 agent_name 指定）。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "agent_name": {
+                        "type": "string",
+                        "description": "子代理名称（单个任务时使用）",
+                    },
+                    "task": {
+                        "type": "string",
+                        "description": "任务描述（单个任务时使用）",
+                    },
+                    "context": {
+                        "type": "string",
+                        "description": "背景信息（可选）",
+                    },
+                    "tasks": {
+                        "type": "string",
+                        "description": "批量任务的 JSON 数组（批量模式）",
+                    },
+                },
+                "required": [],
+            },
+            fn=_delegate_unified,
+        ),
+    ]

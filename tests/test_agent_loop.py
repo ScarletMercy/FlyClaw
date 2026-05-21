@@ -630,7 +630,7 @@ class TestToolCache:
 
     def test_large_content_cached(self):
         from src.agent.tool_cache import cache_large_output
-        content = "x" * 3000
+        content = "x" * 10000
         truncated, path = cache_large_output(content, "test_large")
         assert len(truncated) < len(content)
         assert "truncated" in truncated
@@ -640,7 +640,7 @@ class TestToolCache:
     def test_cached_file_contains_original(self):
         from src.agent.tool_cache import cache_large_output
         from pathlib import Path
-        content = "x" * 3000
+        content = "x" * 10000
         _, path = cache_large_output(content, "test_verify")
         assert path is not None
         saved = Path(path).read_text(encoding="utf-8")
@@ -648,14 +648,14 @@ class TestToolCache:
 
     def test_clear_thread_cache(self):
         from src.agent.tool_cache import cache_large_output, clear_thread_cache
-        content = "x" * 3000
+        content = "x" * 10000
         cache_large_output(content, "test_clear")
         clear_thread_cache("test_clear")
         clear_thread_cache("test_clear")
 
     def test_cache_deterministic_filename(self):
         from src.agent.tool_cache import cache_large_output
-        content = "A" * 3000
+        content = "A" * 10000
         t1, p1 = cache_large_output(content, "det_test")
         t2, p2 = cache_large_output(content, "det_test")
         assert t1 == t2
@@ -664,15 +664,15 @@ class TestToolCache:
     def test_truncate_skips_already_truncated(self):
         from src.agent.loop import AgentLoop
         loop = AgentLoop.__new__(AgentLoop)
-        big = "B" * 3000
+        big = "B" * 10000
         from src.agent.tool_cache import cache_large_output
         truncated, _ = cache_large_output(big, "skip_test")
         messages = [
             {"role": "tool", "tool_call_id": "tc1", "content": truncated, "_truncated": True},
         ]
-        result = loop._truncate_large_outputs(messages, "skip_test")
-        assert result[0]["content"] == truncated
-        assert result[0].get("_truncated") is True
+        loop._truncate_large_outputs(messages, "skip_test")
+        assert messages[0]["content"] == truncated
+        assert messages[0].get("_truncated") is True
 
     def test_sanitize_strips_truncated_flag(self):
         from src.agent.loop import AgentLoop

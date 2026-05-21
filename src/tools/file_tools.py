@@ -186,14 +186,22 @@ def list_dir(path: str = ".") -> str:
         return f"Error listing {path}: {e}"
 
 
-def grep_files(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
-    """Search for a text pattern in files.
+def search_files(mode: str = "content", pattern: str = "", path: str = ".",
+                  file_pattern: str = "*") -> str:
+    """Search files by content (regex) or by name (glob pattern).
 
     Args:
-        pattern: Text or regex pattern to search for
+        mode: "content" to search text with regex, "name" to find files by glob pattern
+        pattern: Search pattern (regex for content mode, glob for name mode)
         path: Directory to search in (relative to workspace)
-        file_pattern: Glob pattern to filter files (e.g. "*.py", "*.md")
+        file_pattern: Glob filter for content mode (e.g. "*.py", "*.md")
     """
+    if mode in ("name", "glob"):
+        return _glob_impl(pattern or "*", path)
+    return _grep_impl(pattern, path, file_pattern)
+
+
+def _grep_impl(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
     try:
         resolved = _resolve_path(path)
     except ValueError as e:
@@ -211,7 +219,6 @@ def grep_files(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
     results = []
     try:
         for root, dirs, files in os.walk(resolved):
-            # Skip hidden dirs and common ignored dirs
             dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("__pycache__", "node_modules", ".git")]
             for fname in files:
                 if not fnmatch.fnmatch(fname, file_pattern):
@@ -236,13 +243,7 @@ def grep_files(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
     return f"Found {len(results)} match(es) for '{pattern}':\n" + "\n".join(results)
 
 
-def glob_files(pattern: str, path: str = ".") -> str:
-    """Find files matching a glob pattern.
-
-    Args:
-        pattern: Glob pattern (e.g. "**/*.py", "src/**/*.yaml")
-        path: Base directory (relative to workspace)
-    """
+def _glob_impl(pattern: str, path: str = ".") -> str:
     try:
         resolved = _resolve_path(path)
     except ValueError as e:
@@ -274,6 +275,5 @@ def get_tools() -> list:
         ToolDef.from_function(write_file),
         ToolDef.from_function(edit_file),
         ToolDef.from_function(list_dir),
-        ToolDef.from_function(grep_files),
-        ToolDef.from_function(glob_files),
+        ToolDef.from_function(search_files),
     ]

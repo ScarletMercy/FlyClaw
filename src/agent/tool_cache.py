@@ -14,8 +14,8 @@ from pathlib import Path
 
 logger = logging.getLogger("myclaw.agent.tool_cache")
 
-_DEFAULT_MAX_CHARS = 2000
-_DEFAULT_PREVIEW = 500
+_DEFAULT_MAX_CHARS = 8000
+_DEFAULT_PREVIEW = 8000
 
 
 def _cache_dir(thread_id: str) -> Path:

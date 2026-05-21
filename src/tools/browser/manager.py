@@ -175,8 +175,7 @@ class BrowserManager:
         except Exception:
             pass
         try:
-            if not session.browser._was_closed:  # type: ignore
-                await session.browser.close()
+            await session.browser.close()
         except Exception:
             pass
         logger.info("Browser session closed: %s", session_id)

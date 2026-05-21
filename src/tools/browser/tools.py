@@ -271,10 +271,7 @@ async def _ref_to_locator(page, ref: str):
         return None
 
     try:
-        cdp = getattr(page, "_ax_cdp_session", None)
-        if cdp is None or getattr(cdp, "_was_closed", False):
-            cdp = await page.context.new_cdp_session(page)
-            page._ax_cdp_session = cdp
+        cdp = await page.context.new_cdp_session(page)
         result = await cdp.send("Accessibility.getFullAXTree")
     except Exception:
         return None

@@ -141,10 +141,7 @@ class ServiceContainer:
             "src.tools.tts_tools",
             "src.tools.memory_tools",
             "src.tools.task_tools",
-            "src.memory.memory_sync",
             "src.skills.manager",
-            "src.skills.curator",
-            "src.agent.learning",
             "src.agents.delegate",
             "src.memory.procedures",
         ]
