@@ -1,4 +1,4 @@
-"""Load workspace bootstrap context files (AGENTS.md, SOUL.md, IDENTITY.md, etc.)."""
+"""Load workspace bootstrap context files (AGENTS.md, IDENTITY.md, USER.md, etc.)."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ logger = logging.getLogger("myclaw.bootstrap")
 
 DEFAULT_BOOTSTRAP_FILES = [
     "AGENTS.md",
-    "SOUL.md",
     "IDENTITY.md",
     "USER.md",
     "HEARTBEAT.md",
@@ -20,10 +19,8 @@ def load_bootstrap_files(
     workspace_dir: str,
     extra_names: list[str] | None = None,
 ) -> list[dict]:
-    """Scan workspace directory and load existing bootstrap files.
+    from src.prompt import _scan_context_content
 
-    Returns a list of {"path": name, "content": text} dicts for files that exist.
-    """
     names = list(DEFAULT_BOOTSTRAP_FILES)
     if extra_names:
         for n in extra_names:
@@ -39,6 +36,7 @@ def load_bootstrap_files(
             try:
                 content = path.read_text(encoding="utf-8").strip()
                 if content:
+                    content = _scan_context_content(content, name)
                     files.append({"path": name, "content": content})
                     logger.info("Loaded bootstrap file: %s (%d chars)", name, len(content))
             except Exception as e:

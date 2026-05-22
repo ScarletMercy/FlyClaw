@@ -782,6 +782,7 @@ class AgentLoop:
             skills_prompt=self._skills_prompt,
             context_files=self._context_files,
             extra_system_prompt=state.system_prompt,
+            channel=state.channel,
         )
 
     def _build_assistant_msg(self, response: ChatResponse) -> dict:

@@ -96,11 +96,10 @@ def _invalidate_dedup_for_path(resolved: str, thread_id: str) -> None:
         if not task_data:
             return
         dedup = task_data.get("dedup")
-        if not dedup:
-            return
-        stale_keys = [k for k in dedup if k[0] == resolved]
-        for k in stale_keys:
-            dedup.pop(k, None)
+        if dedup:
+            stale_keys = [k for k in dedup if k[0] == resolved]
+            for k in stale_keys:
+                dedup.pop(k, None)
         task_data.setdefault("dedup_hits", {})
         dedup_hits = task_data["dedup_hits"]
         for k in list(dedup_hits):

@@ -458,6 +458,8 @@ def get_tools() -> list:
         elif action == "search_hub":
             if not query:
                 return json.dumps({"error": "query is required for search_hub"})
+            if not getattr(container.config.skills.hub, "enabled", True):
+                return json.dumps({"error": "Hub is disabled in configuration"})
             try:
                 from src.skills.hub import create_sources, parallel_search
                 sources = create_sources()
@@ -482,6 +484,8 @@ def get_tools() -> list:
         elif action == "inspect_hub":
             if not identifier:
                 return json.dumps({"error": "identifier is required for inspect_hub"})
+            if not getattr(container.config.skills.hub, "enabled", True):
+                return json.dumps({"error": "Hub is disabled in configuration"})
             try:
                 from src.skills.hub import create_sources, resolve_source
                 sources = create_sources()
@@ -507,6 +511,8 @@ def get_tools() -> list:
         elif action == "install_hub":
             if not identifier:
                 return json.dumps({"error": "identifier is required for install_hub"})
+            if not getattr(container.config.skills.hub, "enabled", True):
+                return json.dumps({"error": "Hub is disabled in configuration"})
             quarantine_path = None
             try:
                 from src.skills.hub import (
@@ -576,6 +582,8 @@ def get_tools() -> list:
         elif action == "scan_hub":
             if not name:
                 return json.dumps({"error": "name is required for scan_hub"})
+            if not getattr(container.config.skills.hub, "enabled", True):
+                return json.dumps({"error": "Hub is disabled in configuration"})
             try:
                 from src.skills.guard import scan_skill, format_scan_report
                 skills = container.skills_cache or []

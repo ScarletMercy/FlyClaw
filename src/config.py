@@ -84,7 +84,7 @@ class AgentConfig(BaseModel):
     language: Literal["zh", "en"] = "zh"
     tool_progress_notifications: bool = False
     bootstrap_files: list[str] = Field(
-        default_factory=lambda: ["AGENTS.md", "SOUL.md", "IDENTITY.md", "USER.md"]
+        default_factory=lambda: ["AGENTS.md", "IDENTITY.md", "USER.md"]
     )
 
 
