@@ -469,7 +469,7 @@ def get_tools() -> list:
                 for r in results:
                     items.append({
                         "name": r.name,
-                        "description": r.description[:200],
+                        "description": (r.description or "")[:200],
                         "source": r.source,
                         "identifier": r.identifier,
                         "trust_level": r.trust_level,
@@ -587,7 +587,17 @@ def get_tools() -> list:
                         skill_source = getattr(s, 'source', 'community')
                         break
                 if not skill_dir:
-                    return json.dumps({"error": f"Skill not found: {name}"})
+                    from src.skills.hub import HubLockFile, SKILLS_DIR
+                    lock = HubLockFile()
+                    entry = lock.get_installed(name)
+                    install_path = entry.get("install_path") if entry else None
+                    if install_path:
+                        candidate = (SKILLS_DIR / install_path).resolve()
+                        if candidate.is_relative_to(SKILLS_DIR.resolve()):
+                            skill_dir = candidate
+                            skill_source = entry.get("trust_level", "community")
+                    if not skill_dir:
+                        return json.dumps({"error": f"Skill not found: {name}"})
                 result = scan_skill(skill_dir, source=skill_source)
                 report = format_scan_report(result)
                 return json.dumps({

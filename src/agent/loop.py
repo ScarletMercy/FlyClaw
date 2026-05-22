@@ -585,10 +585,20 @@ class AgentLoop:
         # Proactive compression check
         if self._compressor is not None and self._compressor.should_compress(history, self._ctx_window_tokens):
             history = await self._compressor.compress(history, self._ctx_window_tokens)
+            try:
+                from src.tools.file_tools import reset_read_dedup
+                reset_read_dedup(thread_id)
+            except Exception:
+                pass
         elif self._compressor is None:
             estimated = _estimate_tokens_simple(history)
             if estimated > int(self._ctx_window_tokens * 0.8):
                 history = self._static_fallback(history)
+                try:
+                    from src.tools.file_tools import reset_read_dedup
+                    reset_read_dedup(thread_id)
+                except Exception:
+                    pass
 
         system_text = self._build_system_prompt(state, self._get_active_tool_defs(state))
         history = self._sanitize_api_messages(history)
@@ -688,7 +698,7 @@ class AgentLoop:
                 result_ids.add(tid)
                 result_indices.append(i)
 
-        sanitized = list(messages)
+        sanitized = [{k: v for k, v in m.items() if k != "_truncated"} for m in messages]
 
         for tid in tc_ids:
             if tid not in result_ids:
@@ -699,9 +709,6 @@ class AgentLoop:
             tid = messages[i].get("tool_call_id", "")
             if tid not in tc_ids:
                 sanitized.pop(i)
-
-        for m in sanitized:
-            m.pop("_truncated", None)
 
         return sanitized
 

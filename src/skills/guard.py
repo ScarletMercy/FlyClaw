@@ -630,12 +630,8 @@ def _resolve_trust_level(source: str) -> str:
 def _determine_verdict(findings: list[Finding]) -> str:
     if not findings:
         return "safe"
-    has_critical = any(f.severity == "critical" for f in findings)
-    has_high = any(f.severity == "high" for f in findings)
-    if has_critical:
+    if any(f.severity == "critical" for f in findings):
         return "dangerous"
-    if has_high:
-        return "caution"
     return "caution"
 
 

@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import re
 import shutil
 import time
@@ -832,6 +833,8 @@ class UrlSource(SkillSource):
                 skill_name = _validate_skill_name(name)
             except ValueError:
                 return None
+        if not skill_name:
+            return None
         return SkillBundle(
             name=skill_name,
             files={"SKILL.md": text},
@@ -903,7 +906,9 @@ class HubLockFile:
 
     def save(self, data: dict) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        os.replace(str(tmp), str(self.path))
 
     def record_install(
         self,
@@ -1011,10 +1016,13 @@ def install_from_quarantine(
         raise ValueError(f"Unsafe quarantine path: {quarantine_path}")
 
     install_dir = SKILLS_DIR / safe_skill_name
+    install_dir.parent.mkdir(parents=True, exist_ok=True)
+
+    skill_hash_val = content_hash(quarantine_path)
+
     if install_dir.exists():
         shutil.rmtree(install_dir)
 
-    install_dir.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(quarantine_path), str(install_dir))
 
     lock = HubLockFile()
@@ -1024,7 +1032,7 @@ def install_from_quarantine(
         identifier=bundle.identifier,
         trust_level=bundle.trust_level,
         scan_verdict=scan_result.verdict,
-        skill_hash=content_hash(install_dir),
+        skill_hash=skill_hash_val,
         install_path=str(install_dir.relative_to(SKILLS_DIR)),
         files=list(bundle.files.keys()),
         metadata=bundle.metadata,
@@ -1033,7 +1041,7 @@ def install_from_quarantine(
     append_audit_log(
         "INSTALL", safe_skill_name, bundle.source,
         bundle.trust_level, scan_result.verdict,
-        content_hash(install_dir),
+        skill_hash_val,
     )
 
     return install_dir
@@ -1078,7 +1086,8 @@ def parallel_search(
     if not active:
         return all_results
 
-    with ThreadPoolExecutor(max_workers=min(len(active), 4)) as pool:
+    pool = ThreadPoolExecutor(max_workers=min(len(active), 4))
+    try:
         futures = {}
         for src in active:
             fut = pool.submit(src.search, query, limit)
@@ -1092,6 +1101,8 @@ def parallel_search(
                     pass
         except TimeoutError:
             pass
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
     _TRUST_RANK = {"builtin": 2, "trusted": 1, "community": 0}
     seen: dict[tuple[str, str], SkillMeta] = {}
