@@ -40,10 +40,10 @@ def _ensure_myclaw_data_dir() -> Path:
                     shutil.copy2(f, _MYCLAW_DATA_DIR / f.name)
                     migrated_count += 1
                 except Exception as e:
-                    logger.warning("Failed to migrate %s: %s", f.name, e)
+                    logger.warning("迁移 %s 失败: %s", f.name, e)
         if migrated_count > 0:
             (old_data / ".migrated").touch()
-            logger.info("Migrated %d files from project data/ to %s", migrated_count, _MYCLAW_DATA_DIR)
+            logger.info("已从 data/ 迁移 %d 个文件到 %s", migrated_count, _MYCLAW_DATA_DIR)
     return _MYCLAW_DATA_DIR
 
 
@@ -112,11 +112,11 @@ class ServiceContainer:
         self.skills_cache = discover_skills(dirs, self.config)
         active = [s for s in self.skills_cache if not s.metadata.disable_model_invocation]
         if active:
-            logger.info("Skills loaded: %d active, %d total", len(active), len(self.skills_cache))
+            logger.info("技能已加载: %d 个活跃, 共 %d 个", len(active), len(self.skills_cache))
             for s in active:
                 logger.info("  - %s: %s (%s)", s.name, s.description[:60], s.source)
         else:
-            logger.info("No skills found")
+            logger.info("未找到技能")
 
         if self.agent_loop:
             self.agent_loop._skills_prompt = build_skills_prompt(self.skills_cache)
@@ -181,7 +181,7 @@ class ServiceContainer:
         records = discover_plugins(self.config.plugins.extra_dirs)
         for record in records:
             self.plugin_registry.register_plugin(record)
-        logger.info("Plugins: %d loaded, %d tools", self.plugin_registry.plugin_count, self.plugin_registry.tool_count)
+        logger.info("插件: 已加载 %d 个, %d 个工具", self.plugin_registry.plugin_count, self.plugin_registry.tool_count)
 
     def _setup_agents(self):
         if not self.config.agents.subagents:
@@ -197,7 +197,7 @@ class ServiceContainer:
                     cfg = AgentSubconfig(**cfg)
                 self.agent_registry.register(name, cfg)
         self.run_registry = RunRegistry()
-        logger.info("Sub-agents: %d registered", self.agent_registry.count)
+        logger.info("子代理: 已注册 %d 个", self.agent_registry.count)
 
     async def _setup_memory(self):
         if not (getattr(self.config, "memory", None) and self.config.memory.enabled):
@@ -236,10 +236,10 @@ class ServiceContainer:
                     content = p.read_text(encoding="utf-8")
                     n = await searcher.index_document(str(p), content)
                     indexed += n
-                    logger.info("Memory indexed: %s (%d chunks)", p, n)
-            logger.info("Memory system initialized (extra paths: %d chunks)", indexed)
+                    logger.info("记忆索引: %s (%d 个分块)", p, n)
+            logger.info("记忆系统已初始化 (额外路径: %d 个分块)", indexed)
         except Exception as e:
-            logger.warning("Failed to initialize memory system: %s", e)
+            logger.warning("记忆系统初始化失败: %s", e)
 
     def _setup_auth(self):
         if not self.config.auth.enabled:
@@ -249,7 +249,7 @@ class ServiceContainer:
         auth_store = AuthStore(self.config.auth.db_path)
         self.rbac = RBAC(auth_store, self.config)
         logger.info(
-            "RBAC initialized (default_role=%s, pairing=%s)",
+            "RBAC 已初始化 (默认角色=%s, 配对=%s)",
             self.config.auth.default_role,
             self.config.auth.pairing_enabled,
         )
@@ -260,7 +260,7 @@ class ServiceContainer:
         from src.session_index.store import SessionIndexStore
         store = SessionIndexStore(self.config.session_search.index_path)
         self.session_index = store
-        logger.info("Session search index initialized: %s", self.config.session_search.index_path)
+        logger.info("会话搜索索引已初始化: %s", self.config.session_search.index_path)
         self._startup_sync_task = asyncio.create_task(self._run_startup_sync(store))
 
     def _setup_channels_and_sessions(self, skills: list):
@@ -289,7 +289,7 @@ class ServiceContainer:
                 )
                 self.media_understanding_runner = self._qq_mu_runner
             except Exception as e:
-                logger.warning("Failed to init QQ media understanding: %s", e)
+                logger.warning("QQ 多媒体理解初始化失败: %s", e)
 
     def _setup_browser(self):
         if not self.config.tools.browser.enabled:
@@ -297,9 +297,9 @@ class ServiceContainer:
         try:
             from src.tools.browser.manager import BrowserManager
             self.browser_manager = BrowserManager()
-            logger.info("Browser manager initialized")
+            logger.info("浏览器管理器已初始化")
         except Exception as e:
-            logger.warning("Failed to init browser manager: %s", e)
+            logger.warning("浏览器管理器初始化失败: %s", e)
 
     def _setup_cron(self):
         if not self.config.cron.enabled:
@@ -310,7 +310,7 @@ class ServiceContainer:
             return await execute_cron_job(job, self.agent_loop, self.config, self.qq)
 
         self.cron_service = CronService(cron_store, cron_execute, config=self.config, channel=self.qq)
-        logger.info("Cron service initialized")
+        logger.info("定时任务服务已初始化")
 
     async def _setup_workspace(self):
         from src.tools.file_tools import set_workspace
@@ -332,7 +332,7 @@ class ServiceContainer:
         self.qq = QQChannel(self.config.channels.qq)
         if self._qq_mu_runner:
             self.qq.set_media_understanding_runner(self._qq_mu_runner)
-            logger.info("Media understanding runner initialized for QQ channel")
+            logger.info("QQ 频道多媒体理解已初始化")
 
     def _setup_gateway(self):
         from src.gateway import create_gateway
@@ -346,10 +346,10 @@ class ServiceContainer:
         from src._container import set_container
         set_container(self)
 
-        logger.info("MyClaw 0.1.0 starting...")
-        logger.info("Model: %s/%s", self.config.model.provider, self.config.model.name)
+        logger.info("MyClaw 0.1.0 启动中...")
+        logger.info("模型: %s/%s", self.config.model.provider, self.config.model.name)
         if not self.config.gateway.auth_token:
-            logger.warning("Gateway auth_token is empty — all authentication is DISABLED")
+            logger.warning("网关认证令牌为空 — 所有认证已禁用")
 
         # Phase 1: independent subsystems
         self._setup_plugins()
@@ -360,7 +360,7 @@ class ServiceContainer:
         # Phase 2: client + tools + skills
         if self.config.model.fallbacks:
             client = create_chain(self.config)
-            logger.info("Model chain: primary + %d fallbacks", len(self.config.model.fallbacks))
+            logger.info("模型链: 主模型 + %d 个回退模型", len(self.config.model.fallbacks))
         else:
             client = create_client(
                 self.config.model.provider,
@@ -393,7 +393,7 @@ class ServiceContainer:
             skills_prompt=skills_prompt,
             context_window_tokens=self.config.model.context_window,
         )
-        logger.info("AgentLoop created with %d tools, %d skills", len(tools), len(skills))
+        logger.info("AgentLoop 已创建: %d 个工具, %d 个技能", len(tools), len(skills))
 
         # Phase 4: remaining subsystems
         self._setup_session_search()
@@ -418,7 +418,7 @@ class ServiceContainer:
                 from src.memory.procedures import register_extraction_listener
                 register_extraction_listener()
             except Exception as e:
-                logger.warning("Failed to register procedure extraction listener: %s", e)
+                logger.warning("注册过程提取监听器失败: %s", e)
 
         return tools, skills
 
@@ -434,7 +434,7 @@ class ServiceContainer:
                 tool_max_chars=self.config.session_search.tool_content_max_chars,
             )
         except Exception as e:
-            logger.warning("Startup sync failed: %s", e)
+            logger.warning("启动同步失败: %s", e)
 
     async def _start_events(self):
         from src.events import emit_async, get_hook_manager
@@ -450,9 +450,9 @@ class ServiceContainer:
         try:
             from src.analytics.audit_store import subscribe_audit_to_events
             subscribe_audit_to_events()
-            logger.info("Audit store subscribed to tool events")
+            logger.info("审计存储已订阅工具事件")
         except Exception as e:
-            logger.warning("Failed to subscribe audit store: %s", e)
+            logger.warning("审计存储订阅失败: %s", e)
 
         try:
             from src.events import subscribe_async
@@ -471,22 +471,22 @@ class ServiceContainer:
                     try:
                         result = await learning_loop.on_session_end(state.messages)
                         if result.get("memories_extracted", 0) > 0:
-                            logger.info("Learning loop: extracted %d memories from %s", result["memories_extracted"], tid)
+                            logger.info("学习循环: 从 %s 提取了 %d 条记忆", result["memories_extracted"], tid)
                     except Exception as e:
-                        logger.debug("Learning loop session-end failed: %s", e)
+                        logger.debug("学习循环会话结束处理失败: %s", e)
 
             subscribe_async("session.reset", _on_session_reset, priority=10)
-            logger.info("Learning loop subscribed to session.reset events")
+            logger.info("学习循环已订阅 session.reset 事件")
         except Exception as e:
-            logger.warning("Failed to subscribe learning loop: %s", e)
+            logger.warning("学习循环订阅失败: %s", e)
 
         try:
             hook_mgr = get_hook_manager()
             hook_count = hook_mgr.load_from_config(self.config)
             if hook_count > 0:
-                logger.info("Loaded %d user-defined hooks", hook_count)
+                logger.info("已加载 %d 个用户自定义钩子", hook_count)
         except Exception as e:
-            logger.warning("Failed to load user hooks: %s", e)
+            logger.warning("加载用户钩子失败: %s", e)
 
     def _start_security_audit(self):
         if not (getattr(self.config, "security", None) and self.config.security.audit_on_startup):
@@ -495,7 +495,7 @@ class ServiceContainer:
             from src.security import run_security_audit
             run_security_audit(self.config)
         except Exception as e:
-            logger.warning("Security audit failed: %s", e)
+            logger.warning("安全审计失败: %s", e)
 
     async def _start_skills_watcher(self):
         if not (self.config.skills.enabled and self.config.skills.watch):
@@ -526,7 +526,7 @@ class ServiceContainer:
                 si_path = self.config.session_search.index_path if self.config.session_search.enabled else None
                 if should_prune_now(cp_path, self.config.session.min_interval_hours):
                     logger.info(
-                        "Auto-prune: checking for sessions older than %d days",
+                        "自动清理: 检查超过 %d 天的会话",
                         self.config.session.retention_days,
                     )
                     stats = prune_sessions(
@@ -537,13 +537,13 @@ class ServiceContainer:
                     if stats["sessions_removed"] > 0 and self.config.session.vacuum_after_prune:
                         vacuum_database(cp_path)
                         logger.info(
-                            "Auto-prune complete: removed %d sessions",
+                            "自动清理完成: 已移除 %d 个会话",
                             stats["sessions_removed"],
                         )
                 else:
-                    logger.debug("Auto-prune: skipping (within min_interval_hours)")
+                    logger.debug("自动清理: 跳过 (在最小间隔时间内)")
             except Exception as e:
-                logger.warning("Auto-prune failed: %s", e)
+                logger.warning("自动清理失败: %s", e)
 
     async def _start_memory_watcher(self):
         if not (self.memory_searcher and getattr(self.config.memory, "watch", False)):
@@ -555,20 +555,20 @@ class ServiceContainer:
                 lambda path, content: asyncio.ensure_future(self.memory_searcher.index_document(path, content)),
             )
         except Exception as e:
-            logger.warning("Failed to start memory watcher: %s", e)
+            logger.warning("记忆监视器启动失败: %s", e)
 
     async def _start_channels(self):
         await self.qq.start()
         logger.info(
-            "Gateway ready: http://%s:%d",
+            "网关已就绪: http://%s:%d",
             self.config.gateway.host,
             self.config.gateway.port,
         )
-        logger.info("OpenAI compat: POST /v1/chat/completions")
-        logger.info("WebSocket:     ws://%s:%d/ws", self.config.gateway.host, self.config.gateway.port)
-        logger.info("Health:        GET /healthz")
+        logger.info("OpenAI 兼容接口: POST /v1/chat/completions")
+        logger.info("WebSocket:        ws://%s:%d/ws", self.config.gateway.host, self.config.gateway.port)
+        logger.info("健康检查:          GET /healthz")
         if self.cron_service:
-            logger.info("Cron API:      GET /api/cron/status")
+            logger.info("定时任务 API:     GET /api/cron/status")
 
     # ── Startup: main orchestrator ───────────────────────────────────
 
@@ -651,9 +651,9 @@ class ServiceContainer:
                 get_hook_manager().unload_all()
             except Exception:
                 pass
-            logger.info("MyClaw stopped")
+            logger.info("MyClaw 已停止")
         except Exception as e:
-            logger.error("Error during shutdown: %s", e, exc_info=True)
+            logger.error("关闭过程中出错: %s", e, exc_info=True)
 
     async def on_config_reload(self, old_config, new_config, plan):
         self.config = new_config

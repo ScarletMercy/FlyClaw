@@ -7,70 +7,54 @@ logger = logging.getLogger("myclaw.security")
 
 
 def run_security_audit(config) -> dict[str, Any]:
-    """Run startup security audit on configuration.
-
-    Checks:
-    1. Gateway auth - warns if gateway exposed (0.0.0.0) without auth_token
-    2. Exec safety - info if approval_mode=off
-    3. Data directory - ensures data/ exists or can be created
-    5. Secret leakage - scans config.yaml for hardcoded secrets
-
-    Returns:
-        Dict with counts of passed, warnings, info, and list of issues
-    """
     results = {"passed": 0, "warnings": 0, "info": 0, "issues": []}
 
     def _check(name: str, severity: str, message: str):
         if severity == "PASS":
             results["passed"] += 1
-            logger.info("[security] PASS %s", name)
+            logger.info("[安全] 通过 %s", name)
         elif severity == "WARN":
             results["warnings"] += 1
-            logger.warning("[security] WARN %s: %s", name, message)
+            logger.warning("[安全] 警告 %s: %s", name, message)
             results["issues"].append({"name": name, "severity": "WARN", "message": message})
         else:
             results["info"] += 1
-            logger.info("[security] INFO %s", name)
+            logger.info("[安全] 信息 %s", name)
 
-    # Check 1: Gateway auth
     host = config.gateway.host
     token = config.gateway.auth_token
     if host in ("0.0.0.0", "", "::", "[::]", "0:0:0:0:0:0:0:0") and not token:
-        _check("gateway-auth", "WARN", f"gateway exposed on {host} without auth_token")
+        _check("gateway-auth", "WARN", f"网关暴露在 {host} 但未设置认证令牌")
     elif token:
         _check("gateway-auth", "PASS", "")
 
-    # Check 3: Exec approval
     if config.tools.exec.approval_mode == "off":
-        _check("exec-approval", "INFO", "approval_mode=off")
+        _check("exec-approval", "INFO", "审批模式已关闭")
     else:
         _check("exec-approval", "PASS", "")
 
-    # Check 4: Data directory
     data_dir = Path.home() / ".myclaw" / "data"
     if data_dir.exists():
         _check("data-dir", "PASS", "")
     else:
         try:
             data_dir.mkdir(parents=True, exist_ok=True)
-            _check("data-dir", "PASS", "created ~/.myclaw/data/")
+            _check("data-dir", "PASS", "已创建 ~/.myclaw/data/")
         except Exception:
-            _check("data-dir", "WARN", "cannot create ~/.myclaw/data/ directory")
+            _check("data-dir", "WARN", "无法创建 ~/.myclaw/data/ 目录")
 
-    # Check 5: Secret leakage in config.yaml
     _check_secrets(config, results, _check)
 
-    # Check 6: RBAC / Auth
     if getattr(config, "auth", None) and config.auth.enabled:
         _check("rbac-enabled", "PASS", "")
         if not getattr(config, "owner_id", ""):
-            _check("rbac-owner", "WARN", "owner_id not set — no user will have owner role automatically")
+            _check("rbac-owner", "WARN", "owner_id 未设置 — 没有用户会自动获得 owner 角色")
         else:
             _check("rbac-owner", "PASS", "")
     else:
-        _check("rbac-enabled", "INFO", "auth/RBAC disabled")
+        _check("rbac-enabled", "INFO", "认证/RBAC 已禁用")
 
-    logger.info("[security] Audit complete: %d passed, %d warnings", results["passed"], results["warnings"])
+    logger.info("[安全] 审计完成: %d 项通过, %d 项警告", results["passed"], results["warnings"])
     return results
 
 
@@ -103,7 +87,7 @@ def _check_secrets(config, results, _check):
                 continue
             if re.search(pattern, stripped, re.IGNORECASE):
                 if not found:
-                    _check("secrets", "WARN", f"potential hardcoded secrets in config.yaml (line {line_no})")
+                    _check("secrets", "WARN", f"config.yaml 中发现疑似明文密钥 (第 {line_no} 行)")
                     found = True
                 break
         if found:

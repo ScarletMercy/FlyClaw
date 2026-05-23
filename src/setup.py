@@ -1,6 +1,6 @@
-"""Interactive configuration wizard for MyClaw.
+"""MyClaw 交互式配置向导。
 
-Usage:
+用法:
     python -m src.setup
     myclaw-setup
     myclaw setup
@@ -80,11 +80,11 @@ PRESET_LABELS = {
     "deepseek": "DeepSeek",
     "groq": "Groq (Llama)",
     "together": "Together AI (Llama)",
-    "ollama": "Ollama (Local)",
-    "zhipu": "ZhiPu (GLM)",
+    "ollama": "Ollama (本地)",
+    "zhipu": "智谱 (GLM)",
     "moonshot": "Moonshot (Kimi)",
-    "qwen": "Qwen (Alibaba)",
-    "custom": "Custom OpenAI-compatible",
+    "qwen": "通义千问 (Qwen)",
+    "custom": "自定义 OpenAI 兼容服务",
 }
 
 
@@ -107,7 +107,7 @@ def _ask_choice(prompt: str, choices: list[str], default: str = "") -> str:
         val = _ask(prompt + f" ({options})", default)
         if val in choices:
             return val
-        print(f"  Please choose from: {options}")
+        print(f"  请从以下选项中选择: {options}")
 
 
 def _ask_yn(prompt: str, default: bool = True) -> bool:
@@ -117,19 +117,14 @@ def _ask_yn(prompt: str, default: bool = True) -> bool:
 
 
 def _has_values(d: dict, *keys: str) -> bool:
-    """Check if a dict has non-empty values for all given keys."""
     return all(d.get(k) for k in keys)
 
 
 def _ask_skip(section_label: str, d: dict, *essential_keys: str) -> bool:
-    """Ask user whether to skip reconfiguring a section that already has values.
-
-    Returns True if the user wants to skip (keep existing config).
-    """
     if not _has_values(d, *essential_keys):
         return False
-    print(f"  {section_label} already configured.")
-    return _ask_yn(f"  Keep current {section_label} settings?", default=True)
+    print(f"  {section_label}已配置。")
+    return _ask_yn(f"  保留当前{section_label}设置？", default=True)
 
 
 # ── Config I/O ──
@@ -149,7 +144,7 @@ def _save_config(config: dict) -> None:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    print(f"\n  Config saved to {CONFIG_PATH}")
+    print(f"\n  配置已保存到 {CONFIG_PATH}")
 
 
 def _section(config: dict, *keys: str) -> dict:
@@ -163,90 +158,88 @@ def _section(config: dict, *keys: str) -> dict:
 
 
 def _configure_fallbacks(model: dict) -> None:
-    """Configure fallback models (can be called independently of main model config)."""
     existing_fallbacks = model.get("fallbacks", [])
     print()
     if existing_fallbacks:
-        print(f"  Fallback models ({len(existing_fallbacks)}):")
+        print(f"  回退模型 ({len(existing_fallbacks)}):")
         for i, fb in enumerate(existing_fallbacks):
             print(f"    {i + 1}. {fb.get('provider', '?')}/{fb.get('name', '?')}")
     else:
-        print("  No fallback models configured.")
+        print("  未配置回退模型。")
 
-    if not _ask_yn("  Add/edit fallback models?", default=False):
+    if not _ask_yn("  添加/编辑回退模型？", default=False):
         return
 
     fallbacks = list(existing_fallbacks)
     while True:
         print()
         if fallbacks:
-            print(f"  Current fallbacks ({len(fallbacks)}):")
+            print(f"  当前回退模型 ({len(fallbacks)}):")
             for i, fb in enumerate(fallbacks):
                 print(f"    {i + 1}. {fb.get('provider', '?')}/{fb.get('name', '?')}")
-            action = _ask_choice("  Action", ["add", "remove", "done"], default="done")
+            action = _ask_choice("  操作", ["添加", "删除", "完成"], default="完成")
         else:
-            action = "add"
+            action = "添加"
 
-        if action == "done":
+        if action == "完成":
             break
-        elif action == "remove":
-            idx = int(_ask(f"  Remove number (1-{len(fallbacks)})", default="1")) - 1
+        elif action == "删除":
+            idx = int(_ask(f"  删除编号 (1-{len(fallbacks)})", default="1")) - 1
             if 0 <= idx < len(fallbacks):
                 removed = fallbacks.pop(idx)
-                print(f"  Removed {removed.get('provider')}/{removed.get('name')}")
+                print(f"  已删除 {removed.get('provider')}/{removed.get('name')}")
             else:
-                print("  Invalid number.")
-        elif action == "add":
-            choice = _ask_choice("  Fallback provider", list(PRESETS.keys()), default="custom")
+                print("  无效编号。")
+        elif action == "添加":
+            choice = _ask_choice("  回退模型提供商", list(PRESETS.keys()), default="custom")
             preset = PRESETS[choice]
             fb = {}
             if preset:
                 fb["provider"] = preset["provider"]
-                fb["name"] = _ask("  Model name", default=preset["name"])
+                fb["name"] = _ask("  模型名称", default=preset["name"])
                 if preset["base_url"]:
-                    fb["base_url"] = _ask("  Base URL", default=preset["base_url"])
+                    fb["base_url"] = _ask("  接口地址", default=preset["base_url"])
                 if preset["env_key"]:
                     env_name = preset["env_key"]
                     default_key = f"${{{env_name}}}"
-                    fb["api_key"] = _ask(f"  API key ({env_name})", default=default_key)
+                    fb["api_key"] = _ask(f"  API 密钥 ({env_name})", default=default_key)
             else:
                 fb["provider"] = "openai"
-                fb["name"] = _ask("  Model name", default="")
-                fb["base_url"] = _ask("  Base URL", default="")
-                env_name = _ask("  API key env var name", default="OPENAI_API_KEY")
+                fb["name"] = _ask("  模型名称", default="")
+                fb["base_url"] = _ask("  接口地址", default="")
+                env_name = _ask("  密钥环境变量名", default="OPENAI_API_KEY")
                 fb["api_key"] = f"${{{env_name}}}"
             fallbacks.append(fb)
-            print(f"  Added {fb['provider']}/{fb['name']}")
+            print(f"  已添加 {fb['provider']}/{fb['name']}")
 
     model["fallbacks"] = fallbacks
 
 
 def _step_model(config: dict) -> None:
-    print("  [1/5] Model Provider")
+    print("  [1/5] 模型提供商")
     print("  ────────────────────")
 
     model = _section(config, "model")
 
-    if _ask_skip("Model", model, "provider", "name", "api_key"):
+    if _ask_skip("模型", model, "provider", "name", "api_key"):
         _configure_fallbacks(model)
         return
     existing_provider = model.get("provider", "anthropic")
 
-    # Detect current preset
     current_preset = "custom"
     for key, preset in PRESETS.items():
         if preset and preset["provider"] == existing_provider and preset.get("base_url") == model.get("base_url"):
             current_preset = key
             break
 
-    choice = _ask_choice("  Select provider", list(PRESETS.keys()), default=current_preset)
+    choice = _ask_choice("  选择提供商", list(PRESETS.keys()), default=current_preset)
     preset = PRESETS[choice]
 
     if preset:
         model["provider"] = preset["provider"]
-        model["name"] = _ask("  Model name", default=model.get("name", preset["name"]))
+        model["name"] = _ask("  模型名称", default=model.get("name", preset["name"]))
         if preset["base_url"]:
-            model["base_url"] = _ask("  Base URL", default=model.get("base_url", preset["base_url"]))
+            model["base_url"] = _ask("  接口地址", default=model.get("base_url", preset["base_url"]))
         else:
             model.pop("base_url", None)
         if preset["env_key"]:
@@ -260,79 +253,79 @@ def _step_model(config: dict) -> None:
             if current_api_key:
                 default_key = current_api_key
             elif has_key:
-                default_key = f"${{{env_name}}} (set in env)"
+                default_key = f"${{{env_name}}} (已在环境变量中设置)"
             else:
                 default_key = f"${{{env_name}}}"
-            model["api_key"] = _ask(f"  API key ({env_name})", default=default_key)
+            model["api_key"] = _ask(f"  API 密钥 ({env_name})", default=default_key)
         else:
             model.pop("api_key", None)
     else:
         model["provider"] = "openai"
-        model["name"] = _ask("  Model name", default=model.get("name", ""))
-        model["base_url"] = _ask("  Base URL", default=model.get("base_url", ""))
-        env_name = _ask("  API key env var name", default="OPENAI_API_KEY")
+        model["name"] = _ask("  模型名称", default=model.get("name", ""))
+        model["base_url"] = _ask("  接口地址", default=model.get("base_url", ""))
+        env_name = _ask("  密钥环境变量名", default="OPENAI_API_KEY")
         model["api_key"] = f"${{{env_name}}}"
 
-    model["temperature"] = float(_ask("  Temperature", default=str(model.get("temperature", 0.0))))
+    model["temperature"] = float(_ask("  温度参数", default=str(model.get("temperature", 0.0))))
 
     _configure_fallbacks(model)
 
 
 def _step_gateway(config: dict) -> None:
     print()
-    print("  [2/5] Gateway")
+    print("  [2/5] 网关配置")
     print("  ────────────")
 
     gw = _section(config, "gateway")
 
-    if _ask_skip("Gateway", gw, "host", "port"):
+    if _ask_skip("网关", gw, "host", "port"):
         return
-    gw["host"] = _ask("  Listen host", default=gw.get("host", "127.0.0.1"))
-    gw["port"] = int(_ask("  Listen port", default=str(gw.get("port", 18080))))
-    token = _ask("  Auth token (leave empty for no auth)", default="")
+    gw["host"] = _ask("  监听地址", default=gw.get("host", "127.0.0.1"))
+    gw["port"] = int(_ask("  监听端口", default=str(gw.get("port", 18080))))
+    token = _ask("  认证令牌（留空则不启用认证）", default="")
     gw["auth_token"] = f"${{GATEWAY_AUTH_TOKEN}}" if not token else token
 
 
 
 def _step_qq(config: dict) -> None:
     print()
-    print("  [3/5] QQ Bot Channel")
+    print("  [3/5] QQ 机器人")
     print("  ─────────────────────")
 
     channels = _section(config, "channels")
     qq = _section(channels, "qq")
 
-    if qq.get("enabled") and _ask_skip("QQ Bot", qq, "app_id", "client_secret"):
+    if qq.get("enabled") and _ask_skip("QQ 机器人", qq, "app_id", "client_secret"):
         return
 
-    enabled = _ask_yn("  Enable QQ Bot?", default=qq.get("enabled", False))
+    enabled = _ask_yn("  启用 QQ 机器人？", default=qq.get("enabled", False))
     qq["enabled"] = enabled
 
     if enabled:
-        qq["app_id"] = _ask("  App ID", default=qq.get("app_id", ""))
-        qq["client_secret"] = _ask("  Client Secret", default=qq.get("client_secret", ""))
-        qq["dm_policy"] = _ask_choice("  DM policy", ["open", "allowlist"], default=qq.get("dm_policy", "open"))
+        qq["app_id"] = _ask("  应用 ID (App ID)", default=qq.get("app_id", ""))
+        qq["client_secret"] = _ask("  应用密钥 (Client Secret)", default=qq.get("client_secret", ""))
+        qq["dm_policy"] = _ask_choice("  私聊策略", ["open", "allowlist"], default=qq.get("dm_policy", "open"))
         qq["group_policy"] = _ask_choice(
-            "  Group policy", ["allowlist", "open", "disabled"], default=qq.get("group_policy", "allowlist")
+            "  群聊策略", ["allowlist", "open", "disabled"], default=qq.get("group_policy", "allowlist")
         )
-        qq["require_mention"] = _ask_yn("  Require @mention in groups?", default=qq.get("require_mention", True))
-        qq["markdown_support"] = _ask_yn("  Enable markdown support?", default=qq.get("markdown_support", False))
+        qq["require_mention"] = _ask_yn("  群聊中需要 @机器人？", default=qq.get("require_mention", True))
+        qq["markdown_support"] = _ask_yn("  启用 Markdown 支持？", default=qq.get("markdown_support", False))
 
 
 def _step_search(config: dict) -> None:
     print()
-    print("  [4/5] Web Search")
+    print("  [4/5] 网页搜索")
     print("  ────────────────")
 
     tools = _section(config, "tools")
     ws = _section(tools, "web_search")
 
-    if ws.get("enabled") and _ask_skip("Web Search", ws, "api_key"):
+    if ws.get("enabled") and _ask_skip("网页搜索", ws, "api_key"):
         return
 
-    ws["enabled"] = _ask_yn("  Enable web search?", default=ws.get("enabled", False))
+    ws["enabled"] = _ask_yn("  启用网页搜索？", default=ws.get("enabled", False))
     if ws["enabled"]:
-        ws["api_key"] = _ask("  Tavily API key", default=ws.get("api_key", "${TAVILY_API_KEY}"))
+        ws["api_key"] = _ask("  Tavily API 密钥", default=ws.get("api_key", "${TAVILY_API_KEY}"))
 
     wf = _section(tools, "web_fetch")
     wf["enabled"] = ws["enabled"] if not wf.get("enabled") else True
@@ -345,21 +338,21 @@ def _step_summary(config: dict) -> None:
     ws = config.get("tools", {}).get("web_search", {})
 
     print()
-    print("  [5/5] Summary")
+    print("  [5/5] 配置总览")
     print("  ─────────────")
-    print(f"  Model:      {model.get('provider', '?')}/{model.get('name', '?')}")
+    print(f"  模型:       {model.get('provider', '?')}/{model.get('name', '?')}")
     if model.get("base_url"):
-        print(f"  Base URL:   {model['base_url']}")
+        print(f"  接口地址:   {model['base_url']}")
     fallbacks = model.get("fallbacks", [])
     if fallbacks:
-        print(f"  Fallbacks:  {len(fallbacks)}")
+        print(f"  回退模型:   {len(fallbacks)}")
         for fb in fallbacks:
             print(f"    - {fb.get('provider', '?')}/{fb.get('name', '?')}")
-    print(f"  Gateway:    {gw.get('host', '?')}:{gw.get('port', '?')}")
-    print(f"  QQ Bot:     {'enabled' if qq.get('enabled') else 'disabled'}")
+    print(f"  网关:       {gw.get('host', '?')}:{gw.get('port', '?')}")
+    print(f"  QQ 机器人:  {'已启用' if qq.get('enabled') else '未启用'}")
     if qq.get("enabled"):
         print(f"    app_id:   {qq.get('app_id', '')}")
-    print(f"  Web search: {'enabled' if ws.get('enabled') else 'disabled'}")
+    print(f"  网页搜索:   {'已启用' if ws.get('enabled') else '未启用'}")
 
 
 # ── Main ──
@@ -368,11 +361,10 @@ def _step_summary(config: dict) -> None:
 def run_wizard():
     print()
     print("  ╔══════════════════════════════════════╗")
-    print("  ║      MyClaw Configuration Wizard     ║")
+    print("  ║        MyClaw 配置向导               ║")
     print("  ╚══════════════════════════════════════╝")
     print()
-    print("  Press Enter at any prompt to keep the current/default value.")
-    print("  Press Ctrl+C to exit without saving.")
+    print("  按 Enter 保留当前/默认值，按 Ctrl+C 退出且不保存。")
     print()
 
     existing = _load_existing()
@@ -384,17 +376,17 @@ def run_wizard():
     _step_search(config)
     _step_summary(config)
 
-    save = _ask_yn("  Save configuration?")
+    save = _ask_yn("  保存配置？")
     if save:
         _save_config(config)
         print()
-        print("  Next steps:")
-        print("    1. Set required environment variables (API keys)")
-        print("    2. Run: myclaw")
-        print("    3. Or run: myclaw doctor  (to check configuration)")
+        print("  后续步骤:")
+        print("    1. 设置所需的环境变量（API 密钥）")
+        print("    2. 运行: myclaw")
+        print("    3. 或运行: myclaw doctor（检查配置）")
         print()
     else:
-        print("\n  Configuration discarded.")
+        print("\n  配置已丢弃。")
 
 
 def main():
