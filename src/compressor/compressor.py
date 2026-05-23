@@ -202,9 +202,6 @@ class ContextCompressor:
                     if tc_id:
                         call_id_to_name[tc_id] = tc_name
 
-        # Tools that should not be pruned (OCR results are needed in full)
-        _NO_PRUNE_TOOLS = {"windows_ocr"}
-
         result = []
         for m in messages:
             if m.get("role") == "tool":
@@ -219,10 +216,6 @@ class ContextCompressor:
                     )
                     if m.get("name"):
                         tool_name = m["name"]
-                    # Skip pruning for tools that need full output
-                    if tool_name in _NO_PRUNE_TOOLS:
-                        result.append(m)
-                        continue
                     summary = _tool_result_summary(tool_name, content)
                     result.append({**m, "content": summary})
                 else:
