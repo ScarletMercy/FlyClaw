@@ -421,7 +421,7 @@ class TestSanitizeApiMessages:
         tool_msgs = [m for m in sanitized if m.get("role") == "tool"]
         assert len(tool_msgs) == 1
         assert tool_msgs[0]["tool_call_id"] == "tc1"
-        assert "removed by compression" in tool_msgs[0]["content"]
+        assert "tool result unavailable" in tool_msgs[0]["content"]
 
     def test_removes_orphan_result(self):
         from src.agent.loop import AgentLoop

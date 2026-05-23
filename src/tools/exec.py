@@ -103,6 +103,8 @@ _DELETE_APPROVAL_PATTERNS = [
     "rmdir ",
     "os.remove",
     "os.unlink",
+    "remove-item",
+    "ri ",
 ]
 
 # Patterns that indicate shell features used to bypass denylists

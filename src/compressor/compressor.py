@@ -107,7 +107,7 @@ class ContextCompressor:
         context_window_tokens: int = 100000,
     ) -> list[dict]:
         if not self.config.enabled:
-            return self._static_compact(messages, context_window_tokens)
+            return self._compact(messages, context_window_tokens)
 
         estimated = _estimate_tokens(messages)
         threshold = int(context_window_tokens * self.config.threshold_percent)
@@ -130,6 +130,34 @@ class ContextCompressor:
         tail_count = max(self.config.tail_messages, len(non_system) // 4)
         tail = non_system[-tail_count:]
         middle = non_system[:-tail_count]
+
+        # 确保tail中的tool_call都有对应的tool result
+        tail_tc_ids: set[str] = set()
+        for m in tail:
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                for tc in m["tool_calls"]:
+                    if tc.get("id"):
+                        tail_tc_ids.add(tc["id"])
+
+        if tail_tc_ids:
+            tail_result_ids: set[str] = set()
+            for m in tail:
+                if m.get("role") == "tool" and m.get("tool_call_id"):
+                    tail_result_ids.add(m["tool_call_id"])
+
+            missing_ids = tail_tc_ids - tail_result_ids
+            if missing_ids:
+                # 从middle中找到缺失的tool result，移到tail
+                additional: list[dict] = []
+                remaining_middle: list[dict] = []
+                for m in middle:
+                    if m.get("role") == "tool" and m.get("tool_call_id") in missing_ids:
+                        additional.append(m)
+                        missing_ids.discard(m["tool_call_id"])
+                    else:
+                        remaining_middle.append(m)
+                tail = additional + tail
+                middle = remaining_middle
 
         if not middle:
             return messages
@@ -161,7 +189,7 @@ class ContextCompressor:
             )
             return result
 
-        return self._static_compact(messages, context_window_tokens)
+        return self._compact(messages, context_window_tokens)
 
     def _prune_tool_outputs(self, messages: list[dict]) -> list[dict]:
         call_id_to_name: dict[str, str] = {}
@@ -179,6 +207,10 @@ class ContextCompressor:
             if m.get("role") == "tool":
                 content = m.get("content", "")
                 if isinstance(content, str) and len(content) > 300:
+                    # Skip if already truncated by _truncate_large_outputs (has file path reference)
+                    if "Full content saved to:" in content:
+                        result.append(m)
+                        continue
                     tool_name = call_id_to_name.get(
                         m.get("tool_call_id", ""), "unknown"
                     )
@@ -253,7 +285,7 @@ class ContextCompressor:
             logger.warning("LLM summarization failed: %s", e)
             return None
 
-    def _static_compact(
+    def _compact(
         self,
         messages: list[dict],
         context_window_tokens: int = 100000,
@@ -275,6 +307,36 @@ class ContextCompressor:
 
         if not pruned:
             return messages
+
+        # 确保kept中的tool_call都有对应的tool result
+        kept_tc_ids: set[str] = set()
+        for m in kept:
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                for tc in m["tool_calls"]:
+                    if tc.get("id"):
+                        kept_tc_ids.add(tc["id"])
+
+        if kept_tc_ids:
+            kept_result_ids: set[str] = set()
+            for m in kept:
+                if m.get("role") == "tool" and m.get("tool_call_id"):
+                    kept_result_ids.add(m["tool_call_id"])
+
+            missing_ids = kept_tc_ids - kept_result_ids
+            if missing_ids:
+                # 从pruned中找到缺失的tool result，移到kept
+                additional: list[dict] = []
+                remaining_pruned: list[dict] = []
+                for m in pruned:
+                    if m.get("role") == "tool" and m.get("tool_call_id") in missing_ids:
+                        additional.append(m)
+                        missing_ids.discard(m["tool_call_id"])
+                    else:
+                        remaining_pruned.append(m)
+                kept = additional + kept
+                pruned = remaining_pruned
+                if not pruned:
+                    return messages
 
         summaries = []
         for m in pruned:

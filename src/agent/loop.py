@@ -162,17 +162,18 @@ class AgentLoop:
         self._config = config
         self._skills_prompt = skills_prompt
         self._ctx_window_tokens = context_window_tokens
-        self._compressor = None
         self._context_files: list[str] = []
 
         # Build tool name → ToolDef lookup
         self._tool_map: dict[str, ToolDef] = {t.name: t for t in tools}
 
-        # Compressor
-        if config:
-            from src.compressor.compressor import ContextCompressor
-            self._compressor = ContextCompressor(config.compression, main_config=config, client=client)
+        # Compressor - always create, even without config
+        from src.compressor.compressor import ContextCompressor
+        from src.config import CompressionConfig
+        compression_config = config.compression if config else CompressionConfig()
+        self._compressor = ContextCompressor(compression_config, main_config=config, client=client)
 
+        if config:
             from src.bootstrap import load_bootstrap_files
             agents_cfg = getattr(config, "agents", None)
             if agents_cfg:
@@ -548,10 +549,8 @@ class AgentLoop:
                 if status in (401, 403) or "auth" in err_str:
                     raise
                 if "context" in err_str and ("length" in err_str or "token" in err_str or "overflow" in err_str):
-                    if self._compressor is not None:
-                        messages = await self._compressor.compress(messages, self._ctx_window_tokens)
-                        continue
-                    raise
+                    messages = await self._compressor.compress(messages, self._ctx_window_tokens)
+                    continue
                 if status == 400 and "context" not in err_str:
                     raise
                 base = 5.0
@@ -580,25 +579,17 @@ class AgentLoop:
         """
         self._truncate_large_outputs(state.messages, thread_id)
 
-        history = state.messages
+        # Clean orphan tool_call/result pairs BEFORE compression
+        history = self._sanitize_api_messages(state.messages)
 
         # Proactive compression check
-        if self._compressor is not None and self._compressor.should_compress(history, self._ctx_window_tokens):
+        if self._compressor.should_compress(history, self._ctx_window_tokens):
             history = await self._compressor.compress(history, self._ctx_window_tokens)
             try:
                 from src.tools.file_tools import reset_read_dedup
                 reset_read_dedup(thread_id)
             except Exception:
                 pass
-        elif self._compressor is None:
-            estimated = _estimate_tokens_simple(history)
-            if estimated > int(self._ctx_window_tokens * 0.8):
-                history = self._static_fallback(history)
-                try:
-                    from src.tools.file_tools import reset_read_dedup
-                    reset_read_dedup(thread_id)
-                except Exception:
-                    pass
 
         system_text = self._build_system_prompt(state, self._get_active_tool_defs(state))
         history = self._sanitize_api_messages(history)
@@ -621,56 +612,6 @@ class AgentLoop:
                     m["content"] = truncated
                     m["_truncated"] = True
 
-    def _static_fallback(self, messages: list[dict]) -> list[dict]:
-        """Emergency static truncation when no compressor is configured."""
-        max_tokens = int(self._ctx_window_tokens * 0.7)
-        estimated = _estimate_tokens_simple(messages)
-        if estimated <= max_tokens:
-            return messages
-
-        non_system = [m for m in messages if m.get("role") != "system"]
-        if not non_system:
-            return messages
-
-        tail_budget = int(max_tokens * 0.5)
-        tail_msgs: list[dict] = []
-        tail_tokens = 0
-        for m in reversed(non_system):
-            content = m.get("content", "")
-            msg_tokens = (len(content) if isinstance(content, str) else len(str(content))) // _CHARS_PER_TOKEN + 10
-            if tail_tokens + msg_tokens > tail_budget:
-                break
-            tail_msgs.append(m)
-            tail_tokens += msg_tokens
-        tail_msgs.reverse()
-
-        pruned = non_system[:len(non_system) - len(tail_msgs)]
-        if not pruned:
-            return messages
-
-        # Build tool_call_id → name mapping from assistant messages
-        call_id_to_name: dict[str, str] = {}
-        for m in messages:
-            if m.get("role") == "assistant" and m.get("tool_calls"):
-                for tc in m["tool_calls"]:
-                    fn = tc.get("function", {})
-                    if isinstance(fn, dict) and tc.get("id"):
-                        call_id_to_name[tc["id"]] = fn.get("name", "unknown")
-
-        summaries = []
-        for m in pruned:
-            role = m.get("role", "")
-            content = str(m.get("content", ""))[:150]
-            if role == "user":
-                summaries.append(f"User: {content}")
-            elif role == "assistant":
-                summaries.append(f"Assistant: {content}")
-            elif role == "tool":
-                name = call_id_to_name.get(m.get("tool_call_id", ""), "unknown")
-                summaries.append(f"[Tool({name})]: {content[:150]}")
-
-        summary = "[Earlier conversation summarized]\n" + "\n".join(summaries[-20:])
-        return [{"role": "system", "content": summary}] + tail_msgs
 
     # ------------------------------------------------------------------
     # Sanitization helpers
@@ -702,7 +643,9 @@ class AgentLoop:
 
         for tid in tc_ids:
             if tid not in result_ids:
-                stub = {"role": "tool", "tool_call_id": tid, "content": "[result removed by compression]"}
+                # 正常情况下不应该走到这里，因为压缩时已确保tool result不丢失
+                logger.warning("Missing tool result for tool_call_id=%s", tid)
+                stub = {"role": "tool", "tool_call_id": tid, "content": "[tool result unavailable]"}
                 sanitized.append(stub)
 
         for i in reversed(result_indices):

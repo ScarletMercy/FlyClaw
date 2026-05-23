@@ -496,6 +496,68 @@ class QQChannel(Channel):
 
     # --- Dispatch handler ---
 
+    async def _qq_media_headers(self) -> dict:
+        token = await self._token_manager.get_token()
+        if token:
+            return {"Authorization": f"QQBot {token}"}
+        return {}
+
+    async def _transcribe_voices(self, voice_attachments: list[dict]) -> str:
+        from src.channels.qq_audio import convert_to_wav
+
+        parts: list[str] = []
+        media_headers = await self._qq_media_headers()
+
+        for va in voice_attachments:
+            asr_refer = va.get("asr_refer_text", "")
+            if asr_refer:
+                parts.append(f"\n[语音转文字]: {asr_refer}")
+                continue
+
+            voice_wav_url = va.get("voice_wav_url", "")
+            url = va.get("url", "")
+            download_url = voice_wav_url or url
+            is_pre_wav = bool(voice_wav_url)
+
+            if not download_url:
+                parts.append("\n[语音消息（无下载链接）]")
+                continue
+
+            try:
+                async with httpx.AsyncClient(timeout=30, follow_redirects=True) as dl:
+                    resp = await dl.get(download_url, headers=media_headers)
+                    resp.raise_for_status()
+                    audio_data = resp.content
+
+                if len(audio_data) < 10:
+                    parts.append("\n[语音消息（数据过小）]")
+                    continue
+
+                wav_bytes = None
+                if is_pre_wav and audio_data[:4] == b"RIFF":
+                    wav_bytes = audio_data
+                else:
+                    wav_bytes = await convert_to_wav(audio_data)
+
+                transcript = None
+                if wav_bytes and self._mu_runner:
+                    try:
+                        from src.media_understanding.types import MediaCapability
+                        result = await self._mu_runner.understand(wav_bytes, MediaCapability.AUDIO)
+                        transcript = result.text or None
+                    except Exception as e:
+                        logger.warning("QQ audio transcription (mu_runner) failed: %s", e)
+
+                if transcript:
+                    parts.append(f"\n[语音转文字]: {transcript}")
+                else:
+                    parts.append("\n[语音消息（转写失败）]")
+            except Exception as e:
+                logger.warning("QQ voice processing failed: %s", e)
+                parts.append("\n[语音消息（转写失败）]")
+
+        return "".join(parts)
+
     async def _on_dispatch(self, event_type: str, data: dict):
         logger.debug("QQ dispatch: %s", event_type)
         if not self._on_message_callback:
@@ -578,7 +640,7 @@ class QQChannel(Channel):
         attachments = data.get("attachments", [])
         image_urls = []
         video_urls = []
-        audio_urls = []
+        voice_attachments = []
         file_urls = []
         has_media = False
         if attachments:
@@ -596,12 +658,24 @@ class QQChannel(Channel):
                 elif ct.startswith("video"):
                     text += "\n[video]"
                     has_media = True
-                elif ct.startswith("audio") and url:
-                    audio_urls.append(url)
+                elif ct.startswith("audio") or ct == "voice":
                     has_media = True
-                elif ct.startswith("audio"):
-                    text += "\n[audio]"
-                    has_media = True
+                    asr_refer = ""
+                    raw = att.get("asr_refer_text")
+                    if isinstance(raw, str) and raw.strip():
+                        asr_refer = raw.strip()
+                    voice_wav = ""
+                    vwav = att.get("voice_wav_url")
+                    if isinstance(vwav, str) and vwav.strip():
+                        voice_wav = vwav.strip()
+                        if voice_wav.startswith("//"):
+                            voice_wav = f"https:{voice_wav}"
+                    voice_attachments.append({
+                        "url": url,
+                        "content_type": ct,
+                        "asr_refer_text": asr_refer,
+                        "voice_wav_url": voice_wav,
+                    })
                 elif ct == "file" and url:
                     fname = att.get("filename", "")
                     size = att.get("size", 0)
@@ -638,26 +712,11 @@ class QQChannel(Channel):
             for url in image_urls:
                 text += f"\n[image_url: {url}]"
 
-        # Audio transcription
-        if audio_urls and self._mu_runner:
-            for aurl in audio_urls:
-                try:
-                    async with httpx.AsyncClient(timeout=30) as dl:
-                        resp = await dl.get(aurl)
-                        resp.raise_for_status()
-                        audio_data = resp.content
-                    from src.media_understanding.types import MediaCapability
-                    result = await self._mu_runner.understand(audio_data, MediaCapability.AUDIO)
-                    if result.text:
-                        text += f"\n[语音转文字]: {result.text}"
-                    else:
-                        text += "\n[语音消息（转写失败）]"
-                except Exception as e:
-                    logger.warning("QQ audio transcription failed: %s", e)
-                    text += "\n[语音消息（转写失败）]"
-        elif audio_urls:
-            for aurl in audio_urls:
-                text += f"\n[audio_url: {aurl}]"
+        # Voice transcription
+        if voice_attachments:
+            transcript = await self._transcribe_voices(voice_attachments)
+            if transcript:
+                text += transcript
 
         # File attachments
         if file_urls:
