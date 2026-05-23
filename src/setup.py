@@ -302,8 +302,42 @@ def _step_qq(config: dict) -> None:
     qq["enabled"] = enabled
 
     if enabled:
-        qq["app_id"] = _ask("  应用 ID (App ID)", default=qq.get("app_id", ""))
-        qq["client_secret"] = _ask("  应用密钥 (Client Secret)", default=qq.get("client_secret", ""))
+        has_existing = bool(qq.get("app_id") and qq.get("client_secret"))
+        if has_existing:
+            method = _ask_choice("  配置方式", ["保留当前配置", "扫码一键配置", "手动输入"], default="保留当前配置")
+        else:
+            method = _ask_choice("  配置方式", ["扫码一键配置", "手动输入"], default="扫码一键配置")
+
+        if method == "保留当前配置":
+            pass
+        elif method == "扫码一键配置":
+            print()
+            print("  正在生成配置链接...")
+            try:
+                from src.channels.qq_onboard import qr_register
+
+                result = qr_register()
+            except ImportError:
+                print("  缺少 cryptography 库，请运行: pip install cryptography")
+                result = None
+            except Exception as exc:
+                print(f"  扫码配置失败: {exc}")
+                result = None
+
+            if result:
+                qq["app_id"] = result["app_id"]
+                qq["client_secret"] = result["client_secret"]
+                print(f"  已自动填入 App ID: {result['app_id']}")
+                if result.get("user_openid") and not qq.get("allow_from"):
+                    qq.setdefault("allow_from", [result["user_openid"]])
+            else:
+                print("  扫码未完成，将使用手动输入。")
+                qq["app_id"] = _ask("  应用 ID (App ID)", default=qq.get("app_id", ""))
+                qq["client_secret"] = _ask("  应用密钥 (Client Secret)", default=qq.get("client_secret", ""))
+        else:
+            qq["app_id"] = _ask("  应用 ID (App ID)", default=qq.get("app_id", ""))
+            qq["client_secret"] = _ask("  应用密钥 (Client Secret)", default=qq.get("client_secret", ""))
+
         qq["dm_policy"] = _ask_choice("  私聊策略", ["open", "allowlist"], default=qq.get("dm_policy", "open"))
         qq["group_policy"] = _ask_choice(
             "  群聊策略", ["allowlist", "open", "disabled"], default=qq.get("group_policy", "allowlist")
