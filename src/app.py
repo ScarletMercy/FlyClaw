@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -149,6 +150,8 @@ class ServiceContainer:
             tool_modules.append("src.tools.browser.tools")
         if getattr(self.config, "canvas", None) and self.config.canvas.enabled:
             tool_modules.append("src.canvas.tool")
+        if sys.platform == "win32" and getattr(self.config.tools, "windows_use", None) and self.config.tools.windows_use.enabled:
+            tool_modules.append("src.tools.windows")
         for mod_name in tool_modules:
             try:
                 import importlib

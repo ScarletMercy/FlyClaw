@@ -604,10 +604,30 @@ class AgentLoop:
         """
         from src.agent.tool_cache import cache_large_output
 
+        # Build mapping from tool_call_id to tool_name
+        tc_id_to_name: dict[str, str] = {}
+        for m in messages:
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                for tc in m["tool_calls"]:
+                    tc_id = tc.get("id", "")
+                    if tc_id:
+                        if isinstance(tc, dict):
+                            tool_name = tc.get("function", {}).get("name", "")
+                        else:
+                            tool_name = tc.function.name
+                        tc_id_to_name[tc_id] = tool_name
+
+        # Tools that should not be truncated (OCR results are needed in full)
+        _NO_TRUNCATE_TOOLS = {"windows_ocr"}
+
         for m in messages:
             if m.get("role") == "tool" and not m.get("_truncated"):
                 content = m.get("content", "")
                 if isinstance(content, str) and len(content) > 8000:
+                    tc_id = m.get("tool_call_id", "")
+                    tool_name = tc_id_to_name.get(tc_id, "")
+                    if tool_name in _NO_TRUNCATE_TOOLS:
+                        continue
                     truncated, _ = cache_large_output(content, thread_id)
                     m["content"] = truncated
                     m["_truncated"] = True

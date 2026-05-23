@@ -215,6 +215,15 @@ class BrowserConfig(BaseModel):
     block_urls: list[str] = Field(default_factory=list)
 
 
+class WindowsUseConfig(BaseModel):
+    """Windows desktop automation via pyautogui."""
+
+    enabled: bool = False
+    screenshot_dir: str = "~/.myclaw/data/screenshots"
+    default_timeout: float = 5.0
+    ocr_lang: str = "ch"
+
+
 class ToolsConfig(BaseModel):
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     web_search: WebSearchToolConfig = Field(default_factory=WebSearchToolConfig)
@@ -223,6 +232,7 @@ class ToolsConfig(BaseModel):
     policy: ToolsPolicyConfig = Field(default_factory=ToolsPolicyConfig)
     media_understanding: MediaUnderstandingConfig = Field(default_factory=MediaUnderstandingConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
+    windows_use: WindowsUseConfig = Field(default_factory=WindowsUseConfig)
 
 
 class SnapshotConfig(BaseModel):
