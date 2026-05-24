@@ -11,6 +11,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import time as _time
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -55,6 +56,14 @@ FULL_INTENTS = INTENT_PUBLIC_GUILD_MESSAGES | INTENT_DIRECT_MESSAGE | INTENT_GRO
 _RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
 _MAX_RECONNECT_ATTEMPTS = 100
 _MSG_SEQ_MAX = 65536
+
+# URL conversion for markdown mode
+_URL_RE = re.compile(r'(?<!\()(https?://[^\s\)]+)(?!\))')
+
+
+def _convert_urls_to_markdown(text: str) -> str:
+    """将裸链接转换为 markdown 链接语法，保持已有 markdown 链接不变。"""
+    return _URL_RE.sub(r'[链接](\1)', text)
 
 
 # ---------------------------------------------------------------------------
@@ -864,7 +873,12 @@ class QQChannel(Channel):
         chunks = self.chunk_text(text, 2000)
         results = []
         for chunk in chunks:
-            result = await self._send_message(chat_id, chunk, reply_to)
+            if self.config.markdown_support:
+                chunk = _convert_urls_to_markdown(chunk)
+                markdown = {"content": chunk}
+            else:
+                markdown = None
+            result = await self._send_message(chat_id, chunk, reply_to, markdown=markdown)
             results.append(result)
             if len(chunks) > 1:
                 await asyncio.sleep(0.1)

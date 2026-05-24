@@ -68,6 +68,9 @@ def _format_skill_frontmatter(name: str, description: str, category: str = "") -
     return "\n".join(lines)
 
 
+SUPPORTING_DIRS = frozenset({"references", "templates", "scripts", "assets"})
+
+
 class SkillManager:
     """Manages skill CRUD operations."""
 
@@ -196,6 +199,74 @@ class SkillManager:
         skills = discover_skills([("user", self.skills_dir)], container.config)
         return skills
 
+    def patch_skill(
+        self,
+        name: str,
+        old_string: str,
+        new_string: str,
+        file_path: str = "",
+        replace_all: bool = False,
+    ) -> tuple[bool, Optional[str]]:
+        """Targeted find-and-replace in SKILL.md or a supporting file."""
+        skill_dir = self.skills_dir / name
+        if not skill_dir.exists():
+            return False, f"Skill not found: {name}"
+
+        target = skill_dir / "SKILL.md"
+        if file_path:
+            resolved = (skill_dir / file_path).resolve()
+            if not resolved.is_relative_to(skill_dir.resolve()):
+                return False, "Path traversal not allowed"
+            if not resolved.parent.exists():
+                resolved.parent.mkdir(parents=True, exist_ok=True)
+            target = resolved
+        if not target.exists():
+            return False, f"File not found: {file_path or 'SKILL.md'}"
+
+        content = target.read_text(encoding="utf-8")
+        if old_string not in content:
+            return False, f"old_string not found in {target.name}"
+
+        count = content.count(old_string)
+        if count > 1 and not replace_all:
+            return False, f"Found {count} matches; set replace_all=True or provide more context"
+
+        new_content = content.replace(old_string, new_string)
+        target.write_text(new_content, encoding="utf-8")
+        self.bump_patch(name)
+        return True, None
+
+    def write_supporting_file(
+        self, name: str, file_path: str, file_content: str,
+    ) -> tuple[bool, Optional[str]]:
+        """Write a supporting file under a skill (references/templates/scripts/assets)."""
+        skill_dir = self.skills_dir / name
+        if not skill_dir.exists():
+            return False, f"Skill not found: {name}"
+        parts = Path(file_path).parts
+        if not parts or parts[0] not in SUPPORTING_DIRS:
+            return False, f"file_path must start with one of: {', '.join(sorted(SUPPORTING_DIRS))}"
+        target = (skill_dir / file_path).resolve()
+        if not target.is_relative_to(skill_dir.resolve()):
+            return False, "Path traversal not allowed"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(file_content, encoding="utf-8")
+        self.bump_patch(name)
+        return True, None
+
+    def remove_supporting_file(self, name: str, file_path: str) -> tuple[bool, Optional[str]]:
+        """Remove a supporting file from a skill."""
+        skill_dir = self.skills_dir / name
+        if not skill_dir.exists():
+            return False, f"Skill not found: {name}"
+        target = (skill_dir / file_path).resolve()
+        if not target.is_relative_to(skill_dir.resolve()):
+            return False, "Path traversal not allowed"
+        if not target.exists():
+            return False, f"File not found: {file_path}"
+        target.unlink()
+        return True, None
+
     def _record_usage(self, skill_name: str, action: str = "created", created_by: str = "agent") -> None:
         """记录技能使用信息到 .usage.json。"""
         usage_file = self.skills_dir / ".usage.json"
@@ -251,6 +322,58 @@ class SkillManager:
         except Exception:
             return None
 
+    def bump_view(self, skill_name: str) -> None:
+        self._mutate_usage(skill_name, lambda r: (
+            r.update(view_count=r.get("view_count", 0) + 1,
+                     last_viewed_at=datetime.now().isoformat()),
+        ))
+
+    def bump_use(self, skill_name: str) -> None:
+        self._mutate_usage(skill_name, lambda r: (
+            r.update(use_count=r.get("use_count", 0) + 1,
+                     last_used_at=datetime.now().isoformat()),
+        ))
+
+    def bump_patch(self, skill_name: str) -> None:
+        self._mutate_usage(skill_name, lambda r: (
+            r.update(patch_count=r.get("patch_count", 0) + 1,
+                     last_patched_at=datetime.now().isoformat()),
+        ))
+
+    def mark_agent_created(self, skill_name: str) -> None:
+        self._mutate_usage(skill_name, lambda r: r.update(created_by="agent"))
+
+    def _mutate_usage(self, skill_name: str, mutator) -> None:
+        usage_file = self.skills_dir / ".usage.json"
+        usage_data: dict = {}
+        if usage_file.exists():
+            try:
+                usage_data = json.loads(usage_file.read_text(encoding="utf-8"))
+            except Exception:
+                usage_data = {}
+        if skill_name not in usage_data:
+            usage_data[skill_name] = self._empty_record()
+        mutator(usage_data[skill_name])
+        try:
+            usage_file.write_text(json.dumps(usage_data, indent=2), encoding="utf-8")
+        except Exception as e:
+            logger.warning("Failed to mutate skill usage: %s", e)
+
+    def _empty_record(self) -> dict:
+        return {
+            "use_count": 0,
+            "view_count": 0,
+            "patch_count": 0,
+            "last_used_at": None,
+            "last_viewed_at": None,
+            "last_patched_at": None,
+            "created_by": None,
+            "state": "active",
+            "pinned": False,
+            "created_at": datetime.now().isoformat(),
+            "archived_at": None,
+        }
+
 
 def get_tools() -> list:
     """返回统一的技能管理工具。"""
@@ -269,13 +392,19 @@ def get_tools() -> list:
         source: str = "",
         query: str = "",
         identifier: str = "",
+        old_string: str = "",
+        new_string: str = "",
+        file_path: str = "",
+        file_content: str = "",
+        replace_all: bool = False,
+        absorbed_into: str = "",
     ) -> str:
         """Skill management tool. Must use this (not read_file) to load skills.
 
         Args:
-            action: Operation type (list, view, create, edit, delete, usage, toggle, install, uninstall, search_hub, inspect_hub, install_hub, scan_hub)
+            action: Operation type (list, view, create, edit, patch, delete, usage, toggle, install, uninstall, search_hub, inspect_hub, install_hub, scan_hub, write_file, remove_file)
                     action="view" loads the full instruction content of a specified skill
-            name: Skill name (required for view)
+            name: Skill name (required for view, create, edit, patch, delete, usage, toggle)
             content: Skill content (needed for create/edit)
             description: Skill description
             category: Skill category
@@ -284,6 +413,12 @@ def get_tools() -> list:
             source: Install source (needed for install; URL or local path)
             query: Search query (for search_hub)
             identifier: Skill identifier from search results (for inspect_hub, install_hub)
+            old_string: Text to find for patch
+            new_string: Replacement text for patch
+            file_path: Supporting file path for patch/write_file/remove_file
+            file_content: File content for write_file
+            replace_all: Replace all occurrences for patch
+            absorbed_into: Target umbrella skill name when deleting a merged skill
         """
         from src._container import get_container
         container = get_container()
@@ -315,6 +450,7 @@ def get_tools() -> list:
             skills = container.skills_cache or []
             for s in skills:
                 if s.name == name:
+                    manager.bump_view(name)
                     return json.dumps({
                         "name": s.name,
                         "description": s.description,
@@ -330,6 +466,10 @@ def get_tools() -> list:
             skill, error = manager.create_skill(name, description or name, content, category)
             if error:
                 return json.dumps({"error": error})
+            from src.skills.provenance import is_background_review
+            if is_background_review():
+                manager.mark_agent_created(name)
+            _reload_skills(container)
             return json.dumps({
                 "success": True,
                 "action": "created",
@@ -342,6 +482,7 @@ def get_tools() -> list:
             skill, error = manager.edit_skill(name, content, description or None)
             if error:
                 return json.dumps({"error": error})
+            _reload_skills(container)
             return json.dumps({
                 "success": True,
                 "action": "edited",
@@ -354,6 +495,7 @@ def get_tools() -> list:
             success, error = manager.delete_skill(name)
             if error:
                 return json.dumps({"error": error})
+            _reload_skills(container)
             return json.dumps({"success": True, "action": "deleted", "skill": name})
 
         elif action == "usage":
@@ -618,8 +760,36 @@ def get_tools() -> list:
                 logger.error("Hub scan failed: %s", e)
                 return json.dumps({"error": f"Scan failed: {str(e)}"})
 
+        elif action == "patch":
+            if not name or not old_string or not new_string:
+                return json.dumps({"error": "name, old_string, and new_string are required for patch"})
+            ok, error = manager.patch_skill(
+                name, old_string, new_string,
+                file_path=file_path, replace_all=replace_all,
+            )
+            if error:
+                return json.dumps({"error": error})
+            _reload_skills(container)
+            return json.dumps({"success": True, "action": "patched", "skill": name})
+
+        elif action == "write_file":
+            if not name or not file_path or not file_content:
+                return json.dumps({"error": "name, file_path, and file_content are required for write_file"})
+            ok, error = manager.write_supporting_file(name, file_path, file_content)
+            if error:
+                return json.dumps({"error": error})
+            return json.dumps({"success": True, "action": "wrote_file", "skill": name, "file": file_path})
+
+        elif action == "remove_file":
+            if not name or not file_path:
+                return json.dumps({"error": "name and file_path are required for remove_file"})
+            ok, error = manager.remove_supporting_file(name, file_path)
+            if error:
+                return json.dumps({"error": error})
+            return json.dumps({"success": True, "action": "removed_file", "skill": name, "file": file_path})
+
         else:
-            return json.dumps({"error": f"Unknown action: {action}. Valid actions: list, view, create, edit, delete, usage, toggle, install, uninstall, search_hub, inspect_hub, install_hub, scan_hub"})
+            return json.dumps({"error": f"Unknown action: {action}. Valid actions: list, view, create, edit, patch, delete, usage, toggle, install, uninstall, search_hub, inspect_hub, install_hub, scan_hub, write_file, remove_file"})
 
     return [
         ToolDef.from_function(skill_manage),

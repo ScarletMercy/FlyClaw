@@ -519,6 +519,27 @@ class ServiceContainer:
             lambda: self._reload_skills(),
         )
 
+    async def _maybe_run_curator(self):
+        curator_cfg = getattr(self.config.skills, "curator", None)
+        if not curator_cfg or not curator_cfg.enabled:
+            return
+        if not self.config.skills.enabled:
+            return
+        try:
+            from src.skills.curator import SkillCurator
+            curator = SkillCurator(
+                review_interval_days=curator_cfg.interval_hours // 24 if curator_cfg.interval_hours >= 24 else 1,
+                stale_after_days=curator_cfg.stale_after_days,
+                archive_after_days=curator_cfg.archive_after_days,
+            )
+            if curator.days_since_last_review() >= curator.review_interval_days:
+                result = await curator.review_skills()
+                if result.get("changes"):
+                    logger.info("Curator auto-review: %s", result["changes"])
+                self._reload_skills()
+        except Exception as e:
+            logger.warning("Curator auto-review failed: %s", e)
+
     async def _start_canvas(self):
         if not (getattr(self.config, "canvas", None) and self.config.canvas.enabled and self.config.canvas.root):
             return
@@ -592,6 +613,7 @@ class ServiceContainer:
         await self._start_events()
         self._start_security_audit()
         await self._start_skills_watcher()
+        await self._maybe_run_curator()
         if self.cron_service:
             await self.cron_service.start()
         await self._start_canvas()

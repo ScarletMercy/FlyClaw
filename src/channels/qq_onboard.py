@@ -181,12 +181,17 @@ def qr_register(timeout_seconds: int = 600) -> Optional[dict]:
         while time.monotonic() < deadline:
             try:
                 status, app_id, encrypted_secret, user_openid = _poll_bind_result(task_id)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Poll error (will retry): %s", exc)
                 time.sleep(ONBOARD_POLL_INTERVAL)
                 continue
 
             if status == BindStatus.COMPLETED:
-                client_secret = _decrypt_secret(encrypted_secret, aes_key)
+                try:
+                    client_secret = _decrypt_secret(encrypted_secret, aes_key)
+                except Exception as exc:
+                    logger.error("Failed to decrypt client_secret: %s", exc)
+                    return None
                 print()
                 print(f"  扫码完成！(App ID: {app_id})")
                 if user_openid:

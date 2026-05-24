@@ -84,9 +84,11 @@ SESSION_SEARCH_GUIDANCE = (
 
 SKILLS_GUIDANCE = (
     "完成复杂任务（5+ 次工具调用）、修复棘手错误、发现非显而易见的工作流后，"
-    "用 skill_manage 保存为技能以便下次复用。"
-    "使用技能时发现过时、不完整或错误，立即用 skill_manage(action=\"edit\") 修补，"
-    "不要等到被要求才改。"
+    "用 skill_manage(action=\"create\") 保存为技能以便下次复用。\n"
+    "使用技能时发现过时、不完整或错误，立即用 skill_manage(action=\"patch\") 修补，"
+    "不要等到被要求才改。未维护的技能会成为负债。\n"
+    "用户纠正了你的风格、格式、工作流时，这些偏好应嵌入到相关技能中——"
+    "而不仅是保存在记忆里。技能捕获'如何为该用户完成此类任务'。"
 )
 
 
@@ -210,12 +212,15 @@ def _build_skills_section(skills_prompt: str) -> list[str]:
         return []
     return [
         "## 技能",
-        "扫描以下技能描述，如果某个技能明显适用，用 skill_manage(action=\"view\", name=\"...\") 加载。",
+        "回复前先扫描以下技能描述。如果某个技能明显适用或部分相关，"
+        "用 skill_manage(action=\"view\", name=\"...\") 加载并遵循其指令。"
+        "如果技能有问题，用 skill_manage(action=\"patch\") 修补。\n"
         "如果都不适用，不要调用 skill_manage。不要用 read_file 读取技能文件。",
         "如果用户需要的功能在本地技能中找不到，用 skill_manage(action=\"search_hub\", query=\"...\") 搜索远程技能库。",
         "搜索到合适的技能后，用 skill_manage(action=\"inspect_hub\", identifier=\"...\") 查看详情，确认后用 skill_manage(action=\"install_hub\", identifier=\"...\") 安装。",
         "注意：如果 search_hub/inspect_hub/install_hub 返回 'Hub is disabled in configuration'，说明远程技能库已禁用，只能使用本地技能。",
-        "限制：最多加载一个技能；仅在选定后加载。",
+        "限制：最多加载一个技能；仅在选定后加载。\n"
+        "完成困难或迭代式任务后，主动提出保存为技能。",
         trimmed,
         "",
     ]

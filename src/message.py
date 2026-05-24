@@ -79,6 +79,18 @@ class MessageHandler:
         self._pending_queue: dict[str, list[str]] = {}
         self._interrupted_threads: dict[str, str] = {}
 
+    def _get_channel(self, channel_prefix: str):
+        if channel_prefix == "qq":
+            return self._container.qq
+        if channel_prefix == "weixin":
+            return self._container.weixin
+        return None
+
+    def _get_channel_for_chat_id(self, chat_id: str):
+        if chat_id.startswith(("c2c:", "group:", "channel:", "dm:")):
+            return self._container.qq
+        return self._container.weixin or self._container.qq
+
     def _enqueue(self, thread_id: str, text: str) -> None:
         q = self._pending_queue.setdefault(thread_id, [])
         q.append(text)
@@ -151,7 +163,7 @@ class MessageHandler:
                 reply_fn, stream_fn, thread_id, is_command, channel_prefix,
                 session_scope, legacy_thread_id, session_key,
         ):
-            if channel_prefix == "qq" and text.strip().lower() in ("yes", "no", "/y", "/n"):
+            if channel_prefix in ("qq", "weixin") and text.strip().lower() in ("yes", "no", "/y", "/n"):
                 from src.tools.approval import get_approval_manager
                 mgr = get_approval_manager()
                 pending_list = mgr.list_pending()
@@ -269,6 +281,7 @@ class MessageHandler:
             if accepted:
                 return
             self._enqueue(thread_id, text)
+            await reply_fn("⏳ 消息已排队。" if zh else "⏳ Message queued.")
             return
 
         if thread_id not in self._interrupted_threads:
@@ -318,6 +331,7 @@ class MessageHandler:
             if tid != thread_id:
                 return
             try:
+                progress_ch = self._get_channel(channel)
                 if event == "tool.exec_started":
                     tool = kwargs.get("tool_name", "")
                     if tool in _SILENT_TOOLS:
@@ -336,8 +350,8 @@ class MessageHandler:
                         msg = f"🔧 {tool}: {args_preview}" if args_preview else f"🔧 执行 {tool}..."
                     else:
                         msg = f"🔧 {tool}: {args_preview}" if args_preview else f"🔧 Running {tool}..."
-                    if channel == "qq" and self._container.qq:
-                        await self._container.qq.send_text(active_chat_id, msg)
+                    if progress_ch:
+                        await progress_ch.send_text(active_chat_id, msg)
                 elif event == "tool.exec_failed":
                     tool = kwargs.get("tool_name", "")
                     err = kwargs.get("error", "")[:80]
@@ -345,8 +359,8 @@ class MessageHandler:
                         msg = f"❌ {tool} 失败: {err}"
                     else:
                         msg = f"❌ {tool} failed: {err}"
-                    if channel == "qq" and self._container.qq:
-                        await self._container.qq.send_text(active_chat_id, msg)
+                    if progress_ch:
+                        await progress_ch.send_text(active_chat_id, msg)
             except Exception:
                 pass
 
@@ -376,7 +390,7 @@ class MessageHandler:
             try:
                 result_state = await self._container.agent_loop.run(input_state, thread_id)
             except AP as exc:
-                asyncio.create_task(self._handle_approval_pending(exc, chat_id))
+                asyncio.create_task(self._handle_approval_pending(exc, chat_id, channel_prefix))
                 return
 
             logger.debug("[flow] agent_loop run done")
@@ -451,7 +465,7 @@ class MessageHandler:
 
             try:
                 from src.media_delivery import deliver_media
-                ch = self._container.qq if channel_prefix == "qq" else None
+                ch = self._get_channel(channel_prefix)
                 if ch:
                     display_text = await deliver_media(display_text, chat_id, channel_prefix, ch)
             except Exception as e:
@@ -611,6 +625,7 @@ class MessageHandler:
         self,
         exc,
         chat_id: str,
+        channel_prefix: str = "qq",
     ):
         from src.tools.approval import get_approval_manager
         from src.agent.loop import ApprovalPending
@@ -628,7 +643,8 @@ class MessageHandler:
                 auto_deny = getattr(current_exc, "auto_deny", False)
                 tool_name = getattr(current_exc, "tool_name", "exec_command")
 
-                if not chat_id.startswith(("c2c:", "group:", "channel:", "dm:")):
+                approval_ch = self._get_channel(channel_prefix)
+                if not approval_ch:
                     return
 
                 if tool_name in ("memory_delete", "memory"):
@@ -646,12 +662,12 @@ class MessageHandler:
                         f"Reply 'yes' to allow or 'no' to deny. (request: {current_exc.request_id})"
                     )
 
-                await self._container.qq.send_text(chat_id, msg_text)
+                await approval_ch.send_text(chat_id, msg_text)
                 decision, user_response = await mgr.await_approval(current_exc.request_id, timeout=approval_timeout)
                 if decision == "timeout":
                     if tool_name in ("memory_delete", "memory") or auto_deny:
                         timeout_msg = "⏰ 操作超时，记忆删除已取消。" if tool_name in ("memory_delete", "memory") else ("操作超时，已自动拒绝。" if zh else "Operation timed out, auto-denied.")
-                        await self._container.qq.send_text(chat_id, timeout_msg)
+                        await approval_ch.send_text(chat_id, timeout_msg)
                     decision = "deny"
 
                 if decision == "deny":
@@ -667,7 +683,7 @@ class MessageHandler:
                             assistant_text = msg["content"]
                             break
                     if assistant_text:
-                        await self._container.qq.send_text(chat_id, assistant_text)
+                        await approval_ch.send_text(chat_id, assistant_text)
                     return
                 except ApprovalPending as next_exc:
                     if consecutive_denies >= 3:
@@ -675,7 +691,7 @@ class MessageHandler:
                         if state:
                             state.pending_approval = None
                             await self._container.state_store.save(current_exc.thread_id, state)
-                        await self._container.qq.send_text(chat_id, "⚠️ 连续多次被拒绝后仍在重试，已终止操作。")
+                        await approval_ch.send_text(chat_id, "⚠️ 连续多次被拒绝后仍在重试，已终止操作。")
                         return
                     current_exc = next_exc
                     continue
@@ -711,10 +727,12 @@ class MessageHandler:
                 if msg.get("role") == "assistant" and msg.get("content"):
                     assistant_text = msg["content"]
                     break
-            if assistant_text and self._container.qq:
-                await self._container.qq.send_text(chat_id, assistant_text)
+            ch = self._get_channel_for_chat_id(chat_id)
+            if assistant_text and ch:
+                await ch.send_text(chat_id, assistant_text)
         except ApprovalPending as exc:
-            asyncio.create_task(self._handle_approval_pending(exc, chat_id))
+            _rp = "weixin" if not chat_id.startswith(("c2c:", "group:", "channel:", "dm:")) else "qq"
+            asyncio.create_task(self._handle_approval_pending(exc, chat_id, _rp))
         except RuntimeError as e:
             if "busy" in str(e).lower() or "lock" in str(e).lower():
                 logger.debug("_resume_and_reply: thread %s is busy, _handle_approval_pending is still running", thread_id)

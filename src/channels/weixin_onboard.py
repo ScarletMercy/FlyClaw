@@ -198,14 +198,12 @@ def qr_login(timeout_seconds: int = 480) -> Optional[dict[str, str]]:
 
             print("\n微信登录超时。")
 
-    try:
-        loop = asyncio.get_running_loop()
-        import concurrent.futures
+    import concurrent.futures
 
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            future = loop.run_in_executor(pool, lambda: asyncio.run(_run()))
-            loop.run_until_complete(future)
-    except RuntimeError:
-        asyncio.run(_run())
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        try:
+            pool.submit(lambda: asyncio.run(_run())).result(timeout=timeout_seconds + 30)
+        except concurrent.futures.TimeoutError:
+            logger.error("weixin: onboard timed out")
 
     return result

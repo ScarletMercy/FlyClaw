@@ -186,8 +186,14 @@ class AgentLoop:
         self._cached_history: list[dict] | None = None
         self._cached_history_count: int = 0
 
-        # Per-loop guardrails instance (shared across calls, reset on new run)
         self._guardrails = ToolLoopGuardrails()
+
+        self._iters_since_skill = 0
+        self._skill_nudge_interval = 0
+        if config and hasattr(config, "skills"):
+            raw = getattr(config.skills, "creation_nudge_interval", 0)
+            if isinstance(raw, int):
+                self._skill_nudge_interval = raw
 
     # ------------------------------------------------------------------
     # Public API
@@ -281,6 +287,7 @@ class AgentLoop:
                     total_rounds=tool_round,
                 )
                 await self._store.save(thread_id, state)
+                self._maybe_trigger_skill_review(state, thread_id)
                 return state
 
             # 1. Prepare messages — proactive compression if over budget
@@ -325,6 +332,7 @@ class AgentLoop:
                     duration_ms=duration_ms,
                     total_rounds=tool_round,
                 )
+                self._maybe_trigger_skill_review(state, thread_id)
                 return state
 
             # Checkpoint: save assistant message (with tool_calls) before execution
@@ -350,6 +358,10 @@ class AgentLoop:
                         "content": tool_result,
                     })
                     await self._store.save(thread_id, state)
+
+            # Nudge counter: increment after every tool round
+            if self._skill_nudge_interval > 0 and "skill_manage" in self._tool_map:
+                self._iters_since_skill += 1
 
             # 7. Inject pending steer text into last tool result
             steer_text = flag.drain_steer()
@@ -385,6 +397,7 @@ class AgentLoop:
         except Exception as e:
             logger.warning("Grace period summary failed: %s", e)
 
+        self._maybe_trigger_skill_review(state, thread_id)
         return state
 
     async def _resume_inner(self, thread_id: str, decision: str) -> AgentState:
@@ -565,6 +578,37 @@ class AgentLoop:
                 )
                 await asyncio.sleep(delay)
         raise last_exc
+
+    def _maybe_trigger_skill_review(self, state: AgentState, thread_id: str) -> None:
+        """Fire-and-forget background skill review if nudge threshold met."""
+        if self._skill_nudge_interval <= 0:
+            return
+        if self._iters_since_skill < self._skill_nudge_interval:
+            return
+        if "skill_manage" not in self._tool_map:
+            return
+
+        self._iters_since_skill = 0
+        messages_snapshot = list(state.messages)
+
+        async def _bg_review():
+            from src.skills.review import spawn_background_review
+            summary = await spawn_background_review(
+                client=self._client,
+                tools=self._tools,
+                config=self._config,
+                messages_snapshot=messages_snapshot,
+                review_skills=True,
+                review_memory=False,
+            )
+            if summary:
+                logger.info("💾 Self-improvement review: %s", summary)
+
+        try:
+            task = asyncio.create_task(_bg_review())
+            logger.debug("Background skill review task spawned after %d iterations", self._skill_nudge_interval)
+        except RuntimeError:
+            logger.debug("No event loop, skipping background skill review")
 
     # ------------------------------------------------------------------
     # Message preparation — two modes
@@ -805,6 +849,9 @@ class AgentLoop:
             except Exception:
                 pass
             self._guardrails.record(tool_name, args, success=True, result=result if isinstance(result, str) else "")
+
+            if tool_name == "skill_manage" and self._skill_nudge_interval > 0:
+                self._iters_since_skill = 0
 
             await emit_async(
                 "tool.exec_completed",

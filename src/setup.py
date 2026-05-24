@@ -314,15 +314,18 @@ def _step_qq(config: dict) -> None:
             print()
             print("  正在生成配置链接...")
             try:
-                from src.channels.qq_onboard import qr_register
-
-                result = qr_register()
+                import cryptography  # noqa: F401
             except ImportError:
                 print("  缺少 cryptography 库，请运行: pip install cryptography")
                 result = None
-            except Exception as exc:
-                print(f"  扫码配置失败: {exc}")
-                result = None
+            else:
+                try:
+                    from src.channels.qq_onboard import qr_register
+
+                    result = qr_register()
+                except Exception as exc:
+                    print(f"  扫码配置失败: {exc}")
+                    result = None
 
             if result:
                 qq["app_id"] = result["app_id"]

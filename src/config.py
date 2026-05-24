@@ -302,6 +302,15 @@ class HubConfig(BaseModel):
     search_timeout_seconds: int = 30
 
 
+class CuratorConfig(BaseModel):
+    enabled: bool = True
+    interval_hours: int = 168
+    min_idle_hours: int = 2
+    stale_after_days: int = 30
+    archive_after_days: int = 90
+    max_review_iterations: int = 16
+
+
 class SkillsConfig(BaseModel):
     enabled: bool = True
     extra_dirs: list[str] = Field(default_factory=list)
@@ -310,6 +319,8 @@ class SkillsConfig(BaseModel):
     disabled: list[str] = Field(default_factory=list)
     channel_disabled: dict[str, list[str]] = Field(default_factory=dict)
     hub: HubConfig = HubConfig()
+    creation_nudge_interval: int = 10
+    curator: CuratorConfig = CuratorConfig()
 
 
 class PluginsConfig(BaseModel):

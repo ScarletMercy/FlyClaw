@@ -193,7 +193,12 @@ def _account_dir() -> Path:
 
 
 def _account_file(account_id: str) -> Path:
-    return _account_dir() / f"{account_id}.json"
+    if "/" in account_id or "\\" in account_id or ".." in account_id:
+        raise ValueError(f"Invalid account_id: {account_id!r}")
+    result = _account_dir() / f"{account_id}.json"
+    if not result.resolve().is_relative_to(_account_dir().resolve()):
+        raise ValueError(f"Account ID escapes directory: {account_id!r}")
+    return result
 
 
 def _atomic_json_write(path: Path, data: dict) -> None:
@@ -249,7 +254,10 @@ def _guess_chat_type(message: dict[str, Any], account_id: str) -> tuple[str, str
     to_user_id = str(message.get("to_user_id") or "").strip()
     is_group = bool(room_id) or (to_user_id and account_id and to_user_id != account_id and message.get("msg_type") == 1)
     if is_group:
-        return "group", room_id or to_user_id or str(message.get("from_user_id") or "")
+        effective_id = room_id or to_user_id
+        if not effective_id:
+            return "group", ""
+        return "group", effective_id
     return "p2p", str(message.get("from_user_id") or "")
 
 
@@ -276,6 +284,23 @@ def _assert_weixin_cdn_url(url: str) -> None:
         raise ValueError(f"Media URL has disallowed scheme {scheme!r}")
     if host not in _WEIXIN_CDN_ALLOWLIST:
         raise ValueError(f"Media URL host {host!r} is not in the WeChat CDN allowlist.")
+
+
+def _validate_outbound_url(url: str) -> None:
+    import ipaddress as _ipaddress
+
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in ("http", "https"):
+        raise ValueError(f"Disallowed URL scheme: {parsed.scheme!r}")
+    host = parsed.hostname
+    if not host:
+        raise ValueError("URL has no hostname")
+    try:
+        addr = _ipaddress.ip_address(host)
+    except ValueError:
+        return
+    if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+        raise ValueError(f"Private/reserved IP not allowed: {host}")
 
 
 def _media_reference(item: dict[str, Any], key: str) -> dict[str, Any]:
@@ -943,6 +968,8 @@ class WeixinChannel(Channel):
         self._send_session: Optional[aiohttp.ClientSession] = None
         self._poll_task: Optional[asyncio.Task] = None
         self._content_dedup: dict[str, float] = {}
+        self._inflight: set[asyncio.Task] = set()
+        self._dedup_last_cleanup: float = 0.0
 
         self._account_id = str(getattr(config, "account_id", "") or "").strip()
         self._token = str(getattr(config, "token", "") or "").strip()
@@ -999,12 +1026,29 @@ class WeixinChannel(Channel):
             except asyncio.CancelledError:
                 pass
         self._poll_task = None
+        for task in list(self._inflight):
+            task.cancel()
+        for task in list(self._inflight):
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._inflight.clear()
         if self._poll_session and not self._poll_session.closed:
             await self._poll_session.close()
         self._poll_session = None
         if self._send_session and not self._send_session.closed:
             await self._send_session.close()
         self._send_session = None
+        cache_dir = _MYCLAW_DATA_DIR / "weixin_media"
+        if cache_dir.exists():
+            now = time.time()
+            for f in cache_dir.iterdir():
+                if f.is_file() and (now - f.stat().st_mtime) > 7 * 86400:
+                    try:
+                        f.unlink()
+                    except OSError:
+                        pass
         logger.info("Weixin channel stopped")
 
     async def send_text(self, chat_id: str, text: str, reply_to: Optional[str] = None) -> Any:
@@ -1103,6 +1147,12 @@ class WeixinChannel(Channel):
         except Exception as exc:
             logger.debug("weixin typing stop failed for %s: %s", _safe_id(chat_id), exc)
 
+    def _spawn_task(self, coro) -> asyncio.Task:
+        task = asyncio.create_task(coro)
+        self._inflight.add(task)
+        task.add_done_callback(self._inflight.discard)
+        return task
+
     # ── Poll loop ────────────────────────────────────────────────────────
 
     async def _poll_loop(self) -> None:
@@ -1110,6 +1160,7 @@ class WeixinChannel(Channel):
         sync_buf = _load_sync_buf(self._account_id)
         timeout_ms = LONG_POLL_TIMEOUT_MS
         consecutive_failures = 0
+        session_expired_count = 0
 
         while self._running:
             try:
@@ -1132,7 +1183,18 @@ class WeixinChannel(Channel):
                         or errcode == SESSION_EXPIRED_ERRCODE
                         or _is_stale_session_ret(ret, errcode, response.get("errmsg"))
                     ):
-                        logger.error("weixin: Session expired; pausing for 10 minutes")
+                        session_expired_count += 1
+                        if session_expired_count > 3:
+                            logger.error(
+                                "weixin: Session expired %d times, stopping poll loop. "
+                                "Please re-login via setup.",
+                                session_expired_count,
+                            )
+                            break
+                        logger.error(
+                            "weixin: Session expired (%d/3); pausing for 10 minutes",
+                            session_expired_count,
+                        )
                         await asyncio.sleep(600)
                         consecutive_failures = 0
                         continue
@@ -1150,13 +1212,14 @@ class WeixinChannel(Channel):
                     continue
 
                 consecutive_failures = 0
+                session_expired_count = 0
                 new_sync_buf = str(response.get("get_updates_buf") or "")
                 if new_sync_buf:
                     sync_buf = new_sync_buf
                     _save_sync_buf(self._account_id, sync_buf)
 
                 for message in response.get("msgs") or []:
-                    asyncio.create_task(self._process_message_safe(message))
+                    self._spawn_task(self._process_message_safe(message))
             except asyncio.CancelledError:
                 break
             except Exception as exc:
@@ -1194,13 +1257,22 @@ class WeixinChannel(Channel):
             if content_key in self._content_dedup and (now - self._content_dedup[content_key]) < MESSAGE_DEDUP_TTL_SECONDS:
                 return
             self._content_dedup[content_key] = now
-            if len(self._content_dedup) > 1000:
+            now_mono = time.monotonic()
+            if len(self._content_dedup) > 1000 or now_mono - self._dedup_last_cleanup > 60:
+                cutoff = now - MESSAGE_DEDUP_TTL_SECONDS
                 self._content_dedup = {
                     k: v for k, v in self._content_dedup.items()
-                    if now - v < MESSAGE_DEDUP_TTL_SECONDS
+                    if v >= cutoff
                 }
+                self._dedup_last_cleanup = now_mono
 
         chat_type, effective_chat_id = _guess_chat_type(message, self._account_id)
+        if not effective_chat_id:
+            logger.warning(
+                "weixin: skipping message with undetermined chat_id from=%s",
+                _safe_id(sender_id),
+            )
+            return
         if chat_type == "group":
             if self._group_policy == "disabled":
                 return
@@ -1215,7 +1287,7 @@ class WeixinChannel(Channel):
         context_token = str(message.get("context_token") or "").strip()
         if context_token:
             self._token_store.set(self._account_id, sender_id, context_token)
-        asyncio.create_task(self._maybe_fetch_typing_ticket(sender_id, context_token or None))
+        self._spawn_task(self._maybe_fetch_typing_ticket(sender_id, context_token or None))
 
         media_paths: list[str] = []
         media_mimes: list[str] = []
@@ -1580,6 +1652,7 @@ class WeixinChannel(Channel):
         }
 
     async def _download_remote_media(self, url: str) -> str:
+        _validate_outbound_url(url)
         assert self._send_session is not None
 
         async def _do_fetch() -> bytes:
