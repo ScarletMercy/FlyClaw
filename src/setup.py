@@ -273,7 +273,7 @@ def _step_model(config: dict) -> None:
 
 def _step_gateway(config: dict) -> None:
     print()
-    print("  [2/5] 网关配置")
+    print("  [2/6] 网关配置")
     print("  ────────────")
 
     gw = _section(config, "gateway")
@@ -289,7 +289,7 @@ def _step_gateway(config: dict) -> None:
 
 def _step_qq(config: dict) -> None:
     print()
-    print("  [3/5] QQ 机器人")
+    print("  [3/6] QQ 机器人")
     print("  ─────────────────────")
 
     channels = _section(config, "channels")
@@ -348,7 +348,7 @@ def _step_qq(config: dict) -> None:
 
 def _step_search(config: dict) -> None:
     print()
-    print("  [4/5] 网页搜索")
+    print("  [5/6] 网页搜索")
     print("  ────────────────")
 
     tools = _section(config, "tools")
@@ -365,14 +365,73 @@ def _step_search(config: dict) -> None:
     wf["enabled"] = ws["enabled"] if not wf.get("enabled") else True
 
 
+def _step_weixin(config: dict) -> None:
+    print()
+    print("  [4/6] 微信机器人（可选）")
+    print("  ────────────────────────────")
+
+    channels = _section(config, "channels")
+    weixin = _section(channels, "weixin")
+
+    if weixin.get("enabled") and _ask_skip("微信机器人", weixin, "account_id", "token"):
+        return
+
+    enabled = _ask_yn("  启用微信机器人？", default=weixin.get("enabled", False))
+    weixin["enabled"] = enabled
+
+    if enabled:
+        has_existing = bool(weixin.get("account_id") and weixin.get("token"))
+        if has_existing:
+            method = _ask_choice("  配置方式", ["保留当前配置", "扫码登录", "手动输入"], default="保留当前配置")
+        else:
+            method = _ask_choice("  配置方式", ["扫码登录", "手动输入"], default="扫码登录")
+
+        if method == "保留当前配置":
+            pass
+        elif method == "扫码登录":
+            print()
+            print("  正在获取微信二维码...")
+            try:
+                from src.channels.weixin_onboard import qr_login
+
+                result = qr_login()
+            except ImportError:
+                print("  缺少 aiohttp 或 cryptography 库，请运行: pip install aiohttp cryptography")
+                result = None
+            except Exception as exc:
+                print(f"  扫码登录失败: {exc}")
+                result = None
+
+            if result:
+                weixin["account_id"] = result["account_id"]
+                weixin["token"] = result["token"]
+                weixin["base_url"] = result.get("base_url", "https://ilinkai.weixin.qq.com")
+                print(f"  已自动填入 Account ID: {result['account_id']}")
+                if result.get("user_id") and not weixin.get("allowed_users"):
+                    weixin.setdefault("allowed_users", [result["user_id"]])
+            else:
+                print("  扫码未完成，将使用手动输入。")
+                weixin["account_id"] = _ask("  Account ID", default=weixin.get("account_id", ""))
+                weixin["token"] = _ask("  Token", default=weixin.get("token", ""))
+        else:
+            weixin["account_id"] = _ask("  Account ID", default=weixin.get("account_id", ""))
+            weixin["token"] = _ask("  Token", default=weixin.get("token", ""))
+
+        weixin["dm_policy"] = _ask_choice("  私聊策略", ["open", "allowlist", "disabled"], default=weixin.get("dm_policy", "open"))
+        weixin["group_policy"] = _ask_choice(
+            "  群聊策略", ["disabled", "allowlist", "open"], default=weixin.get("group_policy", "disabled")
+        )
+
+
 def _step_summary(config: dict) -> None:
     model = config.get("model", {})
     gw = config.get("gateway", {})
     qq = config.get("channels", {}).get("qq", {})
+    weixin = config.get("channels", {}).get("weixin", {})
     ws = config.get("tools", {}).get("web_search", {})
 
     print()
-    print("  [5/5] 配置总览")
+    print("  [6/6] 配置总览")
     print("  ─────────────")
     print(f"  模型:       {model.get('provider', '?')}/{model.get('name', '?')}")
     if model.get("base_url"):
@@ -386,6 +445,9 @@ def _step_summary(config: dict) -> None:
     print(f"  QQ 机器人:  {'已启用' if qq.get('enabled') else '未启用'}")
     if qq.get("enabled"):
         print(f"    app_id:   {qq.get('app_id', '')}")
+    print(f"  微信机器人:  {'已启用' if weixin.get('enabled') else '未启用'}")
+    if weixin.get("enabled"):
+        print(f"    account_id: {weixin.get('account_id', '')}")
     print(f"  网页搜索:   {'已启用' if ws.get('enabled') else '未启用'}")
 
 
@@ -407,6 +469,7 @@ def run_wizard():
     _step_model(config)
     _step_gateway(config)
     _step_qq(config)
+    _step_weixin(config)
     _step_search(config)
     _step_summary(config)
 

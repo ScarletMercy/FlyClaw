@@ -79,10 +79,11 @@ class AgentConfig(BaseModel):
     workspace: str = "~/.myclaw/workspace"
     max_tool_rounds: int = 15
     subagents: dict[str, AgentSubconfig] = Field(default_factory=dict)
-    subagent_max_depth: int = 2  # Max nesting depth for sub-agent calls
+    subagent_max_depth: int = 2
     timezone: str = "Asia/Shanghai"
     language: Literal["zh", "en"] = "zh"
     tool_progress_notifications: bool = False
+    busy_input_mode: Literal["interrupt", "queue", "steer"] = "interrupt"
     bootstrap_files: list[str] = Field(
         default_factory=lambda: ["AGENTS.md", "IDENTITY.md", "USER.md"]
     )
@@ -100,8 +101,23 @@ class QQConfig(BaseModel):
     markdown_support: bool = False
 
 
+class WeixinConfig(BaseModel):
+    enabled: bool = False
+    account_id: str = ""
+    token: str = ""
+    base_url: str = "https://ilinkai.weixin.qq.com"
+    cdn_base_url: str = "https://novac2c.cdn.weixin.qq.com/c2c"
+    dm_policy: Literal["open", "allowlist", "disabled"] = "open"
+    group_policy: Literal["open", "allowlist", "disabled"] = "disabled"
+    allowed_users: list[str] = Field(default_factory=list)
+    group_allowed_users: list[str] = Field(default_factory=list)
+    split_multiline_messages: bool = False
+    home_channel: str = ""
+
+
 class ChannelsConfig(BaseModel):
     qq: QQConfig = Field(default_factory=QQConfig)
+    weixin: WeixinConfig = Field(default_factory=WeixinConfig)
 
 
 class SessionConfig(BaseModel):

@@ -63,14 +63,36 @@ def _format_display(text: str) -> str:
 _SILENT_TOOLS = frozenset({
     "text_to_speech", "send_image_to_chat", "send_file_to_chat", "send_voice",
     "qq_send_image", "qq_send_file",
+    "weixin_send_image", "weixin_send_file", "weixin_send_voice",
     "skill_manage",
 })
+
+
+_MAX_INTERRUPT_DEPTH = 5
+_MAX_PENDING_QUEUE = 10
 
 
 class MessageHandler:
     def __init__(self, container):
         self._container = container
         self._approval_handler_threads: set[str] = set()
+        self._pending_queue: dict[str, list[str]] = {}
+        self._interrupted_threads: dict[str, str] = {}
+
+    def _enqueue(self, thread_id: str, text: str) -> None:
+        q = self._pending_queue.setdefault(thread_id, [])
+        q.append(text)
+        if len(q) > _MAX_PENDING_QUEUE:
+            self._pending_queue[thread_id] = q[-_MAX_PENDING_QUEUE:]
+
+    def _dequeue(self, thread_id: str) -> str | None:
+        q = self._pending_queue.get(thread_id)
+        if not q:
+            return None
+        text = q.pop(0)
+        if not q:
+            del self._pending_queue[thread_id]
+        return text
 
     @staticmethod
     def _resolve_session_key(sender_id: str, chat_type: str, chat_id: str, scope: str) -> str:
@@ -203,243 +225,387 @@ class MessageHandler:
                     return
                 input_state.messages = existing.messages + input_state.messages
 
-            # Auto-interrupt if agent is currently running on this thread
+            # Handle busy agent: interrupt / queue / steer
             if self._container.agent_loop.is_thread_busy(thread_id):
-                flag = self._container.state_store.get_interrupt_flag(thread_id)
-                flag.interrupt(text)
-                zh = self._container.config.agents.language == "zh"
-                await reply_fn("⚡ 已中断当前任务，正在处理你的新消息..." if zh else "⚡ Interrupted current task, processing your message...")
+                await self._handle_busy_message(
+                    text, thread_id, channel_prefix, reply_fn,
+                )
                 return
 
-            assistant_text = None
-            identity_written = False
-            pre_msg_count = len(input_state.messages)
-
-            # Subscribe to tool events for progress reporting
-            zh = self._container.config.agents.language == "zh"
-            show_progress = self._container.config.agents.tool_progress_notifications
-            active_chat_id = chat_id
-            channel = channel_prefix
-            _progress_unsub = None
-
-            async def _on_tool_event(event: str, **kwargs):
-                if not show_progress:
-                    return
-                tid = kwargs.get("thread_id", "")
-                if tid != thread_id:
-                    return
-                try:
-                    if event == "tool.exec_started":
-                        tool = kwargs.get("tool_name", "")
-                        if tool in _SILENT_TOOLS:
-                            return
-                        raw_args = kwargs.get("args_preview", "")
-                        try:
-                            parsed = json.loads(raw_args)
-                            if isinstance(parsed, dict):
-                                vals = list(parsed.values())
-                                args_preview = str(vals[0])[:80] if len(parsed) == 1 else ", ".join(f"{k}={v}" for k, v in parsed.items())[:80]
-                            else:
-                                args_preview = raw_args[:80]
-                        except (json.JSONDecodeError, ValueError):
-                            args_preview = raw_args[:80]
-                        if zh:
-                            msg = f"🔧 {tool}: {args_preview}" if args_preview else f"🔧 执行 {tool}..."
-                        else:
-                            msg = f"🔧 {tool}: {args_preview}" if args_preview else f"🔧 Running {tool}..."
-                        if channel == "qq" and self._container.qq:
-                            await self._container.qq.send_text(active_chat_id, msg)
-                    elif event == "tool.exec_failed":
-                        tool = kwargs.get("tool_name", "")
-                        err = kwargs.get("error", "")[:80]
-                        if zh:
-                            msg = f"❌ {tool} 失败: {err}"
-                        else:
-                            msg = f"❌ {tool} failed: {err}"
-                        if channel == "qq" and self._container.qq:
-                            await self._container.qq.send_text(active_chat_id, msg)
-                except Exception:
-                    pass
-
-            from src.events import subscribe_async, unsubscribe
-            _progress_unsub = subscribe_async("tool.*", _on_tool_event)
-
-            # Subscribe to intermediate assistant message events for real-time delivery
-            _assistant_msg_unsub = None
-
-            async def _on_assistant_message(event: str, **kwargs):
-                """Send intermediate assistant messages in real-time."""
-                tid = kwargs.get("thread_id", "")
-                if tid != thread_id:
-                    return
-                content = kwargs.get("content", "")
-                if not content:
-                    return
-
-                try:
-                    formatted = _format_display(content)
-                    await reply_fn(formatted)
-                except Exception:
-                    pass
-
-            _assistant_msg_unsub = subscribe_async("agent_loop.assistant_message", _on_assistant_message)
-
-            try:
-                logger.debug("[flow] agent_loop run start, state has %d messages", pre_msg_count)
-
-                try:
-                    result_state = await self._container.agent_loop.run(input_state, thread_id)
-                except ApprovalPending as exc:
-                    asyncio.create_task(self._handle_approval_pending(exc, chat_id))
-                    result_state = await self._container.state_store.aload(thread_id) or input_state
-
-                logger.debug("[flow] agent_loop run done")
-
-                messages = result_state.messages
-
-                if self._container.config.session_search.enabled and self._container.config.session_search.auto_sync:
-                    try:
-                        from src.session_index.store import get_session_index
-                        from src.session_index.sync import sync_messages
-
-                        idx = get_session_index()
-                        if idx:
-                            sync_messages(
-                                store=idx,
-                                thread_id=thread_id,
-                                messages=messages,
-                                channel=channel_prefix,
-                                sender_id=sender_id,
-                                chat_id=chat_id,
-                                chat_type=chat_type,
-                                tool_max_chars=self._container.config.session_search.tool_content_max_chars,
-                            )
-                    except Exception as e:
-                        logger.warning("Session index sync failed: %s", e)
-
-                for msg in reversed(messages):
-                    if msg.get("role") == "assistant" and msg.get("content"):
-                        assistant_text = msg["content"].lstrip("\n")
-                        break
-
-                for msg in messages[pre_msg_count:]:
-                    if msg.get("role") != "tool":
-                        continue
-                    tool_out = msg.get("content", "")
-                    if "IDENTITY.md" not in tool_out:
-                        continue
-                    identity_written = True
-                    break
-            except Exception as e:
-                logger.error("Agent error: %s", e, exc_info=True)
-                assistant_text = f"[error] {type(e).__name__}: {e}"
-
-                from src.events import emit_async
-                await emit_async(
-                    "agent.error",
-                    thread_id=thread_id,
-                    error=str(e),
-                    error_type=type(e).__name__,
-                    channel=channel_prefix,
-                )
-            finally:
-                if _progress_unsub:
-                    unsubscribe("tool.*", _on_tool_event)
-                if _assistant_msg_unsub:
-                    unsubscribe("agent_loop.assistant_message", _on_assistant_message)
-
-            if assistant_text:
-                if getattr(self._container.config, "link_understanding", None) and self._container.config.link_understanding.enabled:
-                    try:
-                        from src.link_understanding import detect_and_preview_links
-
-                        preview = await detect_and_preview_links(
-                            text, max_previews=self._container.config.link_understanding.max_previews
-                        )
-                        if preview:
-                            assistant_text += "\n" + preview
-                    except Exception:
-                        pass
-
-                display_text = _format_display(assistant_text)
-
-                try:
-                    from src.media_delivery import deliver_media
-                    ch = self._container.qq if channel_prefix == "qq" else None
-                    if ch:
-                        display_text = await deliver_media(display_text, chat_id, channel_prefix, ch)
-                except Exception as e:
-                    logger.warning("Media delivery failed: %s", e)
-
-                try:
-                    logger.debug("[flow] sending reply, len=%d", len(display_text))
-                    await reply_fn(display_text)
-                    logger.info("Reply to %s: %.100s", session_key, display_text)
-                except Exception as e:
-                    logger.error("Reply failed: %s", e)
-
-                from src.events import emit_async
-                await emit_async(
-                    "message.replied",
-                    thread_id=thread_id,
-                    reply_length=len(display_text),
-                    channel=channel_prefix,
-                    session_key=session_key,
-                )
-
-                if identity_written:
-                    try:
-                        await reply_fn("\U0001f4be update memory: 已更新身份记忆")
-                    except Exception:
-                        pass
-
-                if (
-                    getattr(self._container, "memory_searcher", None)
-                    and self._container.config.memory.enabled
-                    and getattr(self._container.config.memory, "auto_session_memory", False)
-                ):
-                    try:
-                        await self._container.memory_searcher.store.add_document(
-                            f"session:{session_key}",
-                            f"Q: {text}\nA: {display_text}",
-                        )
-                    except Exception:
-                        pass
-
-                if getattr(self._container.config, "memory_store", None) and self._container.config.memory_store.enabled:
-                    try:
-                        from src.tools.memory_tools import auto_extract_memory, save_memory
-                        extracted = auto_extract_memory(text, display_text)
-                        if extracted:
-                            content, category = extracted
-                            await save_memory(content, category=category)
-                        elif self._container.config.memory_store.memory_judge_model:
-                            task = asyncio.create_task(self._memory_llm_judge(
-                                text, display_text, reply_fn,
-                            ))
-                            self._container.background_tasks.add(task)
-                            task.add_done_callback(self._container.background_tasks.discard)
-                    except Exception:
-                        pass
-
-                    try:
-                        call_id_to_name = {}
-                        for m in messages:
-                            if m.get("role") == "assistant" and m.get("tool_calls"):
-                                for tc in m["tool_calls"]:
-                                    fn_info = tc.get("function", {})
-                                    if isinstance(fn_info, dict) and tc.get("id"):
-                                        call_id_to_name[tc["id"]] = fn_info.get("name", "")
-                        for msg in messages[pre_msg_count:]:
-                            if msg.get("role") == "tool":
-                                tc_name = call_id_to_name.get(msg.get("tool_call_id", ""), "")
-                                if tc_name == "memory" and "save" in msg.get("content", ""):
-                                    await reply_fn("\U0001f4be update memory: 已保存到记忆")
-                                    break
-                    except Exception:
-                        pass
+            await self._run_agent_turn(
+                input_state=input_state,
+                thread_id=thread_id,
+                session_key=session_key,
+                chat_id=chat_id,
+                sender_id=sender_id,
+                chat_type=chat_type,
+                channel_prefix=channel_prefix,
+                reply_fn=reply_fn,
+                stream_fn=stream_fn,
+                system_prompt=system_prompt,
+                original_text=text,
+            )
 
         return on_message
+
+    async def _handle_busy_message(
+        self, text: str, thread_id: str, channel_prefix: str, reply_fn,
+    ) -> None:
+        mode = self._container.config.agents.busy_input_mode
+        flag = self._container.state_store.get_interrupt_flag(thread_id)
+        zh = self._container.config.agents.language == "zh"
+
+        if text.strip().startswith("/"):
+            await reply_fn("⏳ 当前忙碌，请稍后重试命令。" if zh else "⏳ Busy, please retry the command later.")
+            return
+
+        if mode == "queue":
+            self._enqueue(thread_id, text)
+            await reply_fn("⏳ 已排队，当前任务完成后处理。" if zh else "⏳ Queued for processing after current task.")
+            return
+
+        if mode == "steer":
+            accepted = flag.steer(text)
+            if accepted:
+                return
+            self._enqueue(thread_id, text)
+            return
+
+        if thread_id not in self._interrupted_threads:
+            self._interrupted_threads[thread_id] = text
+            flag.interrupt(text)
+        else:
+            self._enqueue(thread_id, text)
+
+    async def _run_agent_turn(
+        self,
+        input_state,
+        thread_id: str,
+        session_key: str,
+        chat_id: str,
+        sender_id: str,
+        chat_type: str,
+        channel_prefix: str,
+        reply_fn,
+        stream_fn,
+        system_prompt: str,
+        original_text: str,
+        depth: int = 0,
+    ):
+        from src.agent.loop import ApprovalPending as AP
+
+        if depth > _MAX_INTERRUPT_DEPTH:
+            logger.warning("Interrupt depth %d reached for %s, draining queue", depth, thread_id)
+            self._pending_queue.pop(thread_id, None)
+            self._interrupted_threads.pop(thread_id, None)
+            return
+
+        assistant_text = None
+        identity_written = False
+        pre_msg_count = len(input_state.messages)
+        messages = []
+
+        zh = self._container.config.agents.language == "zh"
+        show_progress = self._container.config.agents.tool_progress_notifications
+        active_chat_id = chat_id
+        channel = channel_prefix
+        _progress_unsub = None
+
+        async def _on_tool_event(event: str, **kwargs):
+            if not show_progress:
+                return
+            tid = kwargs.get("thread_id", "")
+            if tid != thread_id:
+                return
+            try:
+                if event == "tool.exec_started":
+                    tool = kwargs.get("tool_name", "")
+                    if tool in _SILENT_TOOLS:
+                        return
+                    raw_args = kwargs.get("args_preview", "")
+                    try:
+                        parsed = json.loads(raw_args)
+                        if isinstance(parsed, dict):
+                            vals = list(parsed.values())
+                            args_preview = str(vals[0])[:80] if len(parsed) == 1 else ", ".join(f"{k}={v}" for k, v in parsed.items())[:80]
+                        else:
+                            args_preview = raw_args[:80]
+                    except (json.JSONDecodeError, ValueError):
+                        args_preview = raw_args[:80]
+                    if zh:
+                        msg = f"🔧 {tool}: {args_preview}" if args_preview else f"🔧 执行 {tool}..."
+                    else:
+                        msg = f"🔧 {tool}: {args_preview}" if args_preview else f"🔧 Running {tool}..."
+                    if channel == "qq" and self._container.qq:
+                        await self._container.qq.send_text(active_chat_id, msg)
+                elif event == "tool.exec_failed":
+                    tool = kwargs.get("tool_name", "")
+                    err = kwargs.get("error", "")[:80]
+                    if zh:
+                        msg = f"❌ {tool} 失败: {err}"
+                    else:
+                        msg = f"❌ {tool} failed: {err}"
+                    if channel == "qq" and self._container.qq:
+                        await self._container.qq.send_text(active_chat_id, msg)
+            except Exception:
+                pass
+
+        from src.events import subscribe_async, unsubscribe
+        _progress_unsub = subscribe_async("tool.*", _on_tool_event)
+
+        _assistant_msg_unsub = None
+
+        async def _on_assistant_message(event: str, **kwargs):
+            tid = kwargs.get("thread_id", "")
+            if tid != thread_id:
+                return
+            content = kwargs.get("content", "")
+            if not content:
+                return
+            try:
+                formatted = _format_display(content)
+                await reply_fn(formatted)
+            except Exception:
+                pass
+
+        _assistant_msg_unsub = subscribe_async("agent_loop.assistant_message", _on_assistant_message)
+
+        try:
+            logger.debug("[flow] agent_loop run start, state has %d messages, depth=%d", pre_msg_count, depth)
+
+            try:
+                result_state = await self._container.agent_loop.run(input_state, thread_id)
+            except AP as exc:
+                asyncio.create_task(self._handle_approval_pending(exc, chat_id))
+                return
+
+            logger.debug("[flow] agent_loop run done")
+
+            messages = result_state.messages
+
+            if self._container.config.session_search.enabled and self._container.config.session_search.auto_sync:
+                try:
+                    from src.session_index.store import get_session_index
+                    from src.session_index.sync import sync_messages
+
+                    idx = get_session_index()
+                    if idx:
+                        sync_messages(
+                            store=idx,
+                            thread_id=thread_id,
+                            messages=messages,
+                            channel=channel_prefix,
+                            sender_id=sender_id,
+                            chat_id=chat_id,
+                            chat_type=chat_type,
+                            tool_max_chars=self._container.config.session_search.tool_content_max_chars,
+                        )
+                except Exception as e:
+                    logger.warning("Session index sync failed: %s", e)
+
+            for msg in reversed(messages):
+                if msg.get("role") == "assistant" and msg.get("content"):
+                    assistant_text = msg["content"].lstrip("\n")
+                    break
+
+            for msg in messages[pre_msg_count:]:
+                if msg.get("role") != "tool":
+                    continue
+                tool_out = msg.get("content", "")
+                if "IDENTITY.md" not in tool_out:
+                    continue
+                identity_written = True
+                break
+        except Exception as e:
+            logger.error("Agent error: %s", e, exc_info=True)
+            assistant_text = f"[error] {type(e).__name__}: {e}"
+
+            from src.events import emit_async
+            await emit_async(
+                "agent.error",
+                thread_id=thread_id,
+                error=str(e),
+                error_type=type(e).__name__,
+                channel=channel_prefix,
+            )
+        finally:
+            if _progress_unsub:
+                unsubscribe("tool.*", _on_tool_event)
+            if _assistant_msg_unsub:
+                unsubscribe("agent_loop.assistant_message", _on_assistant_message)
+
+        if assistant_text:
+            if getattr(self._container.config, "link_understanding", None) and self._container.config.link_understanding.enabled:
+                try:
+                    from src.link_understanding import detect_and_preview_links
+
+                    preview = await detect_and_preview_links(
+                        original_text, max_previews=self._container.config.link_understanding.max_previews
+                    )
+                    if preview:
+                        assistant_text += "\n" + preview
+                except Exception:
+                    pass
+
+            display_text = _format_display(assistant_text)
+
+            try:
+                from src.media_delivery import deliver_media
+                ch = self._container.qq if channel_prefix == "qq" else None
+                if ch:
+                    display_text = await deliver_media(display_text, chat_id, channel_prefix, ch)
+            except Exception as e:
+                logger.warning("Media delivery failed: %s", e)
+
+            try:
+                logger.debug("[flow] sending reply, len=%d", len(display_text))
+                await reply_fn(display_text)
+                logger.info("Reply to %s: %.100s", session_key, display_text)
+            except Exception as e:
+                logger.error("Reply failed: %s", e)
+
+            from src.events import emit_async
+            await emit_async(
+                "message.replied",
+                thread_id=thread_id,
+                reply_length=len(display_text),
+                channel=channel_prefix,
+                session_key=session_key,
+            )
+
+            if identity_written:
+                try:
+                    await reply_fn("\U0001f4be update memory: 已更新身份记忆")
+                except Exception:
+                    pass
+
+            if (
+                getattr(self._container, "memory_searcher", None)
+                and self._container.config.memory.enabled
+                and getattr(self._container.config.memory, "auto_session_memory", False)
+            ):
+                try:
+                    await self._container.memory_searcher.store.add_document(
+                        f"session:{session_key}",
+                        f"Q: {original_text}\nA: {display_text}",
+                    )
+                except Exception:
+                    pass
+
+            if getattr(self._container.config, "memory_store", None) and self._container.config.memory_store.enabled:
+                try:
+                    from src.tools.memory_tools import auto_extract_memory, save_memory
+                    extracted = auto_extract_memory(original_text, display_text)
+                    if extracted:
+                        content, category = extracted
+                        await save_memory(content, category=category)
+                    elif self._container.config.memory_store.memory_judge_model:
+                        task = asyncio.create_task(self._memory_llm_judge(
+                            original_text, display_text, reply_fn,
+                        ))
+                        self._container.background_tasks.add(task)
+                        task.add_done_callback(self._container.background_tasks.discard)
+                except Exception:
+                    pass
+
+                try:
+                    call_id_to_name = {}
+                    for m in messages:
+                        if m.get("role") == "assistant" and m.get("tool_calls"):
+                            for tc in m["tool_calls"]:
+                                fn_info = tc.get("function", {})
+                                if isinstance(fn_info, dict) and tc.get("id"):
+                                    call_id_to_name[tc["id"]] = fn_info.get("name", "")
+                    for msg in messages[pre_msg_count:]:
+                        if msg.get("role") == "tool":
+                            tc_name = call_id_to_name.get(msg.get("tool_call_id", ""), "")
+                            if tc_name == "memory" and "save" in msg.get("content", ""):
+                                await reply_fn("\U0001f4be update memory: 已保存到记忆")
+                                break
+                except Exception:
+                    pass
+
+        await self._drain_pending(
+            thread_id=thread_id,
+            session_key=session_key,
+            chat_id=chat_id,
+            sender_id=sender_id,
+            chat_type=chat_type,
+            channel_prefix=channel_prefix,
+            reply_fn=reply_fn,
+            stream_fn=stream_fn,
+            system_prompt=system_prompt,
+            depth=depth,
+        )
+
+    async def _drain_pending(
+        self,
+        thread_id: str,
+        session_key: str,
+        chat_id: str,
+        sender_id: str,
+        chat_type: str,
+        channel_prefix: str,
+        reply_fn,
+        stream_fn,
+        system_prompt: str,
+        depth: int,
+    ):
+        from src.agent.state import AgentState
+
+        # Priority 1: re-run agent for interrupted message
+        interrupt_msg = self._interrupted_threads.pop(thread_id, None)
+        if interrupt_msg:
+            latest = await self._container.state_store.aload(thread_id)
+            if latest:
+                await self._run_agent_turn(
+                    input_state=latest,
+                    thread_id=thread_id,
+                    session_key=session_key,
+                    chat_id=chat_id,
+                    sender_id=sender_id,
+                    chat_type=chat_type,
+                    channel_prefix=channel_prefix,
+                    reply_fn=reply_fn,
+                    stream_fn=stream_fn,
+                    system_prompt=system_prompt,
+                    original_text=interrupt_msg,
+                    depth=depth + 1,
+                )
+            return
+
+        # Priority 2: dequeue next pending message
+        pending = self._dequeue(thread_id)
+        if not pending:
+            return
+
+        next_state = AgentState(
+            messages=[{"role": "user", "content": pending}],
+            system_prompt=system_prompt,
+            sender_id=sender_id,
+            chat_id=chat_id,
+            chat_type=chat_type,
+            message_id="",
+            channel=channel_prefix,
+        )
+        existing = await self._container.state_store.aload(thread_id)
+        if existing:
+            next_state.messages = existing.messages + next_state.messages
+
+        await self._run_agent_turn(
+            input_state=next_state,
+            thread_id=thread_id,
+            session_key=session_key,
+            chat_id=chat_id,
+            sender_id=sender_id,
+            chat_type=chat_type,
+            channel_prefix=channel_prefix,
+            reply_fn=reply_fn,
+            stream_fn=stream_fn,
+            system_prompt=system_prompt,
+            original_text=pending,
+            depth=depth + 1,
+        )
 
     async def _handle_approval_pending(
         self,

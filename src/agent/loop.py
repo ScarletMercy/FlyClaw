@@ -688,7 +688,7 @@ class AgentLoop:
             tools = apply_tool_policy(tools, sender_id, self._config, user=user)
 
         channel = state.channel
-        if channel == "qq":
+        if channel in ("qq", "weixin"):
             tools = [t for t in tools if not t.name.startswith("feishu_")]
 
         max_rounds = self._get_max_tool_rounds()

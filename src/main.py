@@ -32,7 +32,11 @@ class Application:
         handler = MessageHandler(self.container)
         scope = self.container.config.session.scope
 
-        self.container.qq.set_message_callback(handler.create_callback(scope, channel_prefix="qq"))
+        if self.container.qq:
+            self.container.qq.set_message_callback(handler.create_callback(scope, channel_prefix="qq"))
+
+        if self.container.weixin:
+            self.container.weixin.set_message_callback(handler.create_callback(scope, channel_prefix="weixin"))
 
         register_builtin_commands(self.container.dispatcher, self.container, tools, skills)
 

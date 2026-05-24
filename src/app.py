@@ -11,6 +11,7 @@ from src.agent.loop import AgentLoop
 from src.agent.state import StateStore
 from src.agent.tooldef import ToolDef
 from src.channels.qq import QQChannel
+from src.channels.weixin import WeixinChannel
 from src.config import load_config
 from src.cron.executor import execute_cron_job
 from src.cron.service import CronService
@@ -56,6 +57,7 @@ class ServiceContainer:
         self.state_store: StateStore | None = None
         self.model_ref = None
         self.qq: QQChannel | None = None
+        self.weixin: WeixinChannel | None = None
         self.session_tracker: SessionTracker | None = None
         self.session_registry: SessionRegistry | None = None
         self.dispatcher: CommandDispatcher | None = None
@@ -133,6 +135,7 @@ class ServiceContainer:
             "src.tools.exec",
             "src.tools.file_tools",
             "src.tools.qq_tools",
+            "src.tools.weixin_tools",
             "src.tools.ai_tools",
             "src.tools.cron_tools",
             "src.tools.media_tools",
@@ -306,10 +309,13 @@ class ServiceContainer:
             return
         cron_store = CronStore(self.config.cron.store_path)
 
-        async def cron_execute(job):
-            return await execute_cron_job(job, self.agent_loop, self.config, self.qq)
+        def _get_cron_channel():
+            return self.qq or self.weixin
 
-        self.cron_service = CronService(cron_store, cron_execute, config=self.config, channel=self.qq)
+        async def cron_execute(job):
+            return await execute_cron_job(job, self.agent_loop, self.config, _get_cron_channel())
+
+        self.cron_service = CronService(cron_store, cron_execute, config=self.config, channel=None)
         logger.info("定时任务服务已初始化")
 
     async def _setup_workspace(self):
@@ -333,6 +339,10 @@ class ServiceContainer:
         if self._qq_mu_runner:
             self.qq.set_media_understanding_runner(self._qq_mu_runner)
             logger.info("QQ 频道多媒体理解已初始化")
+
+    def _setup_weixin_channel(self):
+        self.weixin = WeixinChannel(self.config.channels.weixin)
+        logger.info("微信频道已初始化")
 
     def _setup_gateway(self):
         from src.gateway import create_gateway
@@ -407,7 +417,10 @@ class ServiceContainer:
 
         self._setup_cron()
         await self._setup_workspace()
-        self._setup_qq_channel()
+        if self.config.channels.qq.enabled:
+            self._setup_qq_channel()
+        if self.config.channels.weixin.enabled:
+            self._setup_weixin_channel()
         self._setup_gateway()
 
         from src.tools.exec import reset_config_cache
@@ -444,7 +457,7 @@ class ServiceContainer:
             model=f"{self.config.model.provider}/{self.config.model.name}",
             tools_count=len(self.agent_loop._tools) if self.agent_loop else 0,
             skills_count=len(self.skills_cache),
-            channels_enabled=[ch for ch in ["qq"] if getattr(getattr(self.config.channels, ch, None), "enabled", False)],
+            channels_enabled=[ch for ch in ["qq", "weixin"] if getattr(getattr(self.config.channels, ch, None), "enabled", False)],
         )
 
         try:
@@ -558,7 +571,10 @@ class ServiceContainer:
             logger.warning("记忆监视器启动失败: %s", e)
 
     async def _start_channels(self):
-        await self.qq.start()
+        if self.qq:
+            await self.qq.start()
+        if self.weixin:
+            await self.weixin.start()
         logger.info(
             "网关已就绪: http://%s:%d",
             self.config.gateway.host,
@@ -625,7 +641,10 @@ class ServiceContainer:
             if self.cron_service:
                 await self.cron_service.stop()
             await self.session_tracker.stop()
-            await self.qq.stop()
+            if self.qq:
+                await self.qq.stop()
+            if self.weixin:
+                await self.weixin.stop()
             if self.state_store:
                 self.state_store.close()
             if self.session_index:
