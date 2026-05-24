@@ -106,8 +106,7 @@ def _repair_tool_args(args_str: str) -> str:
 _PARALLEL_SAFE_TOOLS = frozenset({
     "read_file", "list_dir", "search_files",
     "web_search", "web_fetch", "session_search",
-    "describe_image", "transcribe_audio", "describe_video",
-    "qq_list_guilds", "qq_list_channels", "qq_list_members", "qq_get_member",
+    "describe_image", "describe_video",
     "memory", "cronjob", "task_manage", "skill_manage",
 })
 

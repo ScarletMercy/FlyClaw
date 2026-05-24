@@ -20,8 +20,13 @@ if sys.platform == "win32":
     except ImportError:
         pyautogui = None  # type: ignore[assignment]
         logger.warning("pyautogui not installed, windows tools will be unavailable")
+    try:
+        from PIL import ImageGrab
+    except ImportError:
+        ImageGrab = None  # type: ignore[assignment]
 else:
     pyautogui = None  # type: ignore[assignment]
+    ImageGrab = None  # type: ignore[assignment]
 
 
 def _screenshot_dir() -> str:
@@ -40,26 +45,19 @@ async def windows_screenshot() -> str:
 
     The screenshot can be used with media_understanding tools to let AI see the screen.
     """
-    if pyautogui is None:
-        return "Error: pyautogui not available on this platform."
+    if ImageGrab is None:
+        return "Error: Pillow not available on this platform."
     try:
         path = os.path.join(_screenshot_dir(), f"screen_{int(time.time())}.png")
-        await _run_sync(pyautogui.screenshot, path)
+
+        def _grab():
+            img = ImageGrab.grab()
+            img.save(path)
+
+        await _run_sync(_grab)
         return f"Screenshot saved: {path}"
     except Exception as e:
         return f"Error taking screenshot: {e}"
-
-
-async def windows_screen_size() -> str:
-    """Get the screen resolution. Returns width x height in pixels."""
-    if pyautogui is None:
-        return "Error: pyautogui not available on this platform."
-    try:
-        size = await _run_sync(lambda: pyautogui.size())
-        return f"{size.width}x{size.height}"
-    except Exception as e:
-        return f"Error getting screen size: {e}"
-
 
 async def windows_press(key: str) -> str:
     """Press a keyboard key (e.g. Enter, Tab, Escape, Backspace, delete, up, down, left, right).
@@ -76,6 +74,21 @@ async def windows_press(key: str) -> str:
         return f"Error pressing key: {e}"
 
 
+_BLOCKED_HOTKEY_RULES = [
+    ({"ctrl", "c"}, "Ctrl+C 会终止进程"),
+    ({"ctrl", "break"}, "Ctrl+Break 会终止进程"),
+    ({"alt", "f4"}, "Alt+F4 会关闭窗口"),
+]
+
+
+def _check_blocked_hotkey(key_list: list[str]) -> str | None:
+    normalized = {k.strip().lower() for k in key_list}
+    for blocked_set, reason in _BLOCKED_HOTKEY_RULES:
+        if blocked_set.issubset(normalized):
+            return reason
+    return None
+
+
 async def windows_hotkey(keys: str) -> str:
     """Press a keyboard shortcut / combination of keys held simultaneously.
 
@@ -89,42 +102,19 @@ async def windows_hotkey(keys: str) -> str:
             key_list = [k.strip() for k in keys.split("+")]
         else:
             key_list = [k.strip() for k in keys.split(",")]
+        blocked = _check_blocked_hotkey(key_list)
+        if blocked:
+            return f"Error: {blocked}，已屏蔽此组合键。"
         await _run_sync(pyautogui.hotkey, *key_list)
         return f"Hotkey: {'+'.join(key_list)}"
     except Exception as e:
         return f"Error pressing hotkey: {e}"
 
-
-async def windows_scroll(x: int = 0, y: int = 0, amount: int = 3) -> str:
-    """Scroll the mouse wheel at a position.
-
-    Args:
-        x: X coordinate. Default 0 (current position).
-        y: Y coordinate. Default 0 (current position).
-        amount: Number of scroll clicks. Positive = scroll up, negative = scroll down. Default 3.
-    """
-    if pyautogui is None:
-        return "Error: pyautogui not available on this platform."
-    try:
-        if x != 0 or y != 0:
-            await _run_sync(pyautogui.scroll, amount, x, y)
-        else:
-            await _run_sync(pyautogui.scroll, amount)
-        return f"Scrolled amount={amount} at ({x}, {y})"
-    except Exception as e:
-        return f"Error scrolling: {e}"
-
-
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef
 
-    if pyautogui is None:
-        return []
-
     return [
         ToolDef.from_function(windows_screenshot),
-        ToolDef.from_function(windows_screen_size),
         ToolDef.from_function(windows_press),
         ToolDef.from_function(windows_hotkey),
-        ToolDef.from_function(windows_scroll),
     ]

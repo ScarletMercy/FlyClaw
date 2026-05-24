@@ -100,30 +100,6 @@ async def describe_image(image_url: str) -> str:
         return f"[error] {e}"
 
 
-async def transcribe_audio(audio_url: str) -> str:
-    """Transcribe audio/speech to text. Provide a URL, a data:audio base64 URL, or a local file path.
-
-    Args:
-        audio_url: URL of the audio file, a data:audio/...;base64,... data URL, or a local file path.
-    """
-    runner = _get_runner()
-    if runner is None:
-        return "[error] Media understanding not enabled. Set tools.media_understanding.enabled: true in config."
-
-    try:
-        data, mime_type = await _resolve_media_input(audio_url, "audio/wav")
-
-        from src.media_understanding.types import MediaCapability
-
-        result = await runner.understand(data, MediaCapability.AUDIO, mime_type=mime_type)
-        if result.error:
-            return f"[error] {result.error}"
-        return f"[audio transcription] ({result.model})\n{result.text}"
-    except Exception as e:
-        logger.error("transcribe_audio error: %s", e)
-        return f"[error] {e}"
-
-
 async def describe_video(video_url: str) -> str:
     """Describe/analyze a video (extracts a frame and describes it).
 
@@ -152,6 +128,5 @@ def get_tools() -> list:
     from src.agent.tooldef import ToolDef
     return [
         ToolDef.from_function(describe_image),
-        ToolDef.from_function(transcribe_audio),
         ToolDef.from_function(describe_video),
     ]

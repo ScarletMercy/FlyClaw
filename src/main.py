@@ -67,7 +67,14 @@ def main():
         _HANDLER = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_uint)
 
         def _ctrl_handler(ctrl_type):
-            if ctrl_type in (0, 2, 5, 6):
+            if ctrl_type == 0:
+                try:
+                    loop = asyncio.get_event_loop()
+                    loop.call_soon_threadsafe(loop.stop)
+                except Exception:
+                    os._exit(0)
+                return True
+            if ctrl_type in (2, 5, 6):
                 os._exit(0)
             return False
 

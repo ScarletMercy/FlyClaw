@@ -234,7 +234,7 @@ class BrowserConfig(BaseModel):
 class WindowsUseConfig(BaseModel):
     """Windows desktop automation via pyautogui."""
 
-    enabled: bool = False
+    enabled: bool = True
     screenshot_dir: str = "~/.myclaw/data/screenshots"
     default_timeout: float = 5.0
     ocr_lang: str = "ch"
