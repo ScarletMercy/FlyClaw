@@ -154,20 +154,10 @@ class ApprovalManager:
         user_response = pending.user_response
         self._pending.pop(request_id, None)
 
-        if decision == "allow_always":
-            tool_name = pending.request.tool_name
-            digest = pending.request.args_digest
-            if tool_name not in self._durable:
-                self._durable[tool_name] = []
-            if digest not in self._durable[tool_name]:
-                self._durable[tool_name].append(digest)
-                self._save_durable()
-            logger.info("Durable approval saved for %s (%s)", tool_name, digest)
-
         return (decision, user_response)
 
     def resolve(self, request_id: str, decision: str, user_response: str = "") -> bool:
-        if decision not in ("allow_once", "allow_always", "deny"):
+        if decision not in ("allow_once", "deny"):
             logger.warning("Invalid approval decision: %s", decision)
             return False
         pending = self._pending.get(request_id)

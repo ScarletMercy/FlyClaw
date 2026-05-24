@@ -163,23 +163,28 @@ class MessageHandler:
                 reply_fn, stream_fn, thread_id, is_command, channel_prefix,
                 session_scope, legacy_thread_id, session_key,
         ):
-            if channel_prefix in ("qq", "weixin") and text.strip().lower() in ("yes", "no", "/y", "/n"):
+            if channel_prefix in ("qq", "weixin"):
                 from src.tools.approval import get_approval_manager
                 mgr = get_approval_manager()
                 pending_list = mgr.list_pending()
                 for req in pending_list:
                     if req.chat_id == chat_id:
+                        is_y = text.strip().lower() == "/y"
                         zh = self._container.config.agents.language == "zh"
-                        decision_text = text.strip().lower()
-                        decision = "allow_once" if decision_text in ("yes", "/y") else "deny"
-                        mgr.resolve(req.id, decision)
-                        if req.tool_name in ("memory_delete", "memory"):
-                            await reply_fn("✅ 已确认删除记忆" if decision == "allow_once" else "❌ 已取消删除记忆")
+                        if is_y:
+                            mgr.resolve(req.id, "allow_once")
+                            if req.tool_name in ("memory_delete", "memory"):
+                                await reply_fn("✅ 已确认删除记忆")
+                            else:
+                                await reply_fn("Approval granted." if not zh else "✅ 已批准执行。")
+                            if req.thread_id not in self._approval_handler_threads:
+                                asyncio.create_task(self._resume_and_reply(req.thread_id, "allow_once", chat_id))
+                            return
                         else:
-                            await reply_fn(f"Approval {'granted' if decision == 'allow_once' else 'denied'}.")
-                        if req.thread_id not in self._approval_handler_threads:
-                            asyncio.create_task(self._resume_and_reply(req.thread_id, decision, chat_id))
-                        return
+                            mgr.resolve(req.id, "deny")
+                            if req.thread_id not in self._approval_handler_threads:
+                                asyncio.create_task(self._resume_and_reply(req.thread_id, "deny", chat_id))
+                            break
 
             cmd_match = self._container.dispatcher.match(text)
             if cmd_match is not None:
@@ -194,7 +199,7 @@ class MessageHandler:
                 return
 
             # "/" prefix but not a registered command — reply directly, skip model
-            if text.strip().startswith("/") and text.strip().lower() not in ("/y", "/n"):
+            if text.strip().startswith("/"):
                 await reply_fn("未知命令。输入 /help 查看可用命令。")
                 return
 
@@ -238,7 +243,12 @@ class MessageHandler:
                 input_state.messages = existing.messages + input_state.messages
 
             # Handle busy agent: interrupt / queue / steer
-            if self._container.agent_loop.is_thread_busy(thread_id):
+            # Also treat as busy when drain_pending is still processing an
+            # interrupted message or queued messages — prevents new messages
+            # from racing in and grabbing the lock before drain runs.
+            if (self._container.agent_loop.is_thread_busy(thread_id)
+                    or thread_id in self._interrupted_threads
+                    or thread_id in self._pending_queue):
                 await self._handle_busy_message(
                     text, thread_id, channel_prefix, reply_fn,
                 )
@@ -330,8 +340,12 @@ class MessageHandler:
         if thread_id not in self._interrupted_threads:
             self._interrupted_threads[thread_id] = text
             flag.interrupt(text)
+            await reply_fn("⚡ 已中断当前任务，正在处理你的新消息.." if zh else
+                           "⚡ Interrupted current task, processing your message...")
         else:
             self._enqueue(thread_id, text)
+            await reply_fn("⏳ 消息已排队，将在当前中断任务完成后处理。" if zh else
+                           "⏳ Message queued, will process after the current interrupted task.")
 
     async def _run_agent_turn(
         self,
@@ -647,6 +661,8 @@ class MessageHandler:
                     original_text=interrupt_msg,
                     depth=depth + 1,
                 )
+            else:
+                logger.warning("drain_pending: no state for %s, interrupt message lost", thread_id)
             return
 
         # Priority 2: dequeue next pending message
@@ -714,13 +730,13 @@ class MessageHandler:
                     msg_text = (
                         f"🗑️ 以下 {len(keys)} 条记忆将被删除：\n\n"
                         f"{preview}\n\n"
-                        f"发送 /y 确认删除，发送 /n 或忽略取消（{approval_timeout}秒超时）"
+                        f"发送 /y 确认，其它任何消息自动取消（{approval_timeout}秒超时）"
                     )
                 else:
                     warn = "DANGEROUS" if current_exc.denylisted else "requires approval"
                     msg_text = (
                         f"**Approval Required** ({warn})\n```\n{current_exc.command_preview}\n```\n"
-                        f"Reply 'yes' to allow or 'no' to deny. (request: {current_exc.request_id})"
+                        f"Send /y to confirm. Any other message will cancel. (request: {current_exc.request_id})"
                     )
 
                 await approval_ch.send_text(chat_id, msg_text)

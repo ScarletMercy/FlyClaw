@@ -46,6 +46,13 @@ OP_INVALID_SESSION = 9
 OP_HELLO = 10
 OP_HEARTBEAT_ACK = 11
 
+_MESSAGE_DISPATCH_EVENTS = frozenset({
+    "C2C_MESSAGE_CREATE",
+    "GROUP_AT_MESSAGE_CREATE",
+    "AT_MESSAGE_CREATE",
+    "DIRECT_MESSAGE_CREATE",
+})
+
 # Intent bits
 INTENT_PUBLIC_GUILD_MESSAGES = 1 << 30
 INTENT_DIRECT_MESSAGE = 1 << 12
@@ -163,6 +170,7 @@ class _QQWebSocketClient:
         self._running = False
         self._reconnect_attempts = 0
         self._reconnecting = False  # Guard against concurrent reconnect loops
+        self._inflight: set[asyncio.Task] = set()
 
     async def connect(self):
         self._running = True
@@ -292,6 +300,20 @@ class _QQWebSocketClient:
                 self._log.debug("Heartbeat error: %s", e)
                 break
 
+    def _spawn_task(self, coro) -> asyncio.Task:
+        task = asyncio.create_task(coro)
+        self._inflight.add(task)
+        task.add_done_callback(self._inflight.discard)
+        return task
+
+    async def _on_dispatch_safe(self, event_type: str, data: dict):
+        try:
+            await self._on_dispatch(event_type, data)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self._log.error("Dispatch handler error for %s: %s", event_type, e)
+
     async def _recv_loop(self):
         import websockets
 
@@ -316,10 +338,13 @@ class _QQWebSocketClient:
                     if t == "READY":
                         self._session_id = d.get("session_id") if d else None
                         self._log.info("QQ gateway READY, session=%s", self._session_id)
-                    try:
-                        await self._on_dispatch(t, d if d else {})
-                    except Exception as e:
-                        self._log.error("Dispatch handler error for %s: %s", t, e)
+                    if t in _MESSAGE_DISPATCH_EVENTS:
+                        self._spawn_task(self._on_dispatch_safe(t, d if d else {}))
+                    else:
+                        try:
+                            await self._on_dispatch(t, d if d else {})
+                        except Exception as e:
+                            self._log.error("Dispatch handler error for %s: %s", t, e)
 
                 elif op == OP_HEARTBEAT_ACK:
                     pass
@@ -357,6 +382,14 @@ class _QQWebSocketClient:
             except asyncio.CancelledError:
                 pass
         self._heartbeat_task = None
+        for task in list(self._inflight):
+            task.cancel()
+        for task in list(self._inflight):
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._inflight.clear()
 
         if self._ws:
             try:

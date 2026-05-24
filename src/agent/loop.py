@@ -255,6 +255,29 @@ class AgentLoop:
     # Internals
     # ------------------------------------------------------------------
 
+    async def _check_interrupt(self, state: AgentState, thread_id: str, start_ts: float, tool_round: int) -> bool:
+        """Check interrupt flag. If interrupted, append message and return True."""
+        flag = self._store.get_interrupt_flag(thread_id)
+        is_interrupted, interrupt_msg = flag.check()
+        if not is_interrupted:
+            return False
+        flag.clear()
+        if interrupt_msg:
+            state.append_message({"role": "user", "content": interrupt_msg})
+        import time as _time
+        from src.events import emit_async
+        duration_ms = (_time.monotonic() - start_ts) * 1000
+        await emit_async(
+            "agent_loop.interrupted",
+            thread_id=thread_id,
+            interrupt_message=interrupt_msg,
+            duration_ms=duration_ms,
+            total_rounds=tool_round,
+        )
+        await self._store.save(thread_id, state)
+        self._maybe_trigger_skill_review(state, thread_id)
+        return True
+
     async def _run_inner(self, state: AgentState, thread_id: str, max_rounds: int) -> AgentState:
         """Internal run logic, called with thread lock held.
 
@@ -272,22 +295,7 @@ class AgentLoop:
 
         for _ in range(max_rounds):
             # 0. Check interrupt
-            flag = self._store.get_interrupt_flag(thread_id)
-            is_interrupted, interrupt_msg = flag.check()
-            if is_interrupted:
-                flag.clear()
-                if interrupt_msg:
-                    state.append_message({"role": "user", "content": interrupt_msg})
-                duration_ms = (_time.monotonic() - start_ts) * 1000
-                await emit_async(
-                    "agent_loop.interrupted",
-                    thread_id=thread_id,
-                    interrupt_message=interrupt_msg,
-                    duration_ms=duration_ms,
-                    total_rounds=tool_round,
-                )
-                await self._store.save(thread_id, state)
-                self._maybe_trigger_skill_review(state, thread_id)
+            if await self._check_interrupt(state, thread_id, start_ts, tool_round):
                 return state
 
             # 1. Prepare messages — proactive compression if over budget
@@ -323,7 +331,7 @@ class AgentLoop:
                     get_approval_manager().clear_session(thread_id)
                 except Exception:
                     pass
-                flag.clear()
+                self._store.get_interrupt_flag(thread_id).clear()
                 duration_ms = (_time.monotonic() - start_ts) * 1000
                 await emit_async(
                     "agent_loop.completed",
@@ -349,8 +357,12 @@ class AgentLoop:
                         "content": result,
                     })
                 await self._store.save(thread_id, state)
+                if await self._check_interrupt(state, thread_id, start_ts, tool_round):
+                    return state
             else:
                 for tc in response.tool_calls:
+                    if await self._check_interrupt(state, thread_id, start_ts, tool_round):
+                        return state
                     tool_result = await self._execute_tool(tc, state, thread_id)
                     state.append_message({
                         "role": "tool",
@@ -364,7 +376,7 @@ class AgentLoop:
                 self._iters_since_skill += 1
 
             # 7. Inject pending steer text into last tool result
-            steer_text = flag.drain_steer()
+            steer_text = self._store.get_interrupt_flag(thread_id).drain_steer()
             if steer_text:
                 for i in range(len(state.messages) - 1, -1, -1):
                     if state.messages[i].get("role") == "tool":
@@ -431,7 +443,7 @@ class AgentLoop:
                     existing_results.add(msg.get("tool_call_id", ""))
 
         # Handle the pending tool call
-        if decision in ("allow_once", "allow_always"):
+        if decision == "allow_once":
             pending_tool = pending.get("tool_name", "exec_command")
             command_preview = pending.get("command_preview", "")
             memory_keys = pending.get("memory_keys")
@@ -732,8 +744,10 @@ class AgentLoop:
             tools = apply_tool_policy(tools, sender_id, self._config, user=user)
 
         channel = state.channel
-        if channel in ("qq", "weixin"):
-            tools = [t for t in tools if not t.name.startswith("feishu_")]
+        if channel == "qq":
+            tools = [t for t in tools if not t.name.startswith("weixin_")]
+        elif channel == "weixin":
+            tools = [t for t in tools if not t.name.startswith("qq_")]
 
         max_rounds = self._get_max_tool_rounds()
         if max_rounds > 0:

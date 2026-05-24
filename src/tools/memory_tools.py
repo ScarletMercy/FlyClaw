@@ -443,7 +443,7 @@ _MEMORY_TOOL_DESCRIPTION = (
     "- save: 保存记忆（自动去重）。需要 content，可选 key/category\n"
     "- get: 按键取回记忆。需要 key\n"
     "- list: 列出/搜索记忆。可选 query 过滤\n"
-    "- delete: 请求删除记忆，需用户发 /y 确认。需要 keys 数组\n"
+    "- delete: 请求删除记忆，用户发 /y 确认，其它消息取消。需要 keys 数组\n"
     "- search: 语义搜索历史记忆和知识库。需要 query\n\n"
     "不要保存：任务进度、闲聊、一次性指令、通用知识。"
 )
