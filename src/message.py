@@ -260,6 +260,49 @@ class MessageHandler:
 
         return on_message
 
+    async def _try_send_voice(
+        self, text: str, chat_id: str, channel_prefix: str, voice: str
+    ) -> bool:
+        """Try to convert text to speech and send as voice message. Returns True if sent."""
+        import edge_tts
+        import tempfile
+        from pathlib import Path
+
+        try:
+            communicate = edge_tts.Communicate(text, voice=voice)
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+                tmp_path = tmp.name
+            await communicate.save(tmp_path)
+            audio_bytes = Path(tmp_path).read_bytes()
+            Path(tmp_path).unlink(missing_ok=True)
+        except Exception as e:
+            logger.error("edge-tts synthesis failed: %s", e)
+            return False
+
+        if not audio_bytes:
+            return False
+
+        channel = self._get_channel(channel_prefix)
+        if not channel:
+            return False
+
+        try:
+            if channel_prefix == "qq":
+                return await channel.send_audio(chat_id, audio_bytes)
+            elif channel_prefix == "weixin":
+                import tempfile as _tf
+                with _tf.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+                    f.write(audio_bytes)
+                    tmp_file = f.name
+                try:
+                    return await channel.send_voice(chat_id, tmp_file)
+                finally:
+                    Path(tmp_file).unlink(missing_ok=True)
+        except Exception as e:
+            logger.error("Voice send failed: %s", e)
+
+        return False
+
     async def _handle_busy_message(
         self, text: str, thread_id: str, channel_prefix: str, reply_fn,
     ) -> None:
@@ -471,12 +514,30 @@ class MessageHandler:
             except Exception as e:
                 logger.warning("Media delivery failed: %s", e)
 
-            try:
-                logger.debug("[flow] sending reply, len=%d", len(display_text))
-                await reply_fn(display_text)
-                logger.info("Reply to %s: %.100s", session_key, display_text)
-            except Exception as e:
-                logger.error("Reply failed: %s", e)
+            # Voice mode: auto-convert short replies to voice
+            voice_sent = False
+            voice_cfg = getattr(self._container.config, "voice", None)
+            if (
+                voice_cfg
+                and voice_cfg.enabled
+                and not display_text.startswith("[error]")
+                and "<" not in display_text  # skip if contains media tags
+                and len(display_text.strip()) < voice_cfg.threshold
+            ):
+                try:
+                    voice_sent = await self._try_send_voice(
+                        display_text, chat_id, channel_prefix, voice_cfg.voice
+                    )
+                except Exception as e:
+                    logger.warning("Voice mode TTS failed: %s", e)
+
+            if not voice_sent:
+                try:
+                    logger.debug("[flow] sending reply, len=%d", len(display_text))
+                    await reply_fn(display_text)
+                    logger.info("Reply to %s: %.100s", session_key, display_text)
+                except Exception as e:
+                    logger.error("Reply failed: %s", e)
 
             from src.events import emit_async
             await emit_async(

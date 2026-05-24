@@ -118,6 +118,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 "/progress on|off                — 工具进度通知开关",
                 "/timezone <tz>                  — 时区设置",
                 "/lang zh|en                     — 中英文切换",
+                "/voice                          — 语音模式开关与设置",
                 "",
                 "== 快照 ==",
                 "/snapshots [id]  — 查看/列出快照",
@@ -158,6 +159,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 "/progress on|off                — Tool progress notifications toggle",
                 "/timezone <tz>                  — Timezone",
                 "/lang zh|en                     — Language switch",
+                "/voice                          — Voice mode toggle & settings",
                 "",
                 "== Snapshots ==",
                 "/snapshots [id]  — List/view snapshot diff",
@@ -1054,6 +1056,110 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         return "Steer text empty or agent is interrupting"
 
     dispatcher.register_builtin("steer", cmd_steer)
+
+    # ── /voice ──────────────────────────────────────────────
+    async def cmd_voice(args: str, ctx: dict) -> str:
+        zh = container.config.agents.language == "zh"
+        cfg = container.config.voice
+        parts = args.strip().split(None, 1)
+        sub = parts[0].lower() if parts else ""
+        val = parts[1].strip() if len(parts) > 1 else ""
+
+        VOICE_OPTIONS = [
+            ("zh-CN-YunxiNeural", "男声，自然"),
+            ("zh-CN-XiaoxiaoNeural", "女声，温柔"),
+            ("zh-CN-YunjianNeural", "男声，沉稳"),
+            ("zh-CN-XiaoyiNeural", "女声，活泼"),
+        ]
+        VOICE_OPTIONS_EN = [
+            ("zh-CN-YunxiNeural", "Male, natural"),
+            ("zh-CN-XiaoxiaoNeural", "Female, gentle"),
+            ("zh-CN-YunjianNeural", "Male, steady"),
+            ("zh-CN-XiaoyiNeural", "Female, lively"),
+        ]
+        opts = VOICE_OPTIONS if zh else VOICE_OPTIONS_EN
+
+        # /voice on
+        if sub in ("on", "enable", "开启"):
+            cfg.enabled = True
+            _save_config()
+            return "语音模式已开启。" if zh else "Voice mode enabled."
+
+        # /voice off
+        if sub in ("off", "disable", "关闭"):
+            cfg.enabled = False
+            _save_config()
+            return "语音模式已关闭。" if zh else "Voice mode disabled."
+
+        # /voice list
+        if sub == "list":
+            lines = ["可用音色:" if zh else "Available voices:"]
+            for i, (voice_id, desc) in enumerate(opts, 1):
+                marker = " (当前)" if zh and cfg.voice == voice_id else (" (current)" if cfg.voice == voice_id else "")
+                lines.append(f"  {i}. {voice_id} — {desc}{marker}")
+            return "\n".join(lines)
+
+        # /voice set <1-4>
+        if sub == "set":
+            if not val:
+                return "用法: /voice set <1-4>" if zh else "Usage: /voice set <1-4>"
+            try:
+                idx = int(val) - 1
+                if idx < 0 or idx >= len(opts):
+                    raise ValueError
+            except ValueError:
+                return f"无效选项: {val}。请输入 1-4。" if zh else f"Invalid option: {val}. Use 1-4."
+            cfg.voice = opts[idx][0]
+            _save_config()
+            return f"音色已设为: {opts[idx][0]}" if zh else f"Voice set to: {opts[idx][0]}"
+
+        # /voice threshold <n>
+        if sub in ("threshold", "阈值"):
+            if not val:
+                return f"当前阈值: {cfg.threshold} 字" if zh else f"Current threshold: {cfg.threshold} chars"
+            try:
+                n = int(val)
+                assert n > 0
+            except (ValueError, AssertionError):
+                return "用法: /voice threshold <正整数>" if zh else "Usage: /voice threshold <positive integer>"
+            cfg.threshold = n
+            _save_config()
+            return f"字数阈值已设为 {n} 字" if zh else f"Threshold set to {n} chars"
+
+        # /voice (无参数) — 显示帮助和当前状态
+        if zh:
+            status = "开启" if cfg.enabled else "关闭"
+            voice_name = cfg.voice
+            lines = [
+                "== 语音模式 ==",
+                "/voice on             — 开启语音模式",
+                "/voice off            — 关闭语音模式",
+                "/voice list           — 列出可用音色",
+                "/voice set <1-4>      — 设置音色",
+                "/voice threshold <n>  — 设置字数阈值",
+                "",
+                f"当前状态: {status}",
+                f"当前音色: {voice_name}",
+                f"当前阈值: {cfg.threshold} 字",
+            ]
+        else:
+            status = "ON" if cfg.enabled else "OFF"
+            voice_name = cfg.voice
+            lines = [
+                "== Voice Mode ==",
+                "/voice on             — Enable voice mode",
+                "/voice off            — Disable voice mode",
+                "/voice list           — List available voices",
+                "/voice set <1-4>      — Set voice",
+                "/voice threshold <n>  — Set character threshold",
+                "",
+                f"Status: {status}",
+                f"Voice: {voice_name}",
+                f"Threshold: {cfg.threshold} chars",
+            ]
+        return "\n".join(lines)
+
+    dispatcher.register_builtin("voice", cmd_voice)
 
     if container.config.auth.enabled and container.rbac:
         register_auth_commands(dispatcher, container)

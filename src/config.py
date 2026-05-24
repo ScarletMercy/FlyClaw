@@ -259,6 +259,13 @@ class SnapshotConfig(BaseModel):
     max_file_size: int = 10_000_000  # 10MB
 
 
+class VoiceConfig(BaseModel):
+    """Voice mode configuration."""
+    enabled: bool = False
+    voice: str = "zh-CN-YunxiNeural"
+    threshold: int = 20
+
+
 class DelegationConfig(BaseModel):
     """Sub-agent delegation configuration."""
     enabled: bool = True
@@ -449,6 +456,7 @@ class AppConfig(BaseModel):
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     snapshot: SnapshotConfig = Field(default_factory=SnapshotConfig)
     delegation: DelegationConfig = Field(default_factory=DelegationConfig)
+    voice: VoiceConfig = Field(default_factory=VoiceConfig)
     procedural_memory: ProceduralMemoryConfig = Field(default_factory=ProceduralMemoryConfig)
     owner_id: str = ""
 

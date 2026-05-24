@@ -46,6 +46,21 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
         if _qq_channel and await _qq_channel.send_audio(chat_id, audio_bytes):
             return f"Voice sent ({len(audio_bytes)} bytes, voice={voice})"
 
+    if channel == "weixin":
+        from src.channels.weixin import _weixin_channel
+        if _weixin_channel:
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+                    f.write(audio_bytes)
+                    tmp_file = f.name
+                try:
+                    if await _weixin_channel.send_voice(chat_id, tmp_file):
+                        return f"Voice sent ({len(audio_bytes)} bytes, voice={voice})"
+                finally:
+                    Path(tmp_file).unlink(missing_ok=True)
+            except Exception as e:
+                logger.error("WeChat voice send failed: %s", e)
+
     return "[error] Failed to send voice to channel"
 
 
