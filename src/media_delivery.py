@@ -6,7 +6,7 @@ import logging
 import re
 from pathlib import Path
 
-logger = logging.getLogger("myclaw.media_delivery")
+logger = logging.getLogger("flyclaw.media_delivery")
 
 _AUDIO_EXTS = {".ogg", ".opus", ".mp3", ".wav", ".m4a", ".silk", ".amr", ".aac", ".flac"}
 _VIDEO_EXTS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp"}

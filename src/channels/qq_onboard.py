@@ -20,7 +20,7 @@ from urllib.parse import quote
 
 import httpx
 
-logger = logging.getLogger("myclaw.qq_onboard")
+logger = logging.getLogger("flyclaw.qq_onboard")
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -35,7 +35,7 @@ ONBOARD_API_TIMEOUT = 10.0
 
 QR_URL_TEMPLATE = (
     "https://q.qq.com/qqbot/openclaw/connect.html"
-    "?task_id={task_id}&_wv=2&source=myclaw"
+    "?task_id={task_id}&_wv=2&source=flyclaw"
 )
 
 _MAX_REFRESHES = 3
@@ -90,7 +90,7 @@ def _get_api_headers() -> dict[str, str]:
     return {
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "User-Agent": "MyClawQQBot/0.1.0",
+        "User-Agent": "flyclawQQBot/0.1.0",
     }
 
 

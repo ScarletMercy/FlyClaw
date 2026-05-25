@@ -1,4 +1,4 @@
-"""WeChat QR scan-to-login onboarding for MyClaw setup wizard."""
+"""WeChat QR scan-to-login onboarding for flyclaw setup wizard."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import logging
 import time
 from typing import Optional
 
-logger = logging.getLogger("myclaw.weixin_onboard")
+logger = logging.getLogger("flyclaw.weixin_onboard")
 
 ILINK_BASE_URL = "https://ilinkai.weixin.qq.com"
 EP_GET_BOT_QR = "ilink/bot/get_bot_qrcode"

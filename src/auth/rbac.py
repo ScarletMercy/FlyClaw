@@ -10,7 +10,7 @@ from src.auth.store import AuthStore
 if TYPE_CHECKING:
     from src.config import AppConfig
 
-logger = logging.getLogger("myclaw.auth.rbac")
+logger = logging.getLogger("flyclaw.auth.rbac")
 
 
 class RBAC:

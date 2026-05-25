@@ -8,7 +8,7 @@ from typing import Optional
 
 from src.agent.tooldef import ToolDef
 
-logger = logging.getLogger("myclaw.agents.delegate")
+logger = logging.getLogger("flyclaw.agents.delegate")
 
 
 def _register_builtin_tools(config) -> list[ToolDef]:

@@ -9,7 +9,7 @@ from typing import Optional
 from src._container import get_container
 from src.agent.tooldef import ToolDef
 
-logger = logging.getLogger("myclaw.task_tools")
+logger = logging.getLogger("flyclaw.task_tools")
 
 _current_chat_id: ContextVar[str] = ContextVar("_current_chat_id", default="")
 _current_sender_id: ContextVar[str] = ContextVar("_current_sender_id", default="")

@@ -4,7 +4,7 @@ import logging
 from contextvars import ContextVar
 from typing import Optional
 
-logger = logging.getLogger("myclaw.media_tools")
+logger = logging.getLogger("flyclaw.media_tools")
 
 _current_channel: ContextVar[str] = ContextVar("_current_channel", default="")
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .types import Skill, SkillCommandSpec
 
-logger = logging.getLogger("myclaw.skills.prompt")
+logger = logging.getLogger("flyclaw.skills.prompt")
 
 _DEFAULT_BUDGET = 15000
 

@@ -1,4 +1,4 @@
-"""User-defined hook system for MyClaw event bus."""
+"""User-defined hook system for flyclaw event bus."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from typing import Any, Callable
 from src.events.bus import EventBus
 from src.events.types import Event
 
-logger = logging.getLogger("myclaw.events.hooks")
+logger = logging.getLogger("flyclaw.events.hooks")
 
 
 class HookSpec:
@@ -73,13 +73,13 @@ class HookManager:
             hooks:
               hooks:
                 - event: "tool.*"
-                  handler: "~/.myclaw/hooks/audit_tool.py"
+                  handler: "~/.flyclaw/hooks/audit_tool.py"
                   enabled: true
 
         Or legacy flat list:
             hooks:
               - event: "tool.*"
-                handler: "~/.myclaw/hooks/audit_tool.py"
+                handler: "~/.flyclaw/hooks/audit_tool.py"
 
         Returns:
             Number of hooks loaded

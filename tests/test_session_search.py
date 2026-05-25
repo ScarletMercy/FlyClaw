@@ -12,7 +12,7 @@ class TestSessionSearchConfig:
 
         cfg = load_config(tmp_path / "nonexistent.yaml")
         assert cfg.session_search.enabled is False
-        assert cfg.session_search.index_path == "~/.myclaw/data/session_index.db"
+        assert cfg.session_search.index_path == "~/.flyclaw/data/session_index.db"
         assert cfg.session_search.auto_sync is True
         assert cfg.session_search.max_results == 10
         assert cfg.session_search.tool_content_max_chars == 500

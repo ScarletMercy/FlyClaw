@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from src.agent.client import ChatClient, FallbackChain
 
-logger = logging.getLogger("myclaw.compressor")
+logger = logging.getLogger("flyclaw.compressor")
 
 _CHARS_PER_TOKEN = 4
 

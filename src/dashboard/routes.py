@@ -1,4 +1,4 @@
-"""Dashboard routes for MyClaw web UI."""
+"""Dashboard routes for flyclaw web UI."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-logger = logging.getLogger("myclaw.dashboard")
+logger = logging.getLogger("flyclaw.dashboard")
 
 # ── Log buffer for SSE streaming ──
 
@@ -45,7 +45,7 @@ _log_handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(levelname)
 
 
 def _install_log_handler():
-    root = logging.getLogger("myclaw")
+    root = logging.getLogger("flyclaw")
     if _log_handler not in root.handlers:
         root.addHandler(_log_handler)
 
@@ -802,7 +802,7 @@ def register_dashboard(app: FastAPI, application):
         try:
             from src.skills.curator import SkillCurator
             from pathlib import Path
-            curator = SkillCurator(Path.home() / ".myclaw" / "skills")
+            curator = SkillCurator(Path.home() / ".flyclaw" / "skills")
             skills = _app_ref.skills_cache or []
             lifecycle_counts = {"active": 0, "stale": 0, "archived": 0}
             for s in skills:
@@ -828,7 +828,7 @@ def register_dashboard(app: FastAPI, application):
         try:
             from src.skills.curator import SkillCurator
             from pathlib import Path
-            curator = SkillCurator(Path.home() / ".myclaw" / "skills")
+            curator = SkillCurator(Path.home() / ".flyclaw" / "skills")
             result = await curator.review_skills(dry_run=dry_run)
             return result
         except Exception as e:
@@ -942,7 +942,7 @@ def register_dashboard(app: FastAPI, application):
             # Save config to file using the app's config path
             from pathlib import Path as _Path
             from src.config import save_config
-            config_path = getattr(_app_ref, '_config_path', None) or 'config.yaml'
+            config_path = getattr(_app_ref, '_config_path', None) or str(Path.home() / ".flyclaw" / "config.yaml")
             # Ensure absolute path to avoid saving to wrong location
             config_path = str(_Path(config_path).resolve())
             save_config(cfg, config_path)

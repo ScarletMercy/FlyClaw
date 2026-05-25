@@ -1,4 +1,4 @@
-# Termux / Android dependency constraints for MyClaw.
+# Termux / Android dependency constraints for flyclaw.
 #
 # Usage:
 #   python -m pip install -e '.[termux]' -c constraints-termux.txt

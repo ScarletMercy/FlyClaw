@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 
-logger = logging.getLogger("myclaw.session_index.search")
+logger = logging.getLogger("flyclaw.session_index.search")
 
 SYSTEM_PROMPT = """你是一个会话搜索助手。用户给你一个搜索意图，你从候选会话列表中找出相关的会话。
 

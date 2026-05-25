@@ -191,7 +191,7 @@ class TestMessageCallbackApprovalViaQQ:
 
         with patch("src.tools.approval.get_approval_manager", return_value=mock_mgr):
             await callback(
-                text="yes",
+                text="/y",
                 sender_id="u1",
                 chat_id="c1",
                 chat_type="p2p",

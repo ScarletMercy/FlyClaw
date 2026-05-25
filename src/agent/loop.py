@@ -20,7 +20,7 @@ from src.agent.state import AgentState, StateStore
 from src.agent.tooldef import ToolDef
 from src.skills.manager import _SKILL_TOOL_NAMES
 
-logger = logging.getLogger("myclaw.agent.loop")
+logger = logging.getLogger("flyclaw.agent.loop")
 
 _SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
 
@@ -509,7 +509,7 @@ class AgentLoop:
                             deleted.append(k)
                     except Exception as exc:
                         import logging as _log
-                        _log.getLogger("myclaw.loop").warning("memory delete resume failed: %s", exc)
+                        _log.getLogger("flyclaw.loop").warning("memory delete resume failed: %s", exc)
                     result_content = json.dumps(
                         {"ok": True, "deleted": deleted, "count": len(deleted)},
                         ensure_ascii=False,
@@ -833,7 +833,7 @@ class AgentLoop:
                 workspace_dir = str(Path(raw_ws).expanduser().resolve())
 
         self._prompt_soul = _load_soul_md()
-        self._prompt_env = "\n".join(_build_environment_hints())
+        self._prompt_env = "\n".join(_build_environment_hints(workspace_dir))
         self._prompt_tool_rules = "\n".join(_build_tooling_rules())
         self._prompt_tool_guidance = "\n".join(_build_tool_guidance(tools))
         self._prompt_safety = "\n".join(_build_safety())

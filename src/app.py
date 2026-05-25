@@ -24,34 +24,20 @@ from src.commands.dispatcher import CommandDispatcher
 if TYPE_CHECKING:
     from src.skills.types import Skill
 
-logger = logging.getLogger("myclaw")
+logger = logging.getLogger("flyclaw")
 
-_MYCLAW_DATA_DIR = Path.home() / ".myclaw" / "data"
+_FLYCLAW_DATA_DIR = Path.home() / ".flyclaw" / "data"
 
 
-def _ensure_myclaw_data_dir() -> Path:
-    _MYCLAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    old_data = Path("data")
-    if old_data.exists() and not (old_data / ".migrated").exists():
-        migrated_count = 0
-        for f in old_data.glob("*"):
-            if f.is_file() and not f.name.startswith("."):
-                try:
-                    import shutil
-                    shutil.copy2(f, _MYCLAW_DATA_DIR / f.name)
-                    migrated_count += 1
-                except Exception as e:
-                    logger.warning("迁移 %s 失败: %s", f.name, e)
-        if migrated_count > 0:
-            (old_data / ".migrated").touch()
-            logger.info("已从 data/ 迁移 %d 个文件到 %s", migrated_count, _MYCLAW_DATA_DIR)
-    return _MYCLAW_DATA_DIR
+def _ensure_flyclaw_data_dir() -> Path:
+    _FLYCLAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
+    return _FLYCLAW_DATA_DIR
 
 
 class ServiceContainer:
     def __init__(self, config=None):
         self.config = config or load_config()
-        _ensure_myclaw_data_dir()
+        _ensure_flyclaw_data_dir()
         self.skills_cache: list = []
         self.agent_loop: AgentLoop | None = None
         self.state_store: StateStore | None = None
@@ -77,7 +63,7 @@ class ServiceContainer:
         self.process_supervisor = None
         self.background_tasks: set = set()
         self._qq_mu_runner = None
-        self._config_path: str = "config.yaml"
+        self._config_path: str = str(Path.home() / ".flyclaw" / "config.yaml")
         self._config_watcher = None
         self._reload_executor = None
         self._startup_sync_task = None
@@ -88,7 +74,7 @@ class ServiceContainer:
         dirs: list[tuple[str, Path]] = []
         workspace = Path(self.config.agents.workspace).expanduser().resolve()
 
-        user_skills = Path.home() / ".myclaw" / "skills"
+        user_skills = Path.home() / ".flyclaw" / "skills"
         user_skills.mkdir(parents=True, exist_ok=True)
         dirs.append(("user", user_skills))
 
@@ -220,7 +206,7 @@ class ServiceContainer:
                     self.config.memory.db_path,
                     dimensions=self.config.memory.embedding_dimensions,
                     fts_tokenizer=self.config.memory.fts_tokenizer,
-                    lancedb_uri=getattr(self.config.memory, "lancedb_uri", str(Path.home() / ".myclaw" / "data" / "memory_lancedb")),
+                    lancedb_uri=getattr(self.config.memory, "lancedb_uri", str(Path.home() / ".flyclaw" / "data" / "memory_lancedb")),
                 )
             else:
                 from src.memory.store import MemoryStore
@@ -275,14 +261,14 @@ class ServiceContainer:
             idle_reset_minutes=self.config.session.idle_reset_minutes,
         )
         self.session_registry = SessionRegistry()
-        self.session_registry.init(str(_MYCLAW_DATA_DIR / "sessions.json"))
+        self.session_registry.init(str(_FLYCLAW_DATA_DIR / "sessions.json"))
         self.dispatcher = CommandDispatcher(skills if skills else [], config=self.config)
 
     def _setup_registries(self):
         from src.tools.registry import ToolRegistry
         from src.tools.approval import ApprovalManager
         self.tool_registry = ToolRegistry()
-        self.approval_manager = ApprovalManager(data_dir=str(_MYCLAW_DATA_DIR))
+        self.approval_manager = ApprovalManager(data_dir=str(_FLYCLAW_DATA_DIR))
 
     def _setup_media_understanding(self):
         if not self.config.tools.media_understanding.enabled:
@@ -360,7 +346,7 @@ class ServiceContainer:
         from src._container import set_container
         set_container(self)
 
-        logger.info("MyClaw 0.1.0 启动中...")
+        logger.info("flyclaw 0.1.0 启动中...")
         logger.info("模型: %s/%s", self.config.model.provider, self.config.model.name)
         if not self.config.gateway.auth_token:
             logger.warning("网关认证令牌为空 — 所有认证已禁用")
@@ -683,7 +669,7 @@ class ServiceContainer:
                 get_hook_manager().unload_all()
             except Exception:
                 pass
-            logger.info("MyClaw 已停止")
+            logger.info("flyclaw 已停止")
         except Exception as e:
             logger.error("关闭过程中出错: %s", e, exc_info=True)
 

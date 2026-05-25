@@ -8,9 +8,9 @@ import time
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger("myclaw.file_tools")
+logger = logging.getLogger("flyclaw.file_tools")
 
-_BASE_DIR = os.path.abspath(os.environ.get("MYCLAW_WORKSPACE", "."))
+_BASE_DIR = os.path.abspath(os.environ.get("FLYCLAW_WORKSPACE", "."))
 _edit_condition = threading.Condition()
 
 # --- Read dedup and loop detection ---

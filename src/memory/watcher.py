@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Callable, Optional
 
-logger = logging.getLogger("myclaw.memory.watcher")
+logger = logging.getLogger("flyclaw.memory.watcher")
 
 _watcher_task: Optional[asyncio.Task] = None
 

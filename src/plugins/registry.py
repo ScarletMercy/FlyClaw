@@ -8,7 +8,7 @@ from src.agent.tooldef import ToolDef
 
 from .loader import HookResult, PluginRecord, discover_plugins
 
-logger = logging.getLogger("myclaw.plugins.registry")
+logger = logging.getLogger("flyclaw.plugins.registry")
 
 
 class PluginRegistry:

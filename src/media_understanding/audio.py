@@ -5,7 +5,7 @@ import logging
 from .provider import MediaProviderClient
 from .types import MediaCapability, MediaResult, _media_error, _media_ok
 
-logger = logging.getLogger("myclaw.media_understanding.audio")
+logger = logging.getLogger("flyclaw.media_understanding.audio")
 
 
 async def transcribe_audio(

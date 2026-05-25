@@ -7,7 +7,7 @@ import re
 
 from src.agent.loop import ApprovalPending
 
-logger = logging.getLogger("myclaw")
+logger = logging.getLogger("flyclaw")
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n([\s\S]*?)\n\s*```", re.IGNORECASE)
 _MAX_FORMAT_LEN = 8000

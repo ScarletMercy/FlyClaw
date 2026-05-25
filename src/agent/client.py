@@ -10,7 +10,7 @@ from typing import Any
 from openai import AsyncOpenAI
 import httpx
 
-logger = logging.getLogger("myclaw.agent.client")
+logger = logging.getLogger("flyclaw.agent.client")
 
 
 @dataclass

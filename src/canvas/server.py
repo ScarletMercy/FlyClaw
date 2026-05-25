@@ -9,14 +9,14 @@ from fastapi.responses import FileResponse, HTMLResponse
 
 from src.canvas.file_resolver import FileResolver
 
-logger = logging.getLogger("myclaw.canvas")
+logger = logging.getLogger("flyclaw.canvas")
 
-CANVAS_PATH = "/__myclaw__/canvas"
-CANVAS_WS_PATH = "/__myclaw__/ws"
+CANVAS_PATH = "/__flyclaw__/canvas"
+CANVAS_WS_PATH = "/__flyclaw__/ws"
 
 LIVE_RELOAD_SCRIPT = """<script>
 (function() {
-    const ws = new WebSocket((location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/__myclaw__/ws');
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/__flyclaw__/ws');
     ws.onmessage = function(e) { if (e.data === 'reload') location.reload(); };
     ws.onclose = function() { setTimeout(function() { location.reload(); }, 3000); };
 })();
@@ -92,5 +92,5 @@ async def broadcast_reload():
 
 def _default_page() -> str:
     return f"""<!DOCTYPE html>
-<html><head><title>MyClaw Canvas</title>{LIVE_RELOAD_SCRIPT}</head>
-<body><h1>MyClaw Canvas</h1><p>Drop files in the canvas root directory to get started.</p></body></html>"""
+<html><head><title>flyclaw Canvas</title>{LIVE_RELOAD_SCRIPT}</head>
+<body><h1>flyclaw Canvas</h1><p>Drop files in the canvas root directory to get started.</p></body></html>"""

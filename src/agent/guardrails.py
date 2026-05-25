@@ -20,7 +20,7 @@ import logging
 from collections import deque
 from dataclasses import dataclass, field
 
-logger = logging.getLogger("myclaw.agent.guardrails")
+logger = logging.getLogger("flyclaw.agent.guardrails")
 
 _IDEMPOTENT_TOOLS: frozenset[str] = frozenset({
     "read_file", "list_dir", "search_files",

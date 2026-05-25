@@ -1,4 +1,4 @@
-# MyClaw-Py 从开发到生产部署全流程
+# flyclaw-Py 从开发到生产部署全流程
 
 ## 前置条件
 
@@ -13,7 +13,7 @@
 
 ```bash
 # 进入项目目录
-cd myclaw-py
+cd flyclaw-py
 
 # 使用 uv 创建虚拟环境（推荐）
 uv venv
@@ -49,7 +49,7 @@ pip install -e .
 运行交互式配置向导，自动生成 `config.yaml`：
 
 ```bash
-myclaw-setup
+flyclaw-setup
 ```
 
 向导会引导你完成 5 步配置：
@@ -105,7 +105,7 @@ model:
 
 agents:
   system_prompt: |
-    你是一个运行在 MyClaw 中的 AI 助手。
+    你是一个运行在 flyclaw 中的 AI 助手。
   workspace: "."           # 工作目录，exec_command 在此执行
   max_tool_rounds: 15      # 单次对话最大工具调用轮数
 
@@ -234,28 +234,28 @@ model:
 # 启动
 python -m src.main
 # 或
-myclaw
+flyclaw
 ```
 
 启动后日志输出：
 
 ```
-14:00:00 [myclaw.security] PASS gateway-auth
-14:00:00 [myclaw.security] INFO exec-approval
-14:00:00 [myclaw.security] PASS feishu-dm
-14:00:00 [myclaw.security] PASS data-dir
-14:00:00 [myclaw.security] PASS secrets
-14:00:00 [myclaw.security] Audit complete: 4 passed, 0 warnings
-14:00:00 [myclaw] MyClaw 0.1.0 starting...
-14:00:00 [myclaw] Model: anthropic/claude-sonnet-4-6
-14:00:00 [myclaw] Skills loaded: 1 active, 1 total
-14:00:00 [myclaw] Graph compiled with 6 tools, 1 skills
-14:00:01 [myclaw] SQLite checkpointer initialized
-14:00:01 [myclaw] Gateway ready: http://127.0.0.1:18080
-14:00:01 [myclaw] OpenAI compat: POST /v1/chat/completions
-14:00:01 [myclaw] WebSocket:     ws://127.0.0.1:18080/ws
-14:00:01 [myclaw] Health:        GET /healthz
-14:00:01 [myclaw] Cron API:      GET /api/cron/status
+14:00:00 [flyclaw.security] PASS gateway-auth
+14:00:00 [flyclaw.security] INFO exec-approval
+14:00:00 [flyclaw.security] PASS feishu-dm
+14:00:00 [flyclaw.security] PASS data-dir
+14:00:00 [flyclaw.security] PASS secrets
+14:00:00 [flyclaw.security] Audit complete: 4 passed, 0 warnings
+14:00:00 [flyclaw] flyclaw 0.1.0 starting...
+14:00:00 [flyclaw] Model: anthropic/claude-sonnet-4-6
+14:00:00 [flyclaw] Skills loaded: 1 active, 1 total
+14:00:00 [flyclaw] Graph compiled with 6 tools, 1 skills
+14:00:01 [flyclaw] SQLite checkpointer initialized
+14:00:01 [flyclaw] Gateway ready: http://127.0.0.1:18080
+14:00:01 [flyclaw] OpenAI compat: POST /v1/chat/completions
+14:00:01 [flyclaw] WebSocket:     ws://127.0.0.1:18080/ws
+14:00:01 [flyclaw] Health:        GET /healthz
+14:00:01 [flyclaw] Cron API:      GET /api/cron/status
 ```
 
 ### 安全审计说明
@@ -401,17 +401,17 @@ def get_tools() -> list[ToolDef]:
 
 ### 7.1 使用 Daemon 管理（推荐）
 
-MyClaw 内置跨平台服务管理工具，支持 systemd（Linux）、launchd（macOS）、schtasks（Windows）。
+flyclaw 内置跨平台服务管理工具，支持 systemd（Linux）、launchd（macOS）、schtasks（Windows）。
 
 ```bash
 # 安装为系统服务
-myclaw-daemon install
+flyclaw-daemon install
 
 # 查看状态
-myclaw-daemon status
+flyclaw-daemon status
 
 # 卸载服务
-myclaw-daemon uninstall
+flyclaw-daemon uninstall
 ```
 
 **Linux (systemd)**：会打印需要执行的 sudo 命令，包括生成 service 文件、daemon-reload、enable。
@@ -423,17 +423,17 @@ myclaw-daemon uninstall
 ### 7.2 手动 systemd（Linux）
 
 ```ini
-# /etc/systemd/system/myclaw.service
+# /etc/systemd/system/flyclaw.service
 [Unit]
-Description=MyClaw AI Assistant
+Description=flyclaw AI Assistant
 After=network.target
 
 [Service]
 Type=simple
-User=myclaw
-WorkingDirectory=/opt/myclaw-py
-EnvironmentFile=/opt/myclaw-py/.env
-ExecStart=/opt/myclaw-py/.venv/bin/python -m src.main
+User=flyclaw
+WorkingDirectory=/opt/flyclaw-py
+EnvironmentFile=/opt/flyclaw-py/.env
+ExecStart=/opt/flyclaw-py/.venv/bin/python -m src.main
 Restart=on-failure
 RestartSec=5
 
@@ -442,9 +442,9 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl enable myclaw
-sudo systemctl start myclaw
-sudo journalctl -u myclaw -f
+sudo systemctl enable flyclaw
+sudo systemctl start flyclaw
+sudo journalctl -u flyclaw -f
 ```
 
 ### 7.3 使用 Docker
@@ -470,17 +470,17 @@ CMD ["python", "-m", "src.main"]
 ```
 
 ```bash
-docker build -t myclaw .
+docker build -t flyclaw .
 docker run -d \
-  --name myclaw \
+  --name flyclaw \
   -p 18080:18080 \
   -e ANTHROPIC_API_KEY="sk-ant-..." \
   -e GATEWAY_AUTH_TOKEN="your-secret" \
   -e FEISHU_APP_ID="cli_xxx" \
   -e FEISHU_APP_SECRET="xxx" \
   -e TAVILY_API_KEY="tvly-xxx" \
-  -v myclaw-data:/app/data \
-  myclaw
+  -v flyclaw-data:/app/data \
+  flyclaw
 ```
 
 ### 7.4 反向代理（Nginx）
@@ -488,7 +488,7 @@ docker run -d \
 ```nginx
 server {
     listen 443 ssl;
-    server_name myclaw.example.com;
+    server_name flyclaw.example.com;
 
     ssl_certificate /path/to/cert.pem;
     ssl_certificate_key /path/to/key.pem;
@@ -519,12 +519,12 @@ server {
 from openai import OpenAI
 
 client = OpenAI(
-    base_url="https://myclaw.example.com/v1",
+    base_url="https://flyclaw.example.com/v1",
     api_key="your-gateway-token",
 )
 
 response = client.chat.completions.create(
-    model="myclaw",
+    model="flyclaw",
     messages=[{"role": "user", "content": "hello"}],
 )
 print(response.choices[0].message.content)
@@ -533,7 +533,7 @@ print(response.choices[0].message.content)
 ### cURL
 
 ```bash
-curl -X POST https://myclaw.example.com/v1/chat/completions \
+curl -X POST https://flyclaw.example.com/v1/chat/completions \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your-gateway-token" \
   -d '{
@@ -545,7 +545,7 @@ curl -X POST https://myclaw.example.com/v1/chat/completions \
 ### WebSocket
 
 ```javascript
-const ws = new WebSocket("wss://myclaw.example.com/ws");
+const ws = new WebSocket("wss://flyclaw.example.com/ws");
 
 // 1. HMAC 认证（如果设置了 auth_token）
 // 2. 发送请求
@@ -572,9 +572,9 @@ ws.onmessage = (event) => {
 所有工具调用自动记录审计日志（可通过 `tools.exec.audit_log` 开关）：
 
 ```
-[myclaw.audit] [command-audit] tool=exec_command sender=ou_xxx args="ls -la" ok dur=0.32s
-[myclaw.audit] [command-audit] tool=web_search sender=ou_xxx args="query=\"AI news\"" ok dur=1.52s
-[myclaw.audit] [command-audit] tool=web_fetch sender=ou_xxx args="url=\"https://...\"" ok dur=2.11s
+[flyclaw.audit] [command-audit] tool=exec_command sender=ou_xxx args="ls -la" ok dur=0.32s
+[flyclaw.audit] [command-audit] tool=web_search sender=ou_xxx args="query=\"AI news\"" ok dur=1.52s
+[flyclaw.audit] [command-audit] tool=web_fetch sender=ou_xxx args="url=\"https://...\"" ok dur=2.11s
 ```
 
 敏感参数（api_key、secret、token 等）自动脱敏为 `***REDACTED***`。
@@ -637,9 +637,9 @@ data/
 ### Daemon 服务管理
 
 ```bash
-myclaw-daemon install    # 安装为系统服务
-myclaw-daemon uninstall  # 卸载服务
-myclaw-daemon status     # 查看服务状态
+flyclaw-daemon install    # 安装为系统服务
+flyclaw-daemon uninstall  # 卸载服务
+flyclaw-daemon status     # 查看服务状态
 ```
 
 ---

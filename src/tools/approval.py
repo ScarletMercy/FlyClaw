@@ -12,7 +12,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, RootModel
 
-logger = logging.getLogger("myclaw.approval")
+logger = logging.getLogger("flyclaw.approval")
 
 
 class ApprovalRequest(BaseModel):
@@ -41,7 +41,7 @@ class _PendingApproval:
 
 
 class ApprovalManager:
-    def __init__(self, data_dir: str = "~/.myclaw/data"):
+    def __init__(self, data_dir: str = "~/.flyclaw/data"):
         self._data_dir = Path(data_dir).expanduser().resolve()
         self._pending: dict[str, _PendingApproval] = {}
         self._durable: dict[str, list[str]] = {}

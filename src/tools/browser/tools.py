@@ -9,7 +9,7 @@ import time
 from contextvars import ContextVar
 from typing import Optional
 
-logger = logging.getLogger("myclaw.browser.tools")
+logger = logging.getLogger("flyclaw.browser.tools")
 
 _current_session: ContextVar[str] = ContextVar("_browser_session", default="default")
 

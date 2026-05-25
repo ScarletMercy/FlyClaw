@@ -1,4 +1,4 @@
-"""QQ Bot tools for MyClaw - guild and channel management."""
+"""QQ Bot tools for flyclaw - guild and channel management."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 from contextvars import ContextVar
 from typing import Optional
 
-logger = logging.getLogger("myclaw.qq_tools")
+logger = logging.getLogger("flyclaw.qq_tools")
 
 _current_qq_chat_id: ContextVar[str] = ContextVar("_current_qq_chat_id", default="")
 

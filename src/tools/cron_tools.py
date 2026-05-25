@@ -8,7 +8,7 @@ from contextvars import ContextVar
 from src._container import get_container
 from src.agent.tooldef import ToolDef
 
-logger = logging.getLogger("myclaw.cron_tools")
+logger = logging.getLogger("flyclaw.cron_tools")
 
 _current_chat_id: ContextVar[str] = ContextVar("_current_chat_id", default="")
 

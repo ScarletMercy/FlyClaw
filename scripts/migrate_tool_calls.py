@@ -2,7 +2,7 @@
 
 Usage: python scripts/migrate_tool_calls.py [path_to_checkpoints.db]
 
-If no path is provided, defaults to ~/.myclaw/data/checkpoints.db
+If no path is provided, defaults to ~/.flyclaw/data/checkpoints.db
 """
 import json
 import sqlite3
@@ -63,7 +63,7 @@ def migrate(db_path: str):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        db_path = Path.home() / ".myclaw" / "data" / "checkpoints.db"
+        db_path = Path.home() / ".flyclaw" / "data" / "checkpoints.db"
     else:
         db_path = sys.argv[1]
 

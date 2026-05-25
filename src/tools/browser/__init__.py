@@ -1,1 +1,1 @@
-"""Browser automation tools for myclaw-py using Playwright."""
+"""Browser automation tools for flyclaw-py using Playwright."""

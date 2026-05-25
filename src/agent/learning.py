@@ -18,7 +18,7 @@ from src.memory.memory_sync import sync_memories_to_curated_files
 from src.skills.curator import SkillCurator
 from src.skills.manager import SkillManager
 
-logger = logging.getLogger("myclaw.learning")
+logger = logging.getLogger("flyclaw.learning")
 
 
 class LearningLoop:
@@ -28,7 +28,7 @@ class LearningLoop:
         self.config = config
         # Use configured skills directory if available, otherwise default
         from pathlib import Path
-        skills_dir = Path.home() / ".myclaw" / "skills"
+        skills_dir = Path.home() / ".flyclaw" / "skills"
         extra_dirs = getattr(config.skills, 'extra_dirs', [])
         if extra_dirs:
             skills_dir = Path(extra_dirs[0]).expanduser().resolve()

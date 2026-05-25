@@ -18,13 +18,13 @@ from typing import Any, Optional
 from src.skills.manager import SkillManager
 from src.skills.types import Skill
 
-logger = logging.getLogger("myclaw.skills.curator")
+logger = logging.getLogger("flyclaw.skills.curator")
 
 _STALE_THRESHOLD_DAYS = 30
 _ARCHIVE_THRESHOLD_DAYS = 90
 
 CURATOR_REVIEW_PROMPT = (
-    "你是 MyClaw 的后台技能策展人。这是一次伞形构建整合审查，"
+    "你是 flyclaw 的后台技能策展人。这是一次伞形构建整合审查，"
     "不是被动审计，也不是简单去重。\n\n"
     "技能库的目标是类级(CLASS-LEVEL)指令和经验知识的集合。"
     "数百个窄技能（每个捕获一个会话的特定 bug）是库的失败——不是特性。"
@@ -65,7 +65,7 @@ class SkillCurator:
 
     def __init__(
         self,
-        skills_dir: Path = Path.home() / ".myclaw" / "skills",
+        skills_dir: Path = Path.home() / ".flyclaw" / "skills",
         review_interval_days: int = 7,
         stale_after_days: int = _STALE_THRESHOLD_DAYS,
         archive_after_days: int = _ARCHIVE_THRESHOLD_DAYS,

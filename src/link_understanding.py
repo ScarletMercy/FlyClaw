@@ -5,7 +5,7 @@ import logging
 import re
 from typing import Optional
 
-logger = logging.getLogger("myclaw.links")
+logger = logging.getLogger("flyclaw.links")
 
 URL_PATTERN = re.compile(r"https?://[^\s<>\)\]\"]+", re.IGNORECASE)
 

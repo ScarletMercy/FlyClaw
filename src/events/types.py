@@ -1,4 +1,4 @@
-"""Event type definitions and context schemas for the MyClaw event bus."""
+"""Event type definitions and context schemas for the flyclaw event bus."""
 
 from __future__ import annotations
 

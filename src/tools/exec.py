@@ -11,7 +11,7 @@ from typing import Optional
 
 from src.tools.exceptions import ToolExecutionError
 
-logger = logging.getLogger("myclaw.exec")
+logger = logging.getLogger("flyclaw.exec")
 
 _current_thread_id: ContextVar[str] = ContextVar("_current_thread_id", default="")
 
@@ -28,6 +28,21 @@ def _get_config():
         except Exception as e:
             logger.warning("Failed to load exec config: %s", e)
     return _cached_config
+
+
+def _resolve_default_workdir() -> str:
+    from pathlib import Path
+
+    cfg = _get_config()
+    if cfg:
+        ws = cfg.agents.workspace
+    else:
+        from src.config import AgentConfig
+
+        ws = AgentConfig().workspace
+    resolved = str(Path(ws).expanduser().resolve())
+    Path(resolved).mkdir(parents=True, exist_ok=True)
+    return resolved
 
 
 def reset_config_cache():
@@ -412,7 +427,7 @@ async def exec_command(
     Args:
         command: The shell command to execute.
         timeout: Timeout in seconds. Default 30.
-        workdir: Working directory. Defaults to current directory.
+        workdir: Working directory. Defaults to agents.workspace in config.yaml.
         background: Run in background. Returns session ID immediately.
     """
     cfg = _get_config()
@@ -430,6 +445,9 @@ async def exec_command(
         else ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "SystemRoot", "COMSPEC", "LANG", "PYTHONPATH"]
     )
 
+    if workdir is None:
+        workdir = _resolve_default_workdir()
+
     # Sandbox: working directory restriction
     if sandbox_enabled:
         from pathlib import Path
@@ -438,7 +456,7 @@ async def exec_command(
         if workdir:
             wd = Path(workdir).resolve()
         else:
-            wd = Path(".").resolve()
+            wd = workspace
 
         allowed = [workspace.resolve()] + [Path(d).expanduser().resolve() for d in sandbox_allowed_dirs]
         if not any(str(wd).startswith(str(a)) for a in allowed):

@@ -9,7 +9,7 @@ from src.config import MemoryConfig
 from src.memory.base import BaseMemoryStore
 from src.memory.embeddings import EmbeddingProvider
 
-logger = logging.getLogger("myclaw.memory.search")
+logger = logging.getLogger("flyclaw.memory.search")
 
 
 class MemorySearcher:

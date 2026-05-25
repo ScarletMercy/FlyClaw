@@ -24,7 +24,7 @@ run:
 	uv run python -m src.main
 
 docker:
-	docker build -t myclaw .
+	docker build -t flyclaw .
 
 clean:
 	rm -rf data/ .pytest_cache/ .ruff_cache/

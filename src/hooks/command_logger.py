@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-logger = logging.getLogger("myclaw.audit")
+logger = logging.getLogger("flyclaw.audit")
 
 
 def log_tool_call(

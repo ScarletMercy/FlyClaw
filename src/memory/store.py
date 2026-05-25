@@ -10,7 +10,7 @@ from typing import Optional
 
 from src.memory.base import BaseMemoryStore
 
-logger = logging.getLogger("myclaw.memory.store")
+logger = logging.getLogger("flyclaw.memory.store")
 
 _HAS_SQLITE_VEC = False
 try:

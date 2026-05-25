@@ -45,18 +45,18 @@ def parse_args():
     parser.add_argument(
         "--db-path",
         default=None,
-        help="自定义 checkpoints.db 路径 (默认: ~/.myclaw/data/checkpoints.db)",
+        help="自定义 checkpoints.db 路径 (默认: ~/.flyclaw/data/checkpoints.db)",
     )
     parser.add_argument(
         "--index-path",
         default=None,
-        help="自定义 session_index.db 路径 (默认: ~/.myclaw/data/session_index.db)",
+        help="自定义 session_index.db 路径 (默认: ~/.flyclaw/data/session_index.db)",
     )
     return parser.parse_args()
 
 
 def get_default_paths():
-    data_dir = Path.home() / ".myclaw" / "data"
+    data_dir = Path.home() / ".flyclaw" / "data"
     return {
         "checkpoints": str(data_dir / "checkpoints.db"),
         "session_index": str(data_dir / "session_index.db"),
@@ -278,7 +278,7 @@ def main():
     checkpoints_path = args.db_path or paths["checkpoints"]
 
     logger.info("=" * 60)
-    logger.info("MyClaw 会话数据恢复工具")
+    logger.info("flyclaw 会话数据恢复工具")
     logger.info("=" * 60)
     logger.info("源数据库 (session_index): %s", index_path)
     logger.info("目标数据库 (checkpoints): %s", checkpoints_path)
@@ -308,7 +308,7 @@ def main():
         logger.info("移除 --dry-run 参数执行实际恢复。")
     else:
         logger.info("恢复完成！")
-        logger.info("请重启 MyClaw 服务以使用恢复的数据。")
+        logger.info("请重启 flyclaw 服务以使用恢复的数据。")
 
     return 0 if not stats["errors"] else 1
 

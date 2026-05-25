@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-logger = logging.getLogger("myclaw.session_search_tools")
+logger = logging.getLogger("flyclaw.session_search_tools")
 
 
 def _format_results(results: list[dict]) -> str:

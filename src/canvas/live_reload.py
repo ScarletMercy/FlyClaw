@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-logger = logging.getLogger("myclaw.canvas.live_reload")
+logger = logging.getLogger("flyclaw.canvas.live_reload")
 
 _task: asyncio.Task | None = None
 

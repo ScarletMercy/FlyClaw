@@ -12,7 +12,7 @@ from typing import Optional
 
 from .store import SessionIndexStore, parse_thread_id
 
-logger = logging.getLogger("myclaw.session_index.sync")
+logger = logging.getLogger("flyclaw.session_index.sync")
 
 
 def _extract_role(msg: dict) -> str:

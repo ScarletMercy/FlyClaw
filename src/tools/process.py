@@ -16,7 +16,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Optional
 
-logger = logging.getLogger("myclaw.process")
+logger = logging.getLogger("flyclaw.process")
 
 
 # ── Existing supervised execution ──

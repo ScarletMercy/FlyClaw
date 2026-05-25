@@ -12,7 +12,7 @@ from typing import Optional
 
 from src.memory.base import BaseMemoryStore
 
-logger = logging.getLogger("myclaw.memory.lance_store")
+logger = logging.getLogger("flyclaw.memory.lance_store")
 
 _HAS_LANCEDB = False
 try:
@@ -33,7 +33,7 @@ class LanceMemoryStore(BaseMemoryStore):
         db_path: str,
         dimensions: int = 1536,
         fts_tokenizer: str = "unicode61",
-        lancedb_uri: str = "~/.myclaw/data/memory_lancedb",
+        lancedb_uri: str = "~/.flyclaw/data/memory_lancedb",
     ):
         super().__init__(db_path, dimensions, fts_tokenizer)
         self.lancedb_uri = str(Path(lancedb_uri).expanduser().resolve())

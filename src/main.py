@@ -19,7 +19,7 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%H:%M:%S",
 )
-logger = logging.getLogger("myclaw")
+logger = logging.getLogger("flyclaw")
 
 
 class Application:

@@ -12,7 +12,7 @@ from watchfiles import awatch
 
 from src.config import load_config
 
-_log = logging.getLogger("myclaw.config_watcher")
+_log = logging.getLogger("flyclaw.config_watcher")
 
 
 @dataclass

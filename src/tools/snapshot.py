@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger("myclaw.snapshot")
+logger = logging.getLogger("flyclaw.snapshot")
 
 _EXCLUDE_PATTERNS = [
     ".git", "__pycache__", "node_modules", ".venv", "venv",
@@ -72,7 +72,7 @@ class CheckpointManager:
             return
         self._ensure_store()
         dh = _dir_hash(work_dir)
-        ref = f"refs/myclaw/{dh}"
+        ref = f"refs/flyclaw/{dh}"
         # Check if any commits exist for this dir
         r = _git("rev-parse", "--verify", ref, cwd=str(self._store))
         if r.returncode != 0:
@@ -119,7 +119,7 @@ class CheckpointManager:
         }
 
     def _ref_for(self, work_dir: str) -> str:
-        return f"refs/myclaw/{_dir_hash(work_dir)}"
+        return f"refs/flyclaw/{_dir_hash(work_dir)}"
 
     # ── .gitignore for snapshot ──
 
@@ -129,10 +129,10 @@ class CheckpointManager:
         existing = ""
         if exclude_path.exists():
             existing = exclude_path.read_text(encoding="utf-8")
-        if "# myclaw-snapshot" in existing:
+        if "# flyclaw-snapshot" in existing:
             return str(exclude_path)
         with open(exclude_path, "a", encoding="utf-8") as f:
-            f.write("\n# myclaw-snapshot\n")
+            f.write("\n# flyclaw-snapshot\n")
             for p in _EXCLUDE_PATTERNS:
                 f.write(f"{p}\n")
         return str(exclude_path)

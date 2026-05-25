@@ -10,7 +10,7 @@ from .provider import MediaProviderClient
 from .image import understand_image
 from .audio import transcribe_audio
 
-logger = logging.getLogger("myclaw.media_understanding")
+logger = logging.getLogger("flyclaw.media_understanding")
 
 
 def _make_capability_client(mu_config, cap_config, fallback_api_key: str = "") -> MediaProviderClient:

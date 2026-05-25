@@ -9,7 +9,7 @@ import re
 import sys
 from pathlib import Path
 
-logger = logging.getLogger("myclaw.prompt")
+logger = logging.getLogger("flyclaw.prompt")
 
 _CONTEXT_THREAT_PATTERNS: list[tuple[str, str]] = [
     (r'ignore\s+(previous|all|above|prior)\s+instructions', "prompt_injection"),
@@ -45,7 +45,7 @@ def _scan_context_content(content: str, filename: str) -> str:
 
 
 DEFAULT_SOUL_MD = (
-    "你是一个运行在 MyClaw 中的 AI 助手，具备文件操作、网页搜索、定时任务、记忆管理等能力。\n"
+    "你是一个运行在 flyclaw 中的 AI 助手，具备文件操作、网页搜索、定时任务、记忆管理等能力。\n"
     "回复简洁、准确、有用，不确定时如实说明。\n"
     "优先使用工具完成任务，而非让用户手动操作。"
 )
@@ -88,7 +88,7 @@ SKILLS_GUIDANCE = (
 
 
 def _load_soul_md() -> str:
-    soul_path = Path.home() / ".myclaw" / "SOUL.md"
+    soul_path = Path.home() / ".flyclaw" / "SOUL.md"
     try:
         if soul_path.exists():
             content = soul_path.read_text(encoding="utf-8").strip()
@@ -101,7 +101,7 @@ def _load_soul_md() -> str:
         return DEFAULT_SOUL_MD
 
 
-def _build_environment_hints() -> list[str]:
+def _build_environment_hints(workspace_dir: str = "") -> list[str]:
     hints: list[str] = []
     host_lines: list[str] = []
 
@@ -114,10 +114,8 @@ def _build_environment_hints() -> list[str]:
         host_lines.append(f"Host: {platform.system()} ({platform.release()})")
 
     host_lines.append(f"User home directory: {os.path.expanduser('~')}")
-    try:
-        host_lines.append(f"Current working directory: {os.getcwd()}")
-    except OSError:
-        pass
+    cwd_display = workspace_dir or os.getcwd()
+    host_lines.append(f"Current working directory: {cwd_display}")
 
     if sys.platform == "win32":
         host_lines.append(
@@ -146,7 +144,7 @@ def _build_tooling_rules() -> list[str]:
         "始终使用原生工具调用，不要将工具调用输出为文本、XML 或伪标签。",
         "不要描述常规工具调用 — 直接调用。仅在多步骤工作、敏感操作或被要求时才描述。",
         "优先使用工具调用，而非让用户手动执行 CLI 命令。",
-        "不要尝试通过 exec_command 执行 myclaw、openclaw 等命令来操作平台内部功能（定时任务、记忆、会话等），这些都有对应的工具。",
+        "不要尝试通过 exec_command 执行 flyclaw、openclaw 等命令来操作平台内部功能（定时任务、记忆、会话等），这些都有对应的工具。",
         "",
     ]
 
@@ -256,7 +254,7 @@ def build_system_prompt(
 ) -> str:
     """组装完整系统提示词。
 
-    身份由 ~/.myclaw/SOUL.md 提供（用户可编辑），首次运行自动生成默认内容。
+    身份由 ~/.flyclaw/SOUL.md 提供（用户可编辑），首次运行自动生成默认内容。
     环境信息自动探测，平台提示按 channel 注入。
     工具使用指导根据实际注册的工具动态生成。
     """
@@ -279,7 +277,7 @@ def build_system_prompt(
         lines.append(extra_system_prompt.strip())
         lines.append("")
 
-    lines.extend(_build_environment_hints())
+    lines.extend(_build_environment_hints(workspace_dir))
     lines.extend(_build_platform_hints(channel))
     lines.extend(_build_tooling_rules())
     lines.extend(_build_tool_guidance(tools))

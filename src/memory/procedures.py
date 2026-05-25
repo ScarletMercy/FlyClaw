@@ -19,7 +19,7 @@ import aiosqlite
 
 from src.agent.tooldef import ToolDef
 
-logger = logging.getLogger("myclaw.procedures")
+logger = logging.getLogger("flyclaw.procedures")
 
 
 # ── ProcedureStore ────────────────────────────────────────────────
@@ -81,6 +81,14 @@ class ProcedureStore:
         tags: str = "",
         source_thread: str = "",
     ) -> str:
+        cursor = await self._conn.execute(
+            "SELECT id FROM procedures WHERE name = ?", (name,)
+        )
+        existing = await cursor.fetchone()
+        if existing:
+            logger.debug("Procedure '%s' already exists (%s), skipping", name, existing["id"])
+            return existing["id"]
+
         proc_id = uuid.uuid4().hex[:8]
         now = datetime.now(timezone.utc).isoformat()
         steps_json = json.dumps(steps, ensure_ascii=False)
@@ -438,6 +446,13 @@ async def _try_extract_procedure(thread_id: str, messages: list[dict]) -> None:
     try:
         store = await get_procedure_store()
 
+        cursor = await store._conn.execute(
+            "SELECT id FROM procedures WHERE source_thread = ?", (thread_id,)
+        )
+        if await cursor.fetchone():
+            logger.debug("Thread %s already has extracted procedure, skipping", thread_id)
+            return
+
         tool_seq = _extract_tool_sequence(messages)
         if len(tool_seq) < 3:
             return
@@ -705,6 +720,5 @@ async def procedure_list(tag: str = "", limit: int = 20) -> str:
 def get_tools() -> list[ToolDef]:
     return [
         ToolDef.from_function(procedure_search),
-        ToolDef.from_function(procedure_learn),
         ToolDef.from_function(procedure_list),
     ]

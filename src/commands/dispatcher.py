@@ -5,7 +5,7 @@ from typing import Any, Callable, Optional
 
 from src.skills.types import Skill, SkillCommandSpec
 
-logger = logging.getLogger("myclaw.commands")
+logger = logging.getLogger("flyclaw.commands")
 
 
 class CommandDispatcher:

@@ -1,4 +1,4 @@
-"""QQ Bot channel implementation for MyClaw.
+"""QQ Bot channel implementation for flyclaw.
 
 Uses the official QQ Bot API (WebSocket + HTTP) for real-time messaging.
 Supports C2C (direct), group, and guild channel messages.
@@ -20,7 +20,7 @@ import httpx
 
 from .base import Channel, api_request_with_retry
 
-logger = logging.getLogger("myclaw.qq")
+logger = logging.getLogger("flyclaw.qq")
 
 # Module-level singleton for tool access
 _qq_channel: Optional[QQChannel] = None  # forward ref; set in QQChannel.__init__
@@ -34,7 +34,7 @@ def get_qq_channel() -> Optional[QQChannel]:
 # --- QQ Bot API constants ---
 API_BASE = "https://api.sgroup.qq.com"
 TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"
-USER_AGENT = "MyClawQQBot/0.1.0"
+USER_AGENT = "flyclawQQBot/0.1.0"
 
 # WebSocket opcodes
 OP_DISPATCH = 0

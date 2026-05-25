@@ -9,7 +9,7 @@ import httpx
 
 from src.config import MemoryConfig, ModelConfig
 
-logger = logging.getLogger("myclaw.memory.embeddings")
+logger = logging.getLogger("flyclaw.memory.embeddings")
 
 
 class EmbeddingProvider:

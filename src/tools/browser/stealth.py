@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-logger = logging.getLogger("myclaw.browser.stealth")
+logger = logging.getLogger("flyclaw.browser.stealth")
 
 _STEALTH_AVAILABLE = False
 try:

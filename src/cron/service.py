@@ -15,7 +15,7 @@ from apscheduler.jobstores.base import JobLookupError
 from .store import CronStore
 from .types import CronJob, CronJobCreate, CronJobPatch, CronRunResult
 
-logger = logging.getLogger("myclaw.cron")
+logger = logging.getLogger("flyclaw.cron")
 
 _MAX_CONSECUTIVE_ERRORS = 5
 _ERROR_BACKOFF_SECONDS = [30, 60, 300, 900, 3600]
@@ -215,7 +215,7 @@ class CronService:
                                 run_id = parts[1]
                                 cp_id = parts[3]
                                 from src.task.store import get_task_store
-                                task_store = get_task_store(getattr(self._config.task, "db_path", "~/.myclaw/data/task_runs.db"))
+                                task_store = get_task_store(getattr(self._config.task, "db_path", "~/.flyclaw/data/task_runs.db"))
                                 run = await task_store.get(run_id)
                                 if run:
                                     for cp in run.checkpoints:

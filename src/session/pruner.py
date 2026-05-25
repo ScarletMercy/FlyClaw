@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger("myclaw.session.pruner")
+logger = logging.getLogger("flyclaw.session.pruner")
 
 # Prune interval tracking table
 _PRUNE_TRACKING_SQL = """

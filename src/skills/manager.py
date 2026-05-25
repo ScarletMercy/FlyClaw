@@ -17,9 +17,9 @@ from typing import Optional
 from src.skills.loader import load_skill
 from src.skills.types import Skill, SkillMetadata
 
-logger = logging.getLogger("myclaw.skills.manager")
+logger = logging.getLogger("flyclaw.skills.manager")
 
-_USER_SKILLS_DIR = Path.home() / ".myclaw" / "skills"
+_USER_SKILLS_DIR = Path.home() / ".flyclaw" / "skills"
 
 # Validation limits
 _MAX_NAME_LENGTH = 64

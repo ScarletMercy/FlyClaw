@@ -8,7 +8,7 @@ from typing import Any, Callable, Optional
 
 import httpx
 
-logger = logging.getLogger("myclaw.channels.base")
+logger = logging.getLogger("flyclaw.channels.base")
 
 _MAX_API_RETRIES = 3
 

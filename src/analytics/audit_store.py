@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger("myclaw.analytics.audit")
+logger = logging.getLogger("flyclaw.analytics.audit")
 
 
 @dataclass
@@ -34,7 +34,7 @@ class AuditEntry:
 class AuditStore:
     """SQLite-backed audit log store."""
 
-    def __init__(self, db_path: str = "~/.myclaw/data/audit.db"):
+    def __init__(self, db_path: str = "~/.flyclaw/data/audit.db"):
         self.db_path = Path(db_path).expanduser().resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
@@ -214,7 +214,7 @@ _store: Optional[AuditStore] = None
 _subscriptions: list = []
 
 
-def get_audit_store(db_path: str = "~/.myclaw/data/audit.db") -> AuditStore:
+def get_audit_store(db_path: str = "~/.flyclaw/data/audit.db") -> AuditStore:
     """Get or create the audit store singleton."""
     global _store
     if _store is None:
@@ -222,7 +222,7 @@ def get_audit_store(db_path: str = "~/.myclaw/data/audit.db") -> AuditStore:
     return _store
 
 
-def reset_audit_store(db_path: str = "~/.myclaw/data/audit.db") -> AuditStore:
+def reset_audit_store(db_path: str = "~/.flyclaw/data/audit.db") -> AuditStore:
     """Reset the audit store singleton (for testing or multi-environment)."""
     global _store, _subscriptions
     _store = AuditStore(db_path)

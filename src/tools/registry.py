@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 from src.agent.tooldef import ToolDef
 
-logger = logging.getLogger("myclaw.tools.registry")
+logger = logging.getLogger("flyclaw.tools.registry")
 
 class ToolRegistry:
     def __init__(self) -> None:

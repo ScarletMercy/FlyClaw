@@ -1,1 +1,1 @@
-"""Analytics module for MyClaw."""
+"""Analytics module for flyclaw."""

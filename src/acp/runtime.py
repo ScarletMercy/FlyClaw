@@ -7,7 +7,7 @@ from typing import AsyncIterator
 
 from src.acp.session import AcpSessionManager
 
-logger = logging.getLogger("myclaw.acp.runtime")
+logger = logging.getLogger("flyclaw.acp.runtime")
 
 
 @dataclass

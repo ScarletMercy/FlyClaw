@@ -7,7 +7,7 @@ from pathlib import Path
 
 from src.agent.tooldef import ToolDef
 
-logger = logging.getLogger("myclaw.canvas.tool")
+logger = logging.getLogger("flyclaw.canvas.tool")
 
 
 async def canvas_render(text: str, format: str = "text", surface_id: str = "main") -> str:

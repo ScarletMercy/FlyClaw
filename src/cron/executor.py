@@ -18,7 +18,7 @@ import httpx
 from src.agent.state import AgentState
 from .types import CronJob, CronRunResult
 
-logger = logging.getLogger("myclaw.cron.executor")
+logger = logging.getLogger("flyclaw.cron.executor")
 
 _TRANSIENT_PATTERNS = [
     r"rate.?limit",
@@ -137,7 +137,7 @@ async def execute_cron_job(
                 run_id = parts[1]
                 cp_id = parts[3]
                 from src.task.store import get_task_store
-                task_store = get_task_store(getattr(config.task, "db_path", "~/.myclaw/data/task_runs.db"))
+                task_store = get_task_store(getattr(config.task, "db_path", "~/.flyclaw/data/task_runs.db"))
                 run = await task_store.get(run_id)
                 if run:
                     task_detail = (
@@ -310,7 +310,7 @@ async def _deliver_result(job: CronJob, output: str, channel: Any = None):
             webhook_secret = getattr(delivery, "webhook_secret", "") or ""
             if webhook_secret:
                 signature = hmac.new(webhook_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
-                headers["X-MyClaw-Signature"] = f"sha256={signature}"
+                headers["X-flyclaw-Signature"] = f"sha256={signature}"
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(
                     delivery.webhook_url,

@@ -1,4 +1,4 @@
-"""WeChat (Weixin) tools for MyClaw - message sending and file transfer."""
+"""WeChat (Weixin) tools for flyclaw - message sending and file transfer."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 from contextvars import ContextVar
 from typing import Optional
 
-logger = logging.getLogger("myclaw.weixin_tools")
+logger = logging.getLogger("flyclaw.weixin_tools")
 
 _current_weixin_chat_id: ContextVar[str] = ContextVar("_current_weixin_chat_id", default="")
 

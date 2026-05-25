@@ -7,7 +7,7 @@ from src.acp.session import AcpSessionManager
 from src.acp.runtime import AgentLoopRuntime, AcpRuntimeEvent
 from src.acp.transport import NdjsonTransport
 
-logger = logging.getLogger("myclaw.acp.server")
+logger = logging.getLogger("flyclaw.acp.server")
 
 
 class AcpServer:

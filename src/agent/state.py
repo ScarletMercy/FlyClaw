@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from src.agent.interrupt import InterruptFlag
 
-logger = logging.getLogger("myclaw.agent.state")
+logger = logging.getLogger("flyclaw.agent.state")
 
 _VALID_ROLES = {"system", "user", "assistant", "tool"}
 

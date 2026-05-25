@@ -7,7 +7,7 @@ import mimetypes
 from pathlib import Path
 from urllib.parse import urlparse
 
-logger = logging.getLogger("myclaw.tools.media_understanding")
+logger = logging.getLogger("flyclaw.tools.media_understanding")
 
 
 def _validate_url(url: str) -> None:

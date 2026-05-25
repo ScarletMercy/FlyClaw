@@ -1,4 +1,4 @@
-"""Weixin (WeChat) channel implementation for MyClaw.
+"""Weixin (WeChat) channel implementation for flyclaw.
 
 Connects to personal WeChat accounts via Tencent's iLink Bot API.
 Uses long-poll for inbound messages and AES-128-ECB encrypted CDN for media.
@@ -26,7 +26,7 @@ from urllib.parse import quote, urlparse
 
 from .base import Channel
 
-logger = logging.getLogger("myclaw.weixin")
+logger = logging.getLogger("flyclaw.weixin")
 
 WEIXIN_COPY_LINE_WIDTH = 120
 
@@ -112,7 +112,7 @@ _WEIXIN_CDN_ALLOWLIST: frozenset[str] = frozenset(
 
 _weixin_channel: Optional[WeixinChannel] = None
 
-_MYCLAW_DATA_DIR = Path.home() / ".myclaw" / "data"
+_FLYCLAW_DATA_DIR = Path.home() / ".flyclaw" / "data"
 
 
 def get_weixin_channel() -> Optional[WeixinChannel]:
@@ -187,7 +187,7 @@ def _headers(token: Optional[str], body: str) -> dict[str, str]:
 
 
 def _account_dir() -> Path:
-    path = Path.home() / ".myclaw" / "weixin" / "accounts"
+    path = Path.home() / ".flyclaw" / "weixin" / "accounts"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -312,7 +312,7 @@ def _mime_from_filename(filename: str) -> str:
 
 
 def _cache_media(data: bytes, filename: str) -> str:
-    cache_dir = _MYCLAW_DATA_DIR / "weixin_media"
+    cache_dir = _FLYCLAW_DATA_DIR / "weixin_media"
     cache_dir.mkdir(parents=True, exist_ok=True)
     prefix = hashlib.md5(data).hexdigest()[:12]
     path = cache_dir / f"{prefix}_{filename}"
@@ -1040,7 +1040,7 @@ class WeixinChannel(Channel):
         if self._send_session and not self._send_session.closed:
             await self._send_session.close()
         self._send_session = None
-        cache_dir = _MYCLAW_DATA_DIR / "weixin_media"
+        cache_dir = _FLYCLAW_DATA_DIR / "weixin_media"
         if cache_dir.exists():
             now = time.time()
             for f in cache_dir.iterdir():
@@ -1058,7 +1058,7 @@ class WeixinChannel(Channel):
         chunks = [c for c in _split_text_for_delivery(format_message(text), self.MAX_MESSAGE_LENGTH, self._split_multiline_messages) if c and c.strip()]
         last_id = None
         for idx, chunk in enumerate(chunks):
-            client_id = f"myclaw-weixin-{uuid.uuid4().hex}"
+            client_id = f"flyclaw-weixin-{uuid.uuid4().hex}"
             await self._send_text_chunk(chat_id=chat_id, chunk=chunk, context_token=context_token, client_id=client_id)
             last_id = client_id
             if idx < len(chunks) - 1 and self._send_chunk_delay_seconds > 0:
@@ -1565,10 +1565,10 @@ class WeixinChannel(Channel):
                     to=chat_id,
                     text=format_message(caption),
                     context_token=context_token,
-                    client_id=f"myclaw-weixin-{uuid.uuid4().hex}",
+                    client_id=f"flyclaw-weixin-{uuid.uuid4().hex}",
                 )
 
-            last_message_id = f"myclaw-weixin-{uuid.uuid4().hex}"
+            last_message_id = f"flyclaw-weixin-{uuid.uuid4().hex}"
             await _api_post(
                 self._send_session,
                 base_url=self._base_url,

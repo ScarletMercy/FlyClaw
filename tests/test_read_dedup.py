@@ -136,7 +136,7 @@ class TestReadDedup:
         with patch("src.tools.exec._current_thread_id") as mock_tid:
             mock_tid.get.return_value = "t1"
             r1 = read_file("test.txt")
-            f.write_text("new content\n", encoding="utf-8")
+            write_file("test.txt", "new content\n")
             r2 = read_file("test.txt")
             assert "new content" in r2
 

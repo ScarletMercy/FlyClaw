@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MyClaw 控制台</title>
+<title>flyclaw 控制台</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
 tailwind.config = {
@@ -47,7 +47,7 @@ tailwind.config = {
   <div class="h-14 flex items-center gap-3 px-4 border-b border-bdr">
     <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-accent to-purple-500 flex items-center justify-center
                 text-white font-extrabold text-sm shadow-lg shadow-accent/20">M</div>
-    <span class="font-semibold text-sm tracking-tight">MyClaw</span>
+    <span class="font-semibold text-sm tracking-tight">flyclaw</span>
   </div>
   <nav class="flex-1 py-2 px-2 space-y-0.5 overflow-y-auto">
     <template x-for="t in tabs" :key="t.id">
@@ -80,7 +80,7 @@ tailwind.config = {
 <div class="flex-1 flex flex-col min-w-0">
   <!-- Top bar -->
   <header class="h-14 shrink-0 bg-surface/80 backdrop-blur border-b border-bdr flex items-center px-5 gap-4 sticky top-0 z-30">
-    <h1 class="text-sm font-semibold lg:hidden">MyClaw</h1>
+    <h1 class="text-sm font-semibold lg:hidden">flyclaw</h1>
     <div class="flex-1"></div>
     <!-- Model switcher -->
     <div class="relative" x-data="{open:false}" @click.away="open=false">
@@ -329,7 +329,7 @@ tailwind.config = {
                  'border-white text-white bg-err': l.level==='CRITICAL',
                }">
             <span class="text-zinc-700 mr-2 select-none" x-text="formatLogTs(l.ts)"></span>
-            <span class="text-accent/60 mr-2 select-none" x-text="l.logger?.replace('myclaw.','')"></span>
+            <span class="text-accent/60 mr-2 select-none" x-text="l.logger?.replace('flyclaw.','')"></span>
             <span x-text="l.message"></span>
           </div>
         </template>

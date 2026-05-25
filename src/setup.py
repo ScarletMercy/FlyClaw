@@ -1,9 +1,9 @@
-"""MyClaw 交互式配置向导。
+"""flyclaw 交互式配置向导。
 
 用法:
     python -m src.setup
-    myclaw-setup
-    myclaw setup
+    flyclaw-setup
+    flyclaw setup
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-CONFIG_PATH = Path("config.yaml")
+CONFIG_PATH = Path.home() / ".flyclaw" / "config.yaml"
 
 PRESETS = {
     "anthropic": {
@@ -216,7 +216,7 @@ def _configure_fallbacks(model: dict) -> None:
 
 
 def _step_model(config: dict) -> None:
-    print("  [1/5] 模型提供商")
+    print("  [1/6] 模型提供商")
     print("  ────────────────────")
 
     model = _section(config, "model")
@@ -460,7 +460,7 @@ def _step_summary(config: dict) -> None:
 def run_wizard():
     print()
     print("  ╔══════════════════════════════════════╗")
-    print("  ║        MyClaw 配置向导               ║")
+    print("  ║        flyclaw 配置向导               ║")
     print("  ╚══════════════════════════════════════╝")
     print()
     print("  按 Enter 保留当前/默认值，按 Ctrl+C 退出且不保存。")
@@ -482,8 +482,8 @@ def run_wizard():
         print()
         print("  后续步骤:")
         print("    1. 设置所需的环境变量（API 密钥）")
-        print("    2. 运行: myclaw")
-        print("    3. 或运行: myclaw doctor（检查配置）")
+        print("    2. 运行: flyclaw")
+        print("    3. 或运行: flyclaw doctor（检查配置）")
         print()
     else:
         print("\n  配置已丢弃。")

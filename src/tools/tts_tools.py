@@ -4,7 +4,7 @@ import logging
 import tempfile
 from pathlib import Path
 
-logger = logging.getLogger("myclaw.tts_tools")
+logger = logging.getLogger("flyclaw.tts_tools")
 
 
 async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:

@@ -1,4 +1,4 @@
-"""MyClaw Event Bus - lightweight pub/sub for system events."""
+"""flyclaw Event Bus - lightweight pub/sub for system events."""
 
 from __future__ import annotations
 

@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 from src.auth.models import Device, PairingCode, User, UserRole
 
-logger = logging.getLogger("myclaw.auth.store")
+logger = logging.getLogger("flyclaw.auth.store")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS users (
@@ -51,7 +51,7 @@ CREATE INDEX IF NOT EXISTS idx_pairing_expires ON pairing_codes(expires_at);
 
 
 class AuthStore:
-    def __init__(self, db_path: str = "~/.myclaw/data/auth.db"):
+    def __init__(self, db_path: str = "~/.flyclaw/data/auth.db"):
         self._path = Path(db_path).expanduser().resolve()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()

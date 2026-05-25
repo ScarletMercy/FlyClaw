@@ -12,7 +12,7 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN groupadd -r myclaw && useradd -r -g myclaw myclaw
+RUN groupadd -r flyclaw && useradd -r -g flyclaw flyclaw
 
 COPY --from=builder /app/.venv /app/.venv
 COPY src/ src/
@@ -21,7 +21,7 @@ COPY config.example.yaml* ./
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
-USER myclaw
+USER flyclaw
 
 EXPOSE 18080
 

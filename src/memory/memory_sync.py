@@ -11,7 +11,7 @@ import json
 import logging
 from pathlib import Path
 
-logger = logging.getLogger("myclaw.memory.memory_sync")
+logger = logging.getLogger("flyclaw.memory.memory_sync")
 
 _CATEGORY_MAP: dict[str, str] = {
     "preference": "用户偏好",

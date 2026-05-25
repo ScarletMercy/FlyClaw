@@ -25,9 +25,9 @@ from .guard import (
 )
 from .types import ScanResult, SkillBundle, SkillMeta
 
-logger = logging.getLogger("myclaw.skills.hub")
+logger = logging.getLogger("flyclaw.skills.hub")
 
-SKILLS_DIR = Path.home() / ".myclaw" / "skills"
+SKILLS_DIR = Path.home() / ".flyclaw" / "skills"
 HUB_DIR = SKILLS_DIR / ".hub"
 QUARANTINE_DIR = HUB_DIR / "quarantine"
 LOCK_FILE = HUB_DIR / "lock.json"

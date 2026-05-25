@@ -10,7 +10,7 @@ from typing import Any, Callable, Optional
 from src.agent.tooldef import ToolDef
 from pydantic import BaseModel, ConfigDict, Field
 
-logger = logging.getLogger("myclaw.plugins")
+logger = logging.getLogger("flyclaw.plugins")
 
 
 class PluginManifest(BaseModel):

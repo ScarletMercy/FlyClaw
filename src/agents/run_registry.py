@@ -14,7 +14,7 @@ import uuid
 from contextvars import ContextVar
 from typing import Literal, Optional, TypedDict
 
-logger = logging.getLogger("myclaw.agents.registry")
+logger = logging.getLogger("flyclaw.agents.registry")
 
 
 class SubagentRun(TypedDict):

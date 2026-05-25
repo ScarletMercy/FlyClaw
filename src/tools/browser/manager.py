@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Optional
 
-logger = logging.getLogger("myclaw.browser.manager")
+logger = logging.getLogger("flyclaw.browser.manager")
 
 # ── Module-level singleton — delegates to ServiceContainer ──
 

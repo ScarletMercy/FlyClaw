@@ -5,7 +5,7 @@ trick the agent into fetching internal resources like cloud metadata endpoints
 (169.254.169.254), localhost services, or private network hosts.
 
 The check can be disabled via ``security.allow_private_urls: true`` in config
-or ``MYCLAW_ALLOW_PRIVATE_URLS=true`` env var. Even when disabled, cloud
+or ``FLYCLAW_ALLOW_PRIVATE_URLS=true`` env var. Even when disabled, cloud
 metadata endpoints are **always** blocked.
 """
 
@@ -15,7 +15,7 @@ import os
 import socket
 from urllib.parse import urlparse
 
-logger = logging.getLogger("myclaw.security.url_safety")
+logger = logging.getLogger("flyclaw.security.url_safety")
 
 # Cloud metadata hostnames — always blocked regardless of config
 _BLOCKED_HOSTNAMES = frozenset({
@@ -49,7 +49,7 @@ def _allow_private_urls() -> bool:
         return _allow_private_cache
 
     # Env var override (highest priority)
-    env = os.getenv("MYCLAW_ALLOW_PRIVATE_URLS", "").strip().lower()
+    env = os.getenv("FLYCLAW_ALLOW_PRIVATE_URLS", "").strip().lower()
     if env in ("true", "1", "yes"):
         _allow_private_cache = True
         return True

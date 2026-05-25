@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger("myclaw.session")
+logger = logging.getLogger("flyclaw.session")
 
 
 class SessionTracker:

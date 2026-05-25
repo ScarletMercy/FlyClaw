@@ -10,7 +10,7 @@ from .types import Skill, SkillMetadata
 if TYPE_CHECKING:
     from src.config import AppConfig
 
-logger = logging.getLogger("myclaw.skills")
+logger = logging.getLogger("flyclaw.skills")
 
 _MAX_SKILL_FILE_BYTES = 256 * 1024
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)", re.DOTALL)

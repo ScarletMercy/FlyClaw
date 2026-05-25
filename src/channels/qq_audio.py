@@ -13,7 +13,7 @@ import wave
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger("myclaw.channels.qq_audio")
+logger = logging.getLogger("flyclaw.channels.qq_audio")
 
 _VOICE_EXTENSIONS = frozenset(
     {".silk", ".amr", ".mp3", ".wav", ".ogg", ".m4a", ".aac", ".speex", ".flac"}

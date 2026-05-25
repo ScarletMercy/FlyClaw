@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-logger = logging.getLogger("myclaw.bootstrap")
+logger = logging.getLogger("flyclaw.bootstrap")
 
 DEFAULT_BOOTSTRAP_FILES = [
     "AGENTS.md",

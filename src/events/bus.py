@@ -1,4 +1,4 @@
-"""Lightweight event bus for MyClaw with sync/async subscription support."""
+"""Lightweight event bus for flyclaw with sync/async subscription support."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from contextvars import ContextVar
 
 from src.events.types import EventContext, Subscription, WILDCARD_PATTERNS
 
-logger = logging.getLogger("myclaw.events")
+logger = logging.getLogger("flyclaw.events")
 
 _DEFAULT_TIMEOUT = 5.0
 _MAX_EMIT_DEPTH = 3

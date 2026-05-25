@@ -1,5 +1,5 @@
 [project]
-name = "myclaw"
+name = "flyclaw"
 version = "0.1.0"
 description = "Self-contained AI assistant with QQ channel"
 requires-python = ">=3.11"
@@ -31,7 +31,7 @@ dependencies = [
 memory = ["sqlite-vec>=0.1.6"]
 memory-lancedb = ["lancedb>=0.6", "pyarrow"]
 termux = [
-    "myclaw[memory]",
+    "flyclaw[memory]",
 ]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "pytest-cov>=6.0", "ruff>=0.8", "httpx>=0.28"]
 
@@ -61,7 +61,7 @@ include = ["src*"]
 [tool.uv.sources]
 
 [project.scripts]
-myclaw = "src.cli:cli_main"
-myclaw-setup = "src.setup:main"
-myclaw-daemon = "src.daemon:main_daemon"
-myclaw-acp = "src.acp.cli:main"
+flyclaw = "src.cli:cli_main"
+flyclaw-setup = "src.setup:main"
+flyclaw-daemon = "src.daemon:main_daemon"
+flyclaw-acp = "src.acp.cli:main"

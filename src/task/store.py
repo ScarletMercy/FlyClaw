@@ -10,9 +10,9 @@ import aiosqlite
 
 from .types import TaskCheckpoint, TaskRun
 
-logger = logging.getLogger("myclaw.task.store")
+logger = logging.getLogger("flyclaw.task.store")
 
-_DEFAULT_DB = "~/.myclaw/data/task_runs.db"
+_DEFAULT_DB = "~/.flyclaw/data/task_runs.db"
 
 
 class TaskRunStore:

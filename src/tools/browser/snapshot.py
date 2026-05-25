@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-logger = logging.getLogger("myclaw.browser.snapshot")
+logger = logging.getLogger("flyclaw.browser.snapshot")
 
 _ref_counter: int = 0
 _node_refs: dict[str, str] = {}  # node_id -> @eN

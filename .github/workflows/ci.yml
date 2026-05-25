@@ -46,6 +46,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build Docker image
-        run: docker build -t myclaw:ci .
+        run: docker build -t flyclaw:ci .
       - name: Smoke test
-        run: docker run --rm myclaw:ci python -c "from src.config import load_config; print('OK')"
+        run: docker run --rm flyclaw:ci python -c "from src.config import load_config; print('OK')"

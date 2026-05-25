@@ -6,7 +6,7 @@ import logging
 from .provider import MediaProviderClient
 from .types import MediaCapability, MediaResult, _media_error, _media_ok
 
-logger = logging.getLogger("myclaw.media_understanding.image")
+logger = logging.getLogger("flyclaw.media_understanding.image")
 
 
 async def understand_image(

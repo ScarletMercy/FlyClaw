@@ -16,7 +16,7 @@ import httpx
 
 from src.agent.tooldef import ToolDef
 
-logger = logging.getLogger("myclaw.web_tools")
+logger = logging.getLogger("flyclaw.web_tools")
 
 _cached_api_key: str | None = None
 
@@ -26,7 +26,7 @@ MAX_MARKDOWN_LENGTH = 100_000
 MAX_URL_LENGTH = 2000
 
 _BING_HEADERS = {
-    "User-Agent": "MyClaw/1.0 (compatible; web-search)",
+    "User-Agent": "flyclaw/1.0 (compatible; web-search)",
     "Accept": "text/html,application/xhtml+xml,*/*",
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 }
@@ -189,7 +189,7 @@ async def web_fetch(url: str) -> str:
             max_redirects=10,
             headers={
                 "Accept": "text/markdown, text/html, text/plain, */*",
-                "User-Agent": "MyClaw/1.0",
+                "User-Agent": "flyclaw/1.0",
             },
         ) as client:
             response = await client.get(url)

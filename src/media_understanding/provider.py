@@ -13,7 +13,7 @@ from typing import Optional
 
 import httpx
 
-logger = logging.getLogger("myclaw.media_understanding.provider")
+logger = logging.getLogger("flyclaw.media_understanding.provider")
 
 _DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",

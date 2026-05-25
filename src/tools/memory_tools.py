@@ -13,7 +13,7 @@ import aiosqlite
 
 from src.agent.tooldef import ToolDef
 
-logger = logging.getLogger("myclaw.memory_tools")
+logger = logging.getLogger("flyclaw.memory_tools")
 
 
 class MemoryDeleteNeedsApproval(Exception):
@@ -69,7 +69,7 @@ store: MemoryStore | None = None
 
 
 class MemoryStore:
-    def __init__(self, db_path: str = "~/.myclaw/data/memories.db"):
+    def __init__(self, db_path: str = "~/.flyclaw/data/memories.db"):
         self.db_path = str(Path(db_path).expanduser().resolve())
         self._conn: aiosqlite.Connection | None = None
         self._fts_available: bool = False
@@ -238,7 +238,7 @@ class MemoryStore:
         return json.dumps({"ok": True, "key": key}, ensure_ascii=False)
 
 
-def get_memory_store(db_path: str = "~/.myclaw/data/memories.db") -> MemoryStore:
+def get_memory_store(db_path: str = "~/.flyclaw/data/memories.db") -> MemoryStore:
     global store
     if store is None:
         store = MemoryStore(db_path)

@@ -8,7 +8,7 @@ from src.config_watcher import ReloadPlan
 if TYPE_CHECKING:
     from src.app import ServiceContainer
 
-logger = logging.getLogger("myclaw.config_reload")
+logger = logging.getLogger("flyclaw.config_reload")
 
 
 class ReloadExecutor:

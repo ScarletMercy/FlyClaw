@@ -8,7 +8,7 @@ import sqlite3
 from pathlib import Path
 from typing import Optional
 
-logger = logging.getLogger("myclaw.session_index")
+logger = logging.getLogger("flyclaw.session_index")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (

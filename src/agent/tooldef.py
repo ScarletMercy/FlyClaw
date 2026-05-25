@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, get_type_hints
 
-logger = logging.getLogger("myclaw.agent.tooldef")
+logger = logging.getLogger("flyclaw.agent.tooldef")
 
 _TYPE_MAP: dict[type, str] = {
     str: "string",

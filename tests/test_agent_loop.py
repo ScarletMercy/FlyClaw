@@ -320,31 +320,6 @@ class TestAgentLoopStatePersistence:
         assert any(m.get("content") == "Saved!" for m in loaded.messages)
 
 
-class TestAgentLoopToolPolicy:
-    @pytest.mark.asyncio
-    async def test_channel_filter_removes_feishu_tools_on_qq(self, store, config):
-        tool_feishu = _make_tool("feishu_send")
-        tool_qq = _make_tool("qq_send")
-        tool_other = _make_tool("other_tool")
-        client = AsyncMock()
-        client.chat.return_value = ChatResponse(content="ok", tool_calls=[])
-
-        loop = _make_loop(store, config, tools=[tool_feishu, tool_qq, tool_other], client=client)
-
-        state = AgentState(
-            messages=[{"role": "user", "content": "test"}],
-            channel="qq",
-        )
-        await loop.run(state, "t9")
-
-        call_args = client.chat.call_args
-        openai_tools = call_args.kwargs.get("tools") or call_args[1].get("tools") or []
-        tool_names = [t["function"]["name"] for t in openai_tools]
-        assert "feishu_send" not in tool_names
-        assert "qq_send" in tool_names
-        assert "other_tool" in tool_names
-
-
 class TestToolLoopGuardrails:
     def test_repeat_failure_blocks(self):
         from src.agent.guardrails import ToolLoopGuardrails

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-logger = logging.getLogger("myclaw.tools.ai")
+logger = logging.getLogger("flyclaw.tools.ai")
 
 
 async def subagent_status() -> str:

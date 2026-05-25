@@ -8,7 +8,7 @@ from src.agent.tooldef import ToolDef
 
 from src.auth.models import User
 
-logger = logging.getLogger("myclaw.tool_policy")
+logger = logging.getLogger("flyclaw.tool_policy")
 
 
 class ToolPolicy:

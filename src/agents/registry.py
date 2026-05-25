@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from src.config import AgentSubconfig
 
-logger = logging.getLogger("myclaw.agents.registry")
+logger = logging.getLogger("flyclaw.agents.registry")
 
 
 class AgentRegistry:

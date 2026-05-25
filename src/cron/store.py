@@ -9,7 +9,7 @@ import aiosqlite
 
 from .types import CronJob
 
-logger = logging.getLogger("myclaw.cron.store")
+logger = logging.getLogger("flyclaw.cron.store")
 
 
 class ConcurrentUpdateError(Exception):

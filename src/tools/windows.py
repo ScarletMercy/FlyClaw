@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-logger = logging.getLogger("myclaw.windows")
+logger = logging.getLogger("flyclaw.windows")
 
 if sys.platform == "win32":
     try:
@@ -30,7 +30,7 @@ else:
 
 
 def _screenshot_dir() -> str:
-    d = Path.home() / ".myclaw" / "data" / "screenshots"
+    d = Path.home() / ".flyclaw" / "data" / "screenshots"
     d.mkdir(parents=True, exist_ok=True)
     return str(d)
 

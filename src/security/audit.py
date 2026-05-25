@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("myclaw.security")
+logger = logging.getLogger("flyclaw.security")
 
 
 def run_security_audit(config) -> dict[str, Any]:
@@ -33,15 +33,15 @@ def run_security_audit(config) -> dict[str, Any]:
     else:
         _check("exec-approval", "PASS", "")
 
-    data_dir = Path.home() / ".myclaw" / "data"
+    data_dir = Path.home() / ".flyclaw" / "data"
     if data_dir.exists():
         _check("data-dir", "PASS", "")
     else:
         try:
             data_dir.mkdir(parents=True, exist_ok=True)
-            _check("data-dir", "PASS", "已创建 ~/.myclaw/data/")
+            _check("data-dir", "PASS", "已创建 ~/.flyclaw/data/")
         except Exception:
-            _check("data-dir", "WARN", "无法创建 ~/.myclaw/data/ 目录")
+            _check("data-dir", "WARN", "无法创建 ~/.flyclaw/data/ 目录")
 
     _check_secrets(config, results, _check)
 

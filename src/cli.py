@@ -1,10 +1,10 @@
-"""MyClaw CLI 管理命令。
+"""flyclaw CLI 管理命令。
 
 用法:
-  myclaw                启动服务器（默认）
-  myclaw doctor         运行系统诊断
-  myclaw status         显示系统状态
-  myclaw sessions       列出活跃会话
+  flyclaw                启动服务器（默认）
+  flyclaw doctor         运行系统诊断
+  flyclaw status         显示系统状态
+  flyclaw sessions       列出活跃会话
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ def _load_config():
 
 
 def cmd_doctor(args):
-    print("MyClaw 系统诊断\n" + "=" * 40)
+    print("flyclaw 系统诊断\n" + "=" * 40)
     errors = []
     warnings = []
 
@@ -89,7 +89,7 @@ def cmd_doctor(args):
 
 def cmd_status(args):
     config = _load_config()
-    print("MyClaw 系统状态\n" + "=" * 40)
+    print("flyclaw 系统状态\n" + "=" * 40)
     print(f"模型:       {config.model.provider}/{config.model.name}")
     print(f"网关:       {config.gateway.host}:{config.gateway.port}")
     print(f"QQ:         {'已启用' if config.channels.qq.enabled else '未启用'}")
@@ -137,8 +137,8 @@ def cmd_sessions(args):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="myclaw", description="MyClaw AI 助手")
-    parser.add_argument("--version", action="version", version="myclaw 0.1.0")
+    parser = argparse.ArgumentParser(prog="flyclaw", description="flyclaw AI 助手")
+    parser.add_argument("--version", action="version", version="flyclaw 0.1.0")
     sub = parser.add_subparsers(dest="command", help="管理命令")
 
     sub.add_parser("doctor", help="运行系统诊断")

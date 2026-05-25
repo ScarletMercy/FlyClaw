@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from src.canvas.server import router as canvas_router
 
-logger = logging.getLogger("myclaw.gateway")
+logger = logging.getLogger("flyclaw.gateway")
 
 router = APIRouter()
 
@@ -153,7 +153,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
     rate = getattr(app_config.gateway, "rate_limit", 10.0) if hasattr(app_config, "gateway") else 10.0
     capacity = getattr(app_config.gateway, "rate_limit_burst", 20) if hasattr(app_config, "gateway") else 20
     _rate_limiter = TokenBucketRateLimiter(rate=rate, capacity=capacity)
-    app = FastAPI(title="MyClaw", version="0.1.0")
+    app = FastAPI(title="flyclaw", version="0.1.0")
     if getattr(app_config, "canvas", None) and app_config.canvas.enabled:
         app.include_router(canvas_router)
     app.include_router(router)
@@ -186,7 +186,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             wait = await _rate_limiter.wait_time(client_ip)
             return JSONResponse({"error": "rate_limit_exceeded", "retry_after": wait}, status_code=429, headers={"Retry-After": str(int(wait))})
         messages = body.get("messages", [])
-        model_name = body.get("model", "myclaw")
+        model_name = body.get("model", "flyclaw")
         stream = body.get("stream", False)
         thread_id = body.get("user", str(uuid.uuid4()))
         from src.agent.state import AgentState
@@ -210,18 +210,18 @@ def create_gateway(app_config, agent_loop, cron_service=None):
     async def _stream_response(loop, input_state, thread_id):
         chat_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
-        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'myclaw', 'choices': [{'index': 0, 'delta': {'role': 'assistant'}, 'finish_reason': None}]})}\n\n"
+        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'flyclaw', 'choices': [{'index': 0, 'delta': {'role': 'assistant'}, 'finish_reason': None}]})}\n\n"
         try:
             result_state = await loop.run(input_state, thread_id)
             for msg in reversed(result_state.messages):
                 if msg.get("role") == "assistant" and msg.get("content"):
-                    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'myclaw', 'choices': [{'index': 0, 'delta': {'content': msg['content']}, 'finish_reason': None}]})}\n\n"
+                    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'flyclaw', 'choices': [{'index': 0, 'delta': {'content': msg['content']}, 'finish_reason': None}]})}\n\n"
                     break
         except Exception as e:
-            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'myclaw', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop', 'error': str(e)}]})}\n\n"
+            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'flyclaw', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop', 'error': str(e)}]})}\n\n"
             yield "data: [DONE]\n\n"
             return
-        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'myclaw', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
+        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'flyclaw', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
         yield "data: [DONE]\n\n"
 
     @app.websocket("/ws")
@@ -513,7 +513,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         if not app:
             raise HTTPException(503, "Application not ready")
         patch_data = await request.json()
-        config_path = Path(app._config_path or "config.yaml")
+        config_path = Path(app._config_path or str(Path.home() / ".flyclaw" / "config.yaml"))
         if config_path.exists():
             current = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
         else:

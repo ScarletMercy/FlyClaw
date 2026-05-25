@@ -1,4 +1,4 @@
-"""Cross-platform daemon/service manager for MyClaw.
+"""Cross-platform daemon/service manager for flyclaw.
 
 Supports:
 - Linux: systemd
@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 class DaemonManager:
-    """Cross-platform daemon/service manager for MyClaw."""
+    """Cross-platform daemon/service manager for flyclaw."""
 
     def __init__(self):
         self._platform = self.get_platform()
@@ -39,7 +39,7 @@ class DaemonManager:
             raise NotImplementedError(f"Platform {system} is not supported")
 
     def install(self) -> None:
-        """Install the MyClaw service."""
+        """Install the flyclaw service."""
         if self._platform == "systemd":
             self._install_systemd()
         elif self._platform == "launchd":
@@ -48,7 +48,7 @@ class DaemonManager:
             self._install_schtasks()
 
     def uninstall(self) -> None:
-        """Uninstall the MyClaw service."""
+        """Uninstall the flyclaw service."""
         if self._platform == "systemd":
             self._uninstall_systemd()
         elif self._platform == "launchd":
@@ -57,7 +57,7 @@ class DaemonManager:
             self._uninstall_schtasks()
 
     def status(self) -> None:
-        """Check the status of the MyClaw service."""
+        """Check the status of the flyclaw service."""
         if self._platform == "systemd":
             self._status_systemd()
         elif self._platform == "launchd":
@@ -68,12 +68,12 @@ class DaemonManager:
     # ========== systemd (Linux) ==========
 
     def _get_systemd_service_path(self) -> Path:
-        return Path("/etc/systemd/system/myclaw.service")
+        return Path("/etc/systemd/system/flyclaw.service")
 
     def _generate_systemd_service(self) -> str:
-        env_entries = os.environ.get("MYCLAW_ENV", "")
+        env_entries = os.environ.get("FLYCLAW_ENV", "")
         return f"""[Unit]
-Description=MyClaw AI Assistant
+Description=flyclaw AI Assistant
 After=network.target
 
 [Service]
@@ -93,25 +93,25 @@ WantedBy=multi-user.target
         service_path = self._get_systemd_service_path()
         service_content = self._generate_systemd_service()
 
-        print("Installing MyClaw systemd service...")
+        print("Installing flyclaw systemd service...")
         print(f"Service file: {service_path}")
         print()
         print("Run the following commands to complete the installation:")
         print(f"  echo '{service_content}' | sudo tee {service_path}")
         print("  sudo systemctl daemon-reload")
-        print("  sudo systemctl enable myclaw")
-        print("  sudo systemctl start myclaw")
+        print("  sudo systemctl enable flyclaw")
+        print("  sudo systemctl start flyclaw")
 
     def _uninstall_systemd(self) -> None:
-        print("Uninstalling MyClaw systemd service...")
+        print("Uninstalling flyclaw systemd service...")
         print("Run the following commands:")
-        print("  sudo systemctl stop myclaw")
-        print("  sudo systemctl disable myclaw")
+        print("  sudo systemctl stop flyclaw")
+        print("  sudo systemctl disable flyclaw")
         print(f"  sudo rm {self._get_systemd_service_path()}")
 
     def _status_systemd(self) -> None:
         result = subprocess.run(
-            ["systemctl", "is-active", "myclaw"],
+            ["systemctl", "is-active", "flyclaw"],
             capture_output=True,
             text=True,
         )
@@ -123,21 +123,21 @@ WantedBy=multi-user.target
     # ========== launchd (macOS) ==========
 
     def _get_launchd_plist_path(self) -> Path:
-        return Path.home() / "Library" / "LaunchAgents" / "com.myclaw.agent.plist"
+        return Path.home() / "Library" / "LaunchAgents" / "com.flyclaw.agent.plist"
 
     def _generate_launchd_plist(self) -> str:
         return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>Label</key><string>com.myclaw.agent</string>
+    <key>Label</key><string>com.flyclaw.agent</string>
     <key>ProgramArguments</key>
     <array><string>{self._python_path}</string><string>-m</string><string>src.main</string></array>
     <key>WorkingDirectory</key><string>{self._project_dir}</string>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
-    <key>StandardOutPath</key><string>{Path.home() / ".myclaw" / "data" / "myclaw.log"}</string>
-    <key>StandardErrorPath</key><string>{Path.home() / ".myclaw" / "data" / "myclaw.log"}</string>
+    <key>StandardOutPath</key><string>{Path.home() / ".flyclaw" / "data" / "flyclaw.log"}</string>
+    <key>StandardErrorPath</key><string>{Path.home() / ".flyclaw" / "data" / "flyclaw.log"}</string>
 </dict>
 </plist>
 """
@@ -146,7 +146,7 @@ WantedBy=multi-user.target
         plist_path = self._get_launchd_plist_path()
         plist_content = self._generate_launchd_plist()
 
-        print("Installing MyClaw launchd agent...")
+        print("Installing flyclaw launchd agent...")
         print(f"Plist file: {plist_path}")
         print()
         print("Run the following commands to complete the installation:")
@@ -156,14 +156,14 @@ WantedBy=multi-user.target
 
     def _uninstall_launchd(self) -> None:
         plist_path = self._get_launchd_plist_path()
-        print("Uninstalling MyClaw launchd agent...")
+        print("Uninstalling flyclaw launchd agent...")
         print("Run the following commands:")
         print(f"  launchctl unload {plist_path}")
         print(f"  rm {plist_path}")
 
     def _status_launchd(self) -> None:
         result = subprocess.run(
-            ["launchctl", "list", "com.myclaw.agent"],
+            ["launchctl", "list", "com.flyclaw.agent"],
             capture_output=True,
             text=True,
         )
@@ -179,7 +179,7 @@ WantedBy=multi-user.target
             "schtasks",
             "/create",
             "/tn",
-            "MyClaw",
+            "flyclaw",
             "/tr",
             f'"{self._python_path}" -m src.main',
             "/sc",
@@ -191,7 +191,7 @@ WantedBy=multi-user.target
             "/f",
         ]
 
-        print("Installing MyClaw scheduled task...")
+        print("Installing flyclaw scheduled task...")
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -204,9 +204,9 @@ WantedBy=multi-user.target
             print(f"Failed to create scheduled task: {result.stderr}")
 
     def _uninstall_schtasks(self) -> None:
-        cmd = ["schtasks", "/delete", "/tn", "MyClaw", "/f"]
+        cmd = ["schtasks", "/delete", "/tn", "flyclaw", "/f"]
 
-        print("Uninstalling MyClaw scheduled task...")
+        print("Uninstalling flyclaw scheduled task...")
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -220,7 +220,7 @@ WantedBy=multi-user.target
 
     def _status_schtasks(self) -> None:
         result = subprocess.run(
-            ["schtasks", "/query", "/tn", "MyClaw"],
+            ["schtasks", "/query", "/tn", "flyclaw"],
             capture_output=True,
             text=True,
         )
@@ -244,7 +244,7 @@ def main_daemon():
     elif action == "status":
         manager.status()
     else:
-        print(f"Usage: myclaw-daemon [install|uninstall|status]")
+        print(f"Usage: flyclaw-daemon [install|uninstall|status]")
         sys.exit(1)
 
 

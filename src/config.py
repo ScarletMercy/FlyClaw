@@ -10,7 +10,7 @@ import yaml
 from pydantic import BaseModel, Field, ValidationError
 
 
-_log = logging.getLogger("myclaw.config")
+_log = logging.getLogger("flyclaw.config")
 
 _ENV_VAR_RE = re.compile(r"\$\{([^}]+)\}")
 
@@ -76,7 +76,7 @@ class AgentSubconfig(BaseModel):
 
 class AgentConfig(BaseModel):
     system_prompt: str = "You are a helpful AI assistant."
-    workspace: str = "~/.myclaw/workspace"
+    workspace: str = "~/.flyclaw/workspace"
     max_tool_rounds: int = 15
     subagents: dict[str, AgentSubconfig] = Field(default_factory=dict)
     subagent_max_depth: int = 2
@@ -234,7 +234,7 @@ class WindowsUseConfig(BaseModel):
     """Windows desktop automation via pyautogui."""
 
     enabled: bool = True
-    screenshot_dir: str = "~/.myclaw/data/screenshots"
+    screenshot_dir: str = "~/.flyclaw/data/screenshots"
     default_timeout: float = 5.0
     ocr_lang: str = "ch"
 
@@ -253,7 +253,7 @@ class ToolsConfig(BaseModel):
 class SnapshotConfig(BaseModel):
     """File snapshot/rollback configuration (shadow git store)."""
     enabled: bool = True
-    store_path: str = "~/.myclaw/data/snapshots"
+    store_path: str = "~/.flyclaw/data/snapshots"
     max_per_dir: int = 20
     max_file_size: int = 10_000_000  # 10MB
 
@@ -279,9 +279,9 @@ class DelegationConfig(BaseModel):
 class ProceduralMemoryConfig(BaseModel):
     """Procedural memory — learn reusable workflow patterns from sessions."""
     enabled: bool = True
-    db_path: str = "~/.myclaw/data/procedures.db"
+    db_path: str = "~/.flyclaw/data/procedures.db"
     auto_learn: bool = True
-    min_tool_calls: int = 3
+    min_tool_calls: int = 20
     max_procedures: int = 200
     learn_model: str = ""
     learn_model_base_url: str = ""
@@ -290,13 +290,13 @@ class ProceduralMemoryConfig(BaseModel):
 
 class CheckpointerConfig(BaseModel):
     type: Literal["sqlite", "memory"] = "sqlite"
-    path: str = "~/.myclaw/data/checkpoints.db"
+    path: str = "~/.flyclaw/data/checkpoints.db"
 
 
 class CronConfig(BaseModel):
     enabled: bool = True
     max_concurrent_runs: int = 1
-    store_path: str = "~/.myclaw/data/cron.db"
+    store_path: str = "~/.flyclaw/data/cron.db"
     failure_alert_after: int = 2
     max_transient_retries: int = 3
 
@@ -336,8 +336,8 @@ class PluginsConfig(BaseModel):
 class MemoryConfig(BaseModel):
     enabled: bool = False
     backend: Literal["sqlite", "lancedb"] = "sqlite"
-    db_path: str = "~/.myclaw/data/memory.db"
-    lancedb_uri: str = "~/.myclaw/data/memory_lancedb"  # LanceDB data directory
+    db_path: str = "~/.flyclaw/data/memory.db"
+    lancedb_uri: str = "~/.flyclaw/data/memory_lancedb"  # LanceDB data directory
     embedding_provider: str = "openai"
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
@@ -358,7 +358,7 @@ class MemoryStoreConfig(BaseModel):
     """Memory store configuration."""
 
     enabled: bool = False
-    db_path: str = "~/.myclaw/data/memories.db"
+    db_path: str = "~/.flyclaw/data/memories.db"
     workspace: str = ""
     memory_judge_model: str = ""
     memory_judge_base_url: str = ""
@@ -371,7 +371,7 @@ class TaskConfig(BaseModel):
     enabled: bool = False
     max_parallel: int = 3
     default_timeout: int = 7200
-    db_path: str = "~/.myclaw/data/task_runs.db"
+    db_path: str = "~/.flyclaw/data/task_runs.db"
     defer_minutes: int = 5
 
 
@@ -382,7 +382,7 @@ class AuthConfig(BaseModel):
     default_role: Literal["owner", "admin", "user", "guest"] = "guest"
     pairing_enabled: bool = True
     pairing_ttl_seconds: int = 300  # Pairing code validity
-    db_path: str = "~/.myclaw/data/auth.db"
+    db_path: str = "~/.flyclaw/data/auth.db"
 
 
 class TimeoutsConfig(BaseModel):
@@ -395,7 +395,7 @@ class TimeoutsConfig(BaseModel):
 
 class SessionSearchConfig(BaseModel):
     enabled: bool = False
-    index_path: str = "~/.myclaw/data/session_index.db"
+    index_path: str = "~/.flyclaw/data/session_index.db"
     auto_sync: bool = True
     max_results: int = 10
     tool_content_max_chars: int = 500
@@ -493,7 +493,13 @@ def _expand_paths(config: AppConfig) -> AppConfig:
     return config
 
 
-def load_config(path: str | Path = "config.yaml") -> AppConfig:
+_FLYCLAW_CONFIG_DIR = Path.home() / ".flyclaw"
+_DEFAULT_CONFIG_PATH = _FLYCLAW_CONFIG_DIR / "config.yaml"
+
+
+def load_config(path: str | Path = None) -> AppConfig:
+    if path is None:
+        path = _DEFAULT_CONFIG_PATH
     p = Path(path)
     if not p.exists():
         return AppConfig()
@@ -515,8 +521,10 @@ def load_config(path: str | Path = "config.yaml") -> AppConfig:
         return AppConfig()
 
 
-def save_config(config: AppConfig, path: str | Path = "config.yaml") -> None:
+def save_config(config: AppConfig, path: str | Path = None) -> None:
     """Persist config to YAML file."""
+    if path is None:
+        path = _DEFAULT_CONFIG_PATH
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     data = config.model_dump(exclude_unset=False)

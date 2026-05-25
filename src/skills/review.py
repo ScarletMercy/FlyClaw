@@ -10,7 +10,7 @@ import asyncio
 import logging
 from typing import Any
 
-logger = logging.getLogger("myclaw.skills.review")
+logger = logging.getLogger("flyclaw.skills.review")
 
 SKILL_REVIEW_PROMPT = (
     "审查以上对话，更新技能库。保持积极——大多数会话至少产生一次技能更新，"

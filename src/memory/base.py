@@ -14,7 +14,7 @@ from typing import Optional
 
 import aiosqlite
 
-logger = logging.getLogger("myclaw.memory.base")
+logger = logging.getLogger("flyclaw.memory.base")
 
 
 class BaseMemoryStore(ABC):

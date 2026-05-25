@@ -7,7 +7,7 @@ import httpx
 
 from typing import Optional
 
-logger = logging.getLogger("myclaw.media")
+logger = logging.getLogger("flyclaw.media")
 
 _MAX_DOWNLOAD_SIZE = 50 * 1024 * 1024
 
