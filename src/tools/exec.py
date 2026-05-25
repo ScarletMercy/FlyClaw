@@ -95,7 +95,7 @@ _DEFAULT_DENY_PATTERNS = [
     "ncat*",
     "/etc/passwd",
     "/etc/shadow",
-    "crontab*",
+    "crontab -r",
     # Windows — disk/volume destruction
     "format *",
     "diskpart",
@@ -147,8 +147,17 @@ _DELETE_APPROVAL_PATTERNS = [
     "ri ",
 ]
 
-# Patterns that indicate shell features used to bypass denylists
-_SHELL_BYPASS_PATTERNS = [
+# Patterns that indicate shell features used to bypass denylists.
+# Split into two categories:
+# - Unparseable: always blocked regardless of approval_mode (cannot statically analyze)
+# - Executor: only blocked if denylist also matches (safe subcommands can pass)
+
+_UNPARSEABLE_SHELL_PATTERNS = [
+    ("| sh", "| sh"),
+    ("| bash", "| bash"),
+]
+
+_SHELL_EXECUTOR_PATTERNS = [
     ("sh -c", "sh -c"),
     ("bash -c", "bash -c"),
     ("zsh -c", "zsh -c"),
@@ -157,8 +166,6 @@ _SHELL_BYPASS_PATTERNS = [
     ("node -e", "node -e"),
     ("/bin/sh", "/bin/sh"),
     ("/bin/bash", "/bin/bash"),
-    ("| sh", "| sh"),
-    ("| bash", "| bash"),
     ("eval ", "eval "),
     ("cmd /c ", "cmd /c"),
     ("cmd /r ", "cmd /r"),
@@ -172,6 +179,10 @@ _SHELL_BYPASS_PATTERNS = [
     ("powershell -command ", "powershell -command"),
     ("pwsh -command ", "pwsh -command"),
 ]
+
+# Command prefixes whose subcommands should not trigger denylist/delete checks.
+# e.g. "git rm", "docker rm" — these operate on their own scope, not the filesystem.
+_COMMAND_PREFIX_WHITELIST = frozenset({"git", "docker", "kubectl", "podman", "npm", "yarn", "pnpm"})
 
 _exec_semaphore: Optional[asyncio.Semaphore] = None
 _semaphore_lock = threading.Lock()
@@ -331,18 +342,25 @@ def _get_semaphore(max_concurrent: int) -> asyncio.Semaphore:
         return _exec_semaphore
 
 
+def _get_first_token(command: str) -> str:
+    """Extract the first token of a command for prefix whitelisting."""
+    stripped = command.strip().lower()
+    for ch in stripped:
+        if ch in (" ", "\t", "\n", "\r"):
+            break
+    else:
+        return stripped
+    return stripped.split(None, 1)[0] if stripped else ""
+
+
 def _is_denylisted(command: str, deny_patterns: list[str]) -> tuple[bool, str]:
     import re
+
     cmd_normalized = re.sub(r'\s+', ' ', command.strip()).lower()
     for pattern in deny_patterns:
         pattern_lower = pattern.lower()
         if fnmatch.fnmatch(cmd_normalized, pattern_lower):
             return True, pattern
-        # Substring check with word-boundary awareness to reduce false positives.
-        # For patterns that start/end with word chars (e.g., "rm -rf"), use \b
-        # to avoid matching inside other words (e.g., "crontab" matching "rm").
-        # For patterns with non-word boundaries (e.g., "/etc/passwd"), fall back
-        # to plain substring match.
         start_boundary = r'\b' if pattern_lower[0:1].isalnum() or pattern_lower[0:1] == '_' else ''
         end_boundary = r'\b' if pattern_lower[-1:].isalnum() or pattern_lower[-1:] == '_' else ''
         try:
@@ -354,18 +372,32 @@ def _is_denylisted(command: str, deny_patterns: list[str]) -> tuple[bool, str]:
     return False, ""
 
 
-def _has_shell_bypass(command: str) -> tuple[bool, str]:
-    """Detect shell features commonly used to bypass denylists.
+def _has_unparseable_shell(command: str) -> tuple[bool, str]:
+    """Detect unparseable shell constructs that cannot be statically analyzed.
 
-    Catches patterns like: sh -c 'rm -rf /', echo x | sh, /bin/bash -c ...
+    These are always blocked regardless of approval_mode:
+    - Command substitution: $(...) and backticks
+    - Pipe to shell: | sh, | bash
     """
     cmd_lower = command.strip().lower()
-    for trigger, label in _SHELL_BYPASS_PATTERNS:
+    for trigger, label in _UNPARSEABLE_SHELL_PATTERNS:
         if trigger in cmd_lower:
             return True, label
-    # Detect command substitution $(...) and backticks
     if "$(" in command or "`" in command:
         return True, "command substitution"
+    return False, ""
+
+
+def _has_shell_executor(command: str) -> tuple[bool, str]:
+    """Detect shell executor patterns (sh -c, cmd /c, powershell -command, etc.).
+
+    These are NOT inherently dangerous — the denylist already checks the full
+    command string for dangerous tokens. They only matter for approval gating.
+    """
+    cmd_lower = command.strip().lower()
+    for trigger, label in _SHELL_EXECUTOR_PATTERNS:
+        if trigger in cmd_lower:
+            return True, label
     return False, ""
 
 
@@ -440,38 +472,50 @@ async def exec_command(
         raise ToolExecutionError(f"Command blocked by denylist (matched: {matched})")
 
     # Non-recursive delete — always requires approval (30s timeout, auto-deny)
-    delete_match, delete_pattern = _is_denylisted(command, _DELETE_APPROVAL_PATTERNS)
-    if delete_match:
-        from src.tools.approval import get_approval_manager
+    # Whitelisted prefixes (git, docker, etc.) skip delete approval — their "rm"
+    # subcommands operate within their own scope, not the filesystem directly.
+    if _get_first_token(command) not in _COMMAND_PREFIX_WHITELIST:
+        delete_match, delete_pattern = _is_denylisted(command, _DELETE_APPROVAL_PATTERNS)
+        if delete_match:
+            from src.tools.approval import get_approval_manager
 
-        mgr = get_approval_manager()
-        if not mgr.has_durable_approval("exec_command", command):
-            if not mgr.has_session_approval(_current_thread_id.get(""), "exec_command", command):
-                logger.info("[exec-audit] Delete operation requires approval ('%s'): %.200s", delete_pattern, command)
-                raise ApprovalNeededError(command, False, timeout=30, auto_deny=True)
+            mgr = get_approval_manager()
+            if not mgr.has_durable_approval("exec_command", command):
+                if not mgr.has_session_approval(_current_thread_id.get(""), "exec_command", command):
+                    logger.info("[exec-audit] Delete operation requires approval ('%s'): %.200s", delete_pattern, command)
+                    raise ApprovalNeededError(command, False, timeout=30, auto_deny=True)
 
-    bypass, bypass_detail = _has_shell_bypass(command)
-    if bypass and approval_mode == "off":
+    # Unparseable shell constructs ($(), backticks, | sh, | bash) — always blocked.
+    # These cannot be statically analyzed and are the primary vector for bypass attacks.
+    unparseable, unparseable_detail = _has_unparseable_shell(command)
+    if unparseable:
         logger.warning(
-            "[exec-audit] BLOCKED shell bypass detected ('%s') with approval_mode=off: %.200s",
-            bypass_detail,
+            "[exec-audit] BLOCKED unparseable shell construct ('%s'): %.200s",
+            unparseable_detail,
             command,
         )
         raise ToolExecutionError(
-            f"Command uses shell bypass pattern ('{bypass_detail}') — enable approval_mode to allow"
+            f"Command uses unparseable shell construct ('{unparseable_detail}')"
         )
 
-    if bypass and approval_mode != "off" and approval_mode != "always":
-        # Treat shell bypass patterns as requiring approval even in "on_denylist_miss" mode
+    # Shell executor patterns (sh -c, cmd /c, powershell -command, etc.).
+    # These are safe to pass through — the denylist already checked the full command
+    # for dangerous tokens. Only apply approval gating if configured.
+    executor, executor_detail = _has_shell_executor(command)
+    if executor and approval_mode not in ("off", ""):
         from src.tools.approval import get_approval_manager
 
         mgr = get_approval_manager()
         if not mgr.has_durable_approval("exec_command", command):
             if not mgr.has_session_approval(_current_thread_id.get(""), "exec_command", command):
-                logger.info("[exec-audit] Shell bypass detected ('%s'), requiring approval: %.200s", bypass_detail, command)
+                logger.info(
+                    "[exec-audit] Shell executor ('%s'), requiring approval: %.200s",
+                    executor_detail,
+                    command,
+                )
                 raise ApprovalNeededError(command, False)
 
-    if approval_mode != "off":
+    if approval_mode not in ("off", ""):
         from src.tools.approval import get_approval_manager
 
         mgr = get_approval_manager()

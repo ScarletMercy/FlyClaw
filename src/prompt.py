@@ -72,6 +72,11 @@ SESSION_SEARCH_GUIDANCE = (
     "不要让用户重复。"
 )
 
+PROCEDURE_SEARCH_GUIDANCE = (
+    "遇到多步骤操作、复杂任务或需要组合多个工具时，先用 procedure_search 搜索是否已有现成工作流，"
+    "有则复用，避免重复摸索。"
+)
+
 SKILLS_GUIDANCE = (
     "完成复杂任务（5+ 次工具调用）、修复棘手错误、发现非显而易见的工作流后，"
     "用 skill_manage(action=\"create\") 保存为技能以便下次复用。\n"
@@ -152,6 +157,9 @@ def _build_tool_guidance(tools: list) -> list[str]:
 
     if "session_search" in tool_names:
         lines += ["## 会话搜索", SESSION_SEARCH_GUIDANCE, ""]
+
+    if "procedure_search" in tool_names:
+        lines += ["## 工作流复用", PROCEDURE_SEARCH_GUIDANCE, ""]
 
     if "skills_list" in tool_names:
         lines += ["## 技能维护", SKILLS_GUIDANCE, ""]

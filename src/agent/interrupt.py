@@ -7,6 +7,7 @@ Steer: injects user guidance into the last tool result without stopping.
 
 from __future__ import annotations
 
+import asyncio
 import threading
 
 
@@ -18,6 +19,15 @@ class InterruptFlag:
         self._requested = False
         self._message: str | None = None
         self._pending_steer: str | None = None
+        self._event: asyncio.Event | None = None
+
+    def _get_event(self) -> asyncio.Event:
+        if self._event is None:
+            self._event = asyncio.Event()
+        return self._event
+
+    def get_event(self) -> asyncio.Event:
+        return self._get_event()
 
     def interrupt(self, message: str | None = None) -> None:
         """Request interrupt. Clears any pending steer (interrupt supersedes steer)."""
@@ -25,6 +35,8 @@ class InterruptFlag:
             self._requested = True
             self._message = message
             self._pending_steer = None
+        if self._event is not None:
+            self._event.set()
 
     def steer(self, text: str) -> bool:
         """Queue steer text. Appends if already pending. Returns False if already interrupting."""
@@ -58,3 +70,5 @@ class InterruptFlag:
             self._requested = False
             self._message = None
             self._pending_steer = None
+        if self._event is not None:
+            self._event.clear()

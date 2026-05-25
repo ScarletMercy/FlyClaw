@@ -554,6 +554,23 @@ class TestInterruptFlag:
         assert msg is None
         assert flag.drain_steer() is None
 
+    def test_interrupt_sets_event(self):
+        from src.agent.interrupt import InterruptFlag
+        flag = InterruptFlag()
+        event = flag.get_event()
+        assert not event.is_set()
+        flag.interrupt("msg")
+        assert event.is_set()
+
+    def test_clear_resets_event(self):
+        from src.agent.interrupt import InterruptFlag
+        flag = InterruptFlag()
+        event = flag.get_event()
+        flag.interrupt("msg")
+        assert event.is_set()
+        flag.clear()
+        assert not event.is_set()
+
 
 class TestInterruptInLoop:
     @pytest.mark.asyncio
@@ -618,6 +635,71 @@ class TestInterruptInLoop:
         # Check that steer text was injected into a tool message
         tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
         assert any("User guidance" in m.get("content", "") for m in tool_msgs)
+
+    @pytest.mark.asyncio
+    async def test_interrupt_during_model_call(self, store, config):
+        tool = _make_tool("echo")
+        client = AsyncMock()
+
+        async def slow_chat(messages, tools=None, **kw):
+            await asyncio.sleep(10)
+            return ChatResponse(content="should not reach", tool_calls=[])
+
+        client.chat.side_effect = slow_chat
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        flag = store.get_interrupt_flag("int_during_model")
+        asyncio.get_event_loop().call_later(0.1, lambda: flag.interrupt("stop model"))
+
+        state = AgentState(messages=[{"role": "user", "content": "go"}])
+        result = await loop.run(state, "int_during_model")
+
+        assert any(m.get("content") == "stop model" for m in result.messages)
+        assert "should not reach" not in str(result.messages)
+
+    @pytest.mark.asyncio
+    async def test_interrupt_during_tool_execution(self, store, config):
+        async def slow_tool(**kwargs):
+            await asyncio.sleep(10)
+            return "slow result"
+
+        tool = _make_tool("slow_tool", fn=slow_tool)
+        client = AsyncMock()
+        call_count = 0
+
+        async def fake_chat(messages, tools=None, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ChatResponse(content="", tool_calls=[_make_tc("slow_tool", {"x": "y"})])
+            return ChatResponse(content="done", tool_calls=[])
+
+        client.chat.side_effect = fake_chat
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        flag = store.get_interrupt_flag("int_during_tool")
+        asyncio.get_event_loop().call_later(0.1, lambda: flag.interrupt("stop tool"))
+
+        state = AgentState(messages=[{"role": "user", "content": "go"}])
+        result = await loop.run(state, "int_during_tool")
+
+        assert any(m.get("content") == "stop tool" for m in result.messages)
+        assert "slow result" not in str(result.messages)
+
+    @pytest.mark.asyncio
+    async def test_interrupt_event_clears_after_handling(self, store, config):
+        flag = store.get_interrupt_flag("event_clear_test")
+        event = flag.get_event()
+
+        assert not event.is_set()
+
+        flag.interrupt("test")
+        assert event.is_set()
+
+        is_int, msg = flag.check()
+        assert is_int
+        flag.clear()
+        assert not event.is_set()
 
 
 class TestToolCache:

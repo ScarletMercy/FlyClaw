@@ -213,7 +213,9 @@ async def browser_screenshot(path: str = "") -> str:
         return f"Error: no browser session. ({e})"
 
     if not path:
-        workspace = os.path.expanduser("~/.myclaw/workspace")
+        from src.config import load_config
+        cfg = load_config()
+        workspace = os.path.expanduser(cfg.agents.workspace)
         os.makedirs(workspace, exist_ok=True)
         path = os.path.join(workspace, f"screenshot_{int(time.time())}.png")
 

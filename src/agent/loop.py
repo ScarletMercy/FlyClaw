@@ -27,6 +27,24 @@ _SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
 _CHARS_PER_TOKEN = 4
 
 
+async def interruptible(event: asyncio.Event, coro):
+    task = asyncio.ensure_future(coro)
+    wait_task = asyncio.ensure_future(event.wait())
+    done, pending = await asyncio.wait(
+        {task, wait_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    for p in pending:
+        p.cancel()
+        try:
+            await p
+        except (asyncio.CancelledError, Exception):
+            pass
+    if task in done:
+        return task.result()
+    return None
+
+
 def _escape_control_in_json_strings(s: str) -> str:
     out: list[str] = []
     in_str = False
@@ -295,6 +313,7 @@ class AgentLoop:
         start_ts = _time.monotonic()
         max_tool_rounds = self._get_max_tool_rounds()
         tool_round = 0
+        ie = self._store.get_interrupt_flag(thread_id).get_event()
 
         self._guardrails.reset()
 
@@ -304,14 +323,22 @@ class AgentLoop:
                 return state
 
             # 1. Prepare messages — proactive compression if over budget
-            messages = await self._prepare_messages(state, thread_id)
+            messages = await interruptible(ie, self._prepare_messages(state, thread_id))
+            if messages is None:
+                if await self._check_interrupt(state, thread_id, start_ts, tool_round):
+                    return state
+                continue
 
             # 2. Build tool list
             active_tools = self._filter_tools(state)
             openai_tools = [t.to_openai_tool() for t in active_tools] if active_tools else None
 
             # 3. Call model (with retry)
-            response = await self._call_model_with_retry(messages, tools=openai_tools)
+            response = await interruptible(ie, self._call_model_with_retry(messages, tools=openai_tools))
+            if response is None:
+                if await self._check_interrupt(state, thread_id, start_ts, tool_round):
+                    return state
+                continue
 
             # 4. Append assistant message
             assistant_msg = self._build_assistant_msg(response)
@@ -354,7 +381,11 @@ class AgentLoop:
             # 6. Execute tool calls (parallel when safe)
             tool_round += 1
             if self._should_parallelize(response.tool_calls):
-                parallel_results = await self._execute_tools_parallel(response.tool_calls, state, thread_id)
+                parallel_results = await interruptible(ie, self._execute_tools_parallel(response.tool_calls, state, thread_id))
+                if parallel_results is None:
+                    if await self._check_interrupt(state, thread_id, start_ts, tool_round):
+                        return state
+                    continue
                 for tc_id, result in parallel_results:
                     state.append_message({
                         "role": "tool",
@@ -368,7 +399,11 @@ class AgentLoop:
                 for tc in response.tool_calls:
                     if await self._check_interrupt(state, thread_id, start_ts, tool_round):
                         return state
-                    tool_result = await self._execute_tool(tc, state, thread_id)
+                    tool_result = await interruptible(ie, self._execute_tool(tc, state, thread_id))
+                    if tool_result is None:
+                        if await self._check_interrupt(state, thread_id, start_ts, tool_round):
+                            return state
+                        tool_result = "[error] interrupted"
                     state.append_message({
                         "role": "tool",
                         "tool_call_id": tc.id,
@@ -405,12 +440,13 @@ class AgentLoop:
             "content": "工具调用预算已用完。请总结当前进度和结果，不要再调用工具。",
         })
         try:
-            summary_resp = await self._call_model_with_retry(state.messages, tools=None)
-            state.append_message({
-                "role": "assistant",
-                "content": summary_resp.content,
-            })
-            await self._store.save(thread_id, state)
+            summary_resp = await interruptible(ie, self._call_model_with_retry(state.messages, tools=None))
+            if summary_resp is not None:
+                state.append_message({
+                    "role": "assistant",
+                    "content": summary_resp.content,
+                })
+                await self._store.save(thread_id, state)
         except Exception as e:
             logger.warning("Grace period summary failed: %s", e)
 

@@ -474,7 +474,7 @@ class MessageHandler:
                 except Exception as e:
                     logger.warning("Session index sync failed: %s", e)
 
-            for msg in reversed(messages):
+            for msg in reversed(messages[pre_msg_count:]):
                 if msg.get("role") == "assistant" and msg.get("content"):
                     assistant_text = msg["content"].lstrip("\n")
                     break
