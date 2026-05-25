@@ -9,7 +9,6 @@ from .types import MediaCapability, MediaResult
 from .provider import MediaProviderClient
 from .image import understand_image
 from .audio import transcribe_audio
-from .video import understand_video
 
 logger = logging.getLogger("myclaw.media_understanding")
 
@@ -31,7 +30,6 @@ class MediaUnderstandingRunner:
         self._fallback_key = fallback_api_key
         self._image_client: Optional[MediaProviderClient] = None
         self._audio_client: Optional[MediaProviderClient] = None
-        self._video_client: Optional[MediaProviderClient] = None
         self._fallback_clients: Optional[list[MediaProviderClient]] = None
 
     def _get_image_client(self) -> MediaProviderClient:
@@ -43,11 +41,6 @@ class MediaUnderstandingRunner:
         if self._audio_client is None:
             self._audio_client = _make_capability_client(self.config, self.config.audio, self._fallback_key)
         return self._audio_client
-
-    def _get_video_client(self) -> MediaProviderClient:
-        if self._video_client is None:
-            self._video_client = _make_capability_client(self.config, self.config.video, self._fallback_key)
-        return self._video_client
 
     def _get_fallback_clients(self) -> list[MediaProviderClient]:
         if self._fallback_clients is None:
@@ -68,7 +61,7 @@ class MediaUnderstandingRunner:
         elif capability == MediaCapability.AUDIO:
             return self._get_audio_client()
         elif capability == MediaCapability.VIDEO:
-            return self._get_video_client()
+            return self._get_image_client()
         return self._get_image_client()
 
     async def _run_capability(
@@ -84,7 +77,7 @@ class MediaUnderstandingRunner:
         elif capability == MediaCapability.AUDIO:
             return await transcribe_audio(client, data, mime_type=mime_type, max_bytes=max_bytes)
         elif capability == MediaCapability.VIDEO:
-            return await understand_video(client, data, mime_type=mime_type, max_bytes=max_bytes)
+            return await self._understand_video_native(client, data, mime_type=mime_type, max_bytes=max_bytes)
         return MediaResult(capability=capability, text="", error=f"Unknown capability: {capability}")
 
     async def understand(
@@ -97,7 +90,7 @@ class MediaUnderstandingRunner:
             return MediaResult(capability=capability, text="", error="Image understanding disabled")
         if capability == MediaCapability.AUDIO and not self.config.audio.enabled:
             return MediaResult(capability=capability, text="", error="Audio transcription disabled")
-        if capability == MediaCapability.VIDEO and not self.config.video.enabled:
+        if capability == MediaCapability.VIDEO and not self.config.image.enabled:
             return MediaResult(capability=capability, text="", error="Video understanding disabled")
 
         max_bytes = {
@@ -138,6 +131,35 @@ class MediaUnderstandingRunner:
                     )
 
         return last_result or MediaResult(capability=capability, text="", error="No clients available")
+
+    async def _understand_video_native(
+        self,
+        client: MediaProviderClient,
+        video_data: bytes,
+        mime_type: str = "video/mp4",
+        max_bytes: int = 0,
+    ) -> MediaResult:
+        from .types import _media_error, _media_ok
+
+        try:
+            if max_bytes > 0 and len(video_data) > max_bytes:
+                return _media_error(MediaCapability.VIDEO, client, mime_type, f"Video too large: {len(video_data)} bytes, limit {max_bytes}")
+
+            prompt = "Describe what is happening in this video."
+            result = await client.describe_video_native(video_data, mime_type, prompt, max_tokens=2048)
+
+            if "error" in result:
+                return _media_error(MediaCapability.VIDEO, client, mime_type, result["error"])
+
+            text = result.get("text", "").strip()
+            if not text:
+                return _media_error(MediaCapability.VIDEO, client, mime_type, "Empty response from vision model")
+
+            logger.info("Video described natively (%d bytes, %s) -> %d chars", len(video_data), client.model, len(text))
+            return _media_ok(MediaCapability.VIDEO, text, client, mime_type, model=result.get("model", client.model))
+        except Exception as e:
+            logger.error("Native video understanding failed: %s", e)
+            return _media_error(MediaCapability.VIDEO, client, mime_type, str(e))
 
     @staticmethod
     def guess_capability_from_mime(mime_type: str) -> Optional[MediaCapability]:

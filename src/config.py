@@ -164,7 +164,7 @@ class FeishuToolConfig(BaseModel):
 
 
 class MediaUnderstandingCapabilityConfig(BaseModel):
-    """Config for a single media capability (image/audio/video)."""
+    """Config for a single media capability (image/audio)."""
 
     enabled: bool = True
     provider: str = ""  # Empty = inherit from parent
@@ -183,7 +183,7 @@ class MediaUnderstandingFallback(BaseModel):
 
 
 class MediaUnderstandingConfig(BaseModel):
-    """Media understanding (image description, audio transcription, video description)."""
+    """Media understanding (image description, audio transcription, video description). Video uses the image model config."""
 
     enabled: bool = False
     provider: str = "openai"
@@ -197,7 +197,6 @@ class MediaUnderstandingConfig(BaseModel):
     fallbacks: list[MediaUnderstandingFallback] = Field(default_factory=list)
     image: MediaUnderstandingCapabilityConfig = Field(default_factory=MediaUnderstandingCapabilityConfig)
     audio: MediaUnderstandingCapabilityConfig = Field(default_factory=MediaUnderstandingCapabilityConfig)
-    video: MediaUnderstandingCapabilityConfig = Field(default_factory=MediaUnderstandingCapabilityConfig)
 
 
 class ToolsPolicyConfig(BaseModel):

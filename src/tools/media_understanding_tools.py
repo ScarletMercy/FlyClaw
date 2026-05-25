@@ -76,57 +76,38 @@ async def _resolve_media_input(source: str, default_mime: str) -> tuple[bytes, s
         return resp.content, mime_type
 
 
-async def describe_image(image_url: str) -> str:
-    """Describe/analyze an image. Provide a URL, a data:image base64 URL, or a local file path.
+async def describe_media(media_url: str) -> str:
+    """Describe/analyze an image or video. Provide a URL, a data: base64 URL, or a local file path.
 
     Args:
-        image_url: URL of the image, a data:image/...;base64,... data URL, or a local file path.
+        media_url: URL of the image or video, a data:...;base64,... data URL, or a local file path.
     """
     runner = _get_runner()
     if runner is None:
         return "[error] Media understanding not enabled. Set tools.media_understanding.enabled: true in config."
 
     try:
-        data, mime_type = await _resolve_media_input(image_url, "image/png")
+        data, mime_type = await _resolve_media_input(media_url, "image/png")
 
         from src.media_understanding.types import MediaCapability
+        from src.media_understanding.runner import MediaUnderstandingRunner
 
-        result = await runner.understand(data, MediaCapability.IMAGE, mime_type=mime_type)
+        capability = MediaUnderstandingRunner.guess_capability_from_mime(mime_type) or MediaCapability.IMAGE
+        if capability == MediaCapability.AUDIO:
+            capability = MediaCapability.IMAGE
+
+        result = await runner.understand(data, capability, mime_type=mime_type)
         if result.error:
             return f"[error] {result.error}"
-        return f"[image description] ({result.model})\n{result.text}"
+        label = "video" if capability == MediaCapability.VIDEO else "image"
+        return f"[{label} description] ({result.model})\n{result.text}"
     except Exception as e:
-        logger.error("describe_image error: %s", e)
-        return f"[error] {e}"
-
-
-async def describe_video(video_url: str) -> str:
-    """Describe/analyze a video (extracts a frame and describes it).
-
-    Args:
-        video_url: URL of the video file, a data:video/...;base64,... data URL, or a local file path.
-    """
-    runner = _get_runner()
-    if runner is None:
-        return "[error] Media understanding not enabled. Set tools.media_understanding.enabled: true in config."
-
-    try:
-        data, mime_type = await _resolve_media_input(video_url, "video/mp4")
-
-        from src.media_understanding.types import MediaCapability
-
-        result = await runner.understand(data, MediaCapability.VIDEO, mime_type=mime_type)
-        if result.error:
-            return f"[error] {result.error}"
-        return f"[video description] ({result.model})\n{result.text}"
-    except Exception as e:
-        logger.error("describe_video error: %s", e)
+        logger.error("describe_media error: %s", e)
         return f"[error] {e}"
 
 
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef
     return [
-        ToolDef.from_function(describe_image),
-        ToolDef.from_function(describe_video),
+        ToolDef.from_function(describe_media),
     ]

@@ -441,26 +441,25 @@ _MEMORY_TOOL_DESCRIPTION = (
     "- 你学到了约定、API 怪癖、工作流\n\n"
     "ACTIONS:\n"
     "- save: 保存记忆（自动去重）。需要 content，可选 key/category\n"
-    "- get: 按键取回记忆。需要 key\n"
-    "- list: 列出/搜索记忆。可选 query 过滤\n"
-    "- delete: 请求删除记忆，用户发 /y 确认，其它消息取消。需要 keys 数组\n"
-    "- recall: 回忆历史记忆和知识库。需要 query\n\n"
+    "- get: 按键取回完整记忆内容。键名即记忆摘要，先用 list 查看键名\n"
+    "- list: 列出记忆。每条记忆的键名就是该条记忆的内容摘要，默认只返回键名。verbose=true 时同时返回完整内容\n"
+    "- delete: 请求删除记忆，用户发 /y 确认，其它消息取消。需要 keys 数组\n\n"
     "不要保存：任务进度、闲聊、一次性指令、通用知识。"
 )
 
 
 async def memory(action: str, content: str = "", key: str = "", category: str = "fact",
-                 query: str = "", keys: list = None, max_results: int = 6) -> str:
+                 query: str = "", keys: list = None, verbose: bool = False) -> str:
     """Manage persistent memories that survive across sessions.
 
     Args:
-        action: Operation to perform: save, get, list, delete, recall
+        action: Operation to perform: save, get, list, delete
         content: Memory content (for save)
         key: Memory key (for save/get)
         category: Memory category: preference|identity|contact|project|fact (for save, default fact)
-        query: Search keyword (for list) or recall query (for recall)
+        query: Search keyword (for list)
         keys: List of memory keys to delete (for delete)
-        max_results: Max results for semantic search (default 6)
+        verbose: Show full content in list (default: keys only)
     """
     normalized = (action or "").strip().lower()
 
@@ -478,7 +477,9 @@ async def memory(action: str, content: str = "", key: str = "", category: str = 
     if normalized == "list":
         s = get_memory_store()
         items = await s.list_all(query)
-        return json.dumps(items, ensure_ascii=False)
+        if verbose:
+            return json.dumps(items, ensure_ascii=False)
+        return json.dumps([i["key"] for i in items], ensure_ascii=False)
 
     if normalized == "delete":
         if not keys:
@@ -503,31 +504,7 @@ async def memory(action: str, content: str = "", key: str = "", category: str = 
             return json.dumps({"error": "None of the specified keys exist"}, ensure_ascii=False)
         raise MemoryDeleteNeedsApproval(found_keys, previews)
 
-    if normalized == "recall":
-        from src._container import get_container
-        searcher = get_container().memory_searcher
-        if not searcher:
-            return "Memory search is not available (not configured or not initialized)."
-        try:
-            results = await searcher.search(query, max_results=max_results)
-            if not results:
-                return f"No results found for: {query}"
-            lines = []
-            for i, r in enumerate(results):
-                source = r.get("path", "unknown")
-                score = r.get("score", 0)
-                c = r.get("content", "")
-                lines.append(f"[{i + 1}] (score={score}, source={source})")
-                lines.append(c[:300])
-                if len(c) > 300:
-                    lines.append("...")
-                lines.append("")
-            return "\n".join(lines)
-        except Exception as e:
-            logger.error("Memory search failed: %s", e)
-            return f"Memory search error: {e}"
-
-    return json.dumps({"error": f"Unknown action '{action}'. Use: save, get, list, delete, recall"}, ensure_ascii=False)
+    return json.dumps({"error": f"Unknown action '{action}'. Use: save, get, list, delete"}, ensure_ascii=False)
 
 
 def get_tools() -> list[ToolDef]:
@@ -540,7 +517,7 @@ def get_tools() -> list[ToolDef]:
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["save", "get", "list", "delete", "recall"],
+                        "enum": ["save", "get", "list", "delete"],
                         "description": "操作类型",
                     },
                     "content": {
@@ -549,7 +526,7 @@ def get_tools() -> list[ToolDef]:
                     },
                     "key": {
                         "type": "string",
-                        "description": "记忆键名（save 可选，get 必填）",
+                        "description": "记忆键名，即记忆内容摘要（save 可选，get 必填）",
                     },
                     "category": {
                         "type": "string",
@@ -558,16 +535,16 @@ def get_tools() -> list[ToolDef]:
                     },
                     "query": {
                         "type": "string",
-                        "description": "搜索关键词（list 用关键词过滤，recall 用语义搜索）",
+                        "description": "list 用关键词过滤记忆",
+                    },
+                    "verbose": {
+                        "type": "boolean",
+                        "description": "list 时是否同时返回完整内容。默认只返回键名",
                     },
                     "keys": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "要删除的记忆键名列表（delete 必填）",
-                    },
-                    "max_results": {
-                        "type": "integer",
-                        "description": "语义搜索最大结果数（默认 6）",
                     },
                 },
                 "required": ["action"],

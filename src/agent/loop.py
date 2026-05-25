@@ -106,7 +106,7 @@ def _repair_tool_args(args_str: str) -> str:
 _PARALLEL_SAFE_TOOLS = frozenset({
     "read_file", "list_dir", "search_files",
     "web_search", "web_fetch", "session_search",
-    "describe_image", "describe_video",
+    "describe_media",
     "memory", "cronjob", "task_manage", "skill_manage",
 })
 
@@ -829,7 +829,7 @@ class AgentLoop:
                 cat = item.get("category", "fact")
                 content = item.get("content", "")[:80]
                 lines.append(f"- [{cat}] {content}")
-            lines.append('以上是已加载的完整记忆摘要，直接基于这些信息回答即可，无需再次搜索。如果需要修改或补充，使用 memory 工具。')
+            lines.append('以上是已加载的主要部分的记忆，直接基于这些信息回答即可，除非用户表示不足或要求更多回忆，否则无需再次搜索。如果需要修改或补充，使用 memory 工具。')
             result = "\n".join(lines)
             self._memory_summary_cache = result
             self._memory_summary_ts = now

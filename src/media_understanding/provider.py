@@ -282,15 +282,6 @@ class MediaProviderClient:
 
         return {"text": text.strip(), "model": data.get("model", self.model)}
 
-    async def describe_video(
-        self,
-        frame_data: bytes,
-        mime_type: str = "image/jpeg",
-        prompt: str = "Describe this video frame in detail.",
-        max_tokens: int = 1024,
-    ) -> dict:
-        return await self.describe_image(frame_data, mime_type, prompt, max_tokens)
-
     async def describe_video_native(
         self,
         video_data: bytes,

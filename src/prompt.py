@@ -67,16 +67,6 @@ PLATFORM_HINTS: dict[str, str] = {
     ),
 }
 
-MEMORY_GUIDANCE = (
-    "你有跨会话持久记忆，用 memory 工具保存和检索事实。\n"
-    "保存内容：用户偏好、环境信息、工具经验、稳定约定。\n"
-    "不要保存：任务进度、会话结果、临时状态、一周后会过时的信息。\n"
-    "写法规范：陈述事实，不写指令。"
-    "\"用户偏好简洁回复\" 正确 — \"始终简洁回复\" 错误。\n"
-    "指令式写法会在后续会话中被重新读取为指令，可能导致重复工作或覆盖用户当前请求。"
-    "复杂工作流应保存为技能，不存为记忆。"
-)
-
 SESSION_SEARCH_GUIDANCE = (
     "当用户提及过去的对话内容，或需要跨会话回忆时，用 session_search 检索历史记录，"
     "不要让用户重复。"
@@ -159,9 +149,6 @@ def _build_tooling_rules() -> list[str]:
 def _build_tool_guidance(tools: list) -> list[str]:
     tool_names = {t.name for t in tools}
     lines: list[str] = []
-
-    if "memory" in tool_names:
-        lines += ["## 记忆", MEMORY_GUIDANCE, ""]
 
     if "session_search" in tool_names:
         lines += ["## 会话搜索", SESSION_SEARCH_GUIDANCE, ""]
