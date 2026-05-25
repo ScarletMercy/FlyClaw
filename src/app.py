@@ -137,7 +137,6 @@ class ServiceContainer:
             "src.tools.task_tools",
             "src.skills.manager",
             "src.agents.delegate",
-            "src.memory.procedures",
         ]
         if getattr(self.config.tools, "browser", None) and self.config.tools.browser.enabled:
             tool_modules.append("src.tools.browser.tools")
@@ -416,13 +415,6 @@ class ServiceContainer:
         from src.tools.exec import reset_config_cache
         reset_config_cache()
 
-        if self.config.procedural_memory.enabled and self.config.procedural_memory.auto_learn:
-            try:
-                from src.memory.procedures import register_extraction_listener
-                register_extraction_listener()
-            except Exception as e:
-                logger.warning("注册过程提取监听器失败: %s", e)
-
         return tools, skills
 
     # ── Startup helpers ──────────────────────────────────────────────
@@ -651,11 +643,6 @@ class ServiceContainer:
                 self.session_index = None
             if self.browser_manager:
                 await self.browser_manager.close_all()
-            try:
-                from src.memory.procedures import reset_procedure_store
-                await reset_procedure_store()
-            except Exception:
-                pass
             try:
                 from src.events import emit_async
                 await emit_async(

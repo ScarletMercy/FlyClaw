@@ -130,9 +130,6 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 "== 后台进程 ==",
                 "/ps [kill <id>] — 后台进程管理",
                 "",
-                "== 程序性记忆 ==",
-                "/procedures [search X|learn] — 工作流模式管理",
-                "",
                 "== 其他 ==",
                 "/skills  — 技能列表",
                 "/search  — 搜索会话",
@@ -170,9 +167,6 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 "",
                 "== Background ==",
                 "/ps [kill <id>] — Background process management",
-                "",
-                "== Procedural Memory ==",
-                "/procedures [search X|learn] — Workflow pattern management",
                 "",
                 "== Other ==",
                 "/skills  — Skill list",
@@ -933,75 +927,6 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         return "\n".join(lines)
 
     dispatcher.register_builtin("ps", cmd_ps)
-
-    # ── /procedures ──────────────────────────────────────────
-    async def cmd_procedures(args: str, ctx: dict) -> str:
-        zh = container.config.agents.language == "zh"
-
-        parts = args.strip().split(None, 1)
-        sub = parts[0].lower() if parts else ""
-        sub_args = parts[1].strip() if len(parts) > 1 else ""
-
-        try:
-            from src.memory.procedures import get_procedure_store
-            store = await get_procedure_store()
-        except Exception as e:
-            return f"Failed to init procedure store: {e}"
-
-        if sub == "search" and sub_args:
-            results = await store.search(sub_args, max_results=5)
-            if not results:
-                return "未找到匹配的工作流。" if zh else "No matching procedures found."
-            lines = []
-            for r in results:
-                steps_text = " → ".join(s.get("tool", "?") for s in r["steps"])
-                lines.append(
-                    f"  [{r['id']}] {r['name']}\n"
-                    f"    {r['description'][:100]}\n"
-                    f"    Steps: {steps_text}\n"
-                    f"    Used {r['use_count']}x"
-                )
-            return "\n".join(lines)
-
-        if sub == "learn":
-            thread_id = ctx.get("thread_id", "")
-            if not thread_id:
-                return "无法获取当前会话。" if zh else "Cannot identify current session."
-
-            state = await container.state_store.aload(thread_id)
-            if not state or not state.messages:
-                return "当前会话无消息。" if zh else "No messages in current session."
-
-            from src.memory.procedures import _try_extract_procedure
-            await _try_extract_procedure(thread_id, state.messages)
-
-            # Check if something was learned
-            count_after = await store.count()
-            return f"学习完成。当前共 {count_after} 个工作流模式。" if zh else f"Learning done. {count_after} procedures total."
-
-        # Default: list all
-        procedures = await store.list_all(limit=20)
-        if not procedures:
-            return "暂无已学习的工作流模式。" if zh else "No procedures learned yet."
-
-        lines = []
-        if zh:
-            lines.append("== 工作流模式 ==")
-        else:
-            lines.append("== Workflow Patterns ==")
-        for p in procedures:
-            lines.append(
-                f"  [{p['id']}] {p['name']} — {p['description'][:60]} "
-                f"(used {p['use_count']}x, tags: {p['tags']})"
-            )
-        lines.append("")
-        if zh:
-            lines.append("用法: /procedures search <关键词> | /procedures learn")
-        else:
-            lines.append("Usage: /procedures search <query> | /procedures learn")
-        return "\n".join(lines)
-
-    dispatcher.register_builtin("procedures", cmd_procedures)
 
     async def cmd_auto(args: str, ctx: dict) -> str:
         zh = container.config.agents.language == "zh"

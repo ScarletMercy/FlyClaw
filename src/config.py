@@ -276,18 +276,6 @@ class DelegationConfig(BaseModel):
     )
 
 
-class ProceduralMemoryConfig(BaseModel):
-    """Procedural memory — learn reusable workflow patterns from sessions."""
-    enabled: bool = True
-    db_path: str = "~/.flyclaw/data/procedures.db"
-    auto_learn: bool = True
-    min_tool_calls: int = 20
-    max_procedures: int = 200
-    learn_model: str = ""
-    learn_model_base_url: str = ""
-    learn_model_api_key: str = ""
-
-
 class CheckpointerConfig(BaseModel):
     type: Literal["sqlite", "memory"] = "sqlite"
     path: str = "~/.flyclaw/data/checkpoints.db"
@@ -455,7 +443,6 @@ class AppConfig(BaseModel):
     snapshot: SnapshotConfig = Field(default_factory=SnapshotConfig)
     delegation: DelegationConfig = Field(default_factory=DelegationConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
-    procedural_memory: ProceduralMemoryConfig = Field(default_factory=ProceduralMemoryConfig)
     owner_id: str = ""
 
 
@@ -486,9 +473,6 @@ def _expand_paths(config: AppConfig) -> AppConfig:
 
     # Snapshot store
     config.snapshot.store_path = str(Path(config.snapshot.store_path).expanduser().resolve())
-
-    # Procedural memory
-    config.procedural_memory.db_path = str(Path(config.procedural_memory.db_path).expanduser().resolve())
 
     return config
 
