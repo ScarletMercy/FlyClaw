@@ -1,7 +1,7 @@
 """Web search and fetch tools.
 
 web_fetch: direct HTTP fetch with HTML-to-markdown conversion (no external API).
-web_search: Tavily API search (requires API key).
+web_search: Tavily API search (requires API key). Falls back to Bing scraping when no key is set.
 """
 
 from __future__ import annotations
@@ -21,8 +21,15 @@ logger = logging.getLogger("myclaw.web_tools")
 _cached_api_key: str | None = None
 
 FETCH_TIMEOUT = 30.0
+BING_TIMEOUT = 15.0
 MAX_MARKDOWN_LENGTH = 100_000
 MAX_URL_LENGTH = 2000
+
+_BING_HEADERS = {
+    "User-Agent": "MyClaw/1.0 (compatible; web-search)",
+    "Accept": "text/html,application/xhtml+xml,*/*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+}
 
 # Binary content types that we cannot meaningfully extract text from
 _BINARY_CONTENT_TYPES = [
@@ -56,6 +63,19 @@ def _is_binary_content_type(content_type: str) -> bool:
     return any(bt in ct for bt in _BINARY_CONTENT_TYPES)
 
 
+def _strip_tags(html: str) -> str:
+    text = re.sub(r"<[^>]+>", "", html)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _unescape_unicode(s: str) -> str:
+    return re.sub(
+        r"\\u([0-9a-fA-F]{4})",
+        lambda m: chr(int(m.group(1), 16)),
+        s,
+    )
+
+
 def _html_to_markdown(html: str) -> str:
     try:
         from markdownify import markdownify as md
@@ -67,6 +87,67 @@ def _html_to_markdown(html: str) -> str:
         text = re.sub(r"<[^>]+>", " ", text)
         text = re.sub(r"\s+", " ", text).strip()
         return text
+
+
+async def _bing_search(query: str, max_results: int = 5) -> str:
+    from urllib.parse import quote_plus
+
+    query = _unescape_unicode(query)
+    url = f"https://cn.bing.com/search?q={quote_plus(query)}"
+    logger.info("bing_search request URL: %s", url)
+    try:
+        async with httpx.AsyncClient(
+            follow_redirects=True,
+            timeout=BING_TIMEOUT,
+            headers=_BING_HEADERS,
+        ) as client:
+            response = await client.get(url)
+        logger.info("bing_search actual URL: %s", response.url)
+
+        if response.status_code != 200:
+            return f"[bing_search error] HTTP {response.status_code}"
+
+        html = response.text
+
+        algo_blocks = re.findall(
+            r'<li\s+class="b_algo"[^>]*>(.*?)</li>', html, re.DOTALL
+        )
+
+        results: list[str] = []
+        for block in algo_blocks[:max_results]:
+            h2_a = re.search(
+                r'<h2[^>]*>.*?<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>',
+                block,
+                re.DOTALL,
+            )
+            if not h2_a:
+                continue
+            link = h2_a.group(1)
+            title = _strip_tags(h2_a.group(2))
+
+            cap_p = re.search(
+                r'<div\s+class="b_caption">\s*<p[^>]*>(.*?)</p>',
+                block,
+                re.DOTALL,
+            )
+            snippet = _strip_tags(cap_p.group(1)) if cap_p else ""
+
+            entry_parts: list[str] = []
+            if title:
+                entry_parts.append(f"**{title}**")
+            if link:
+                entry_parts.append(link)
+            if snippet:
+                entry_parts.append(snippet[:400])
+            if entry_parts:
+                results.append("\n".join(entry_parts))
+
+        return "\n\n".join(results) if results else "No results found."
+    except httpx.TimeoutException:
+        return f"[bing_search error] Request timed out after {BING_TIMEOUT}s"
+    except Exception as e:
+        logger.error("bing_search error for query='%s': %s", query, e)
+        return f"[bing_search error] {e}"
 
 
 async def web_fetch(url: str) -> str:
@@ -155,8 +236,12 @@ async def web_search(query: str, max_results: int = 5) -> str:
         max_results: Maximum number of results to return. Default 5.
     """
     api_key = _get_api_key()
+    logger.info("web_search raw query: %r", query)
+    query = _unescape_unicode(query)
+    logger.info("web_search after unescape: %r", query)
     if not api_key:
-        return "[error] Tavily API key not configured. Set tools.web_search.api_key or TAVILY_API_KEY in config."
+        logger.info("No Tavily API key configured, falling back to Bing search")
+        return await _bing_search(query, max_results)
 
     try:
         from tavily import TavilyClient
@@ -186,8 +271,8 @@ async def web_search(query: str, max_results: int = 5) -> str:
 
         return "\n\n".join(results) if results else "No results found."
     except Exception as e:
-        logger.error("web_search error for query='%s': %s", query, e)
-        return f"[web_search error] {e}"
+        logger.warning("Tavily failed for query='%s', falling back to Bing: %s", query, e)
+        return await _bing_search(query, max_results)
 
 
 def get_tools() -> list[ToolDef]:

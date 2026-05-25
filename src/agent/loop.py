@@ -181,6 +181,11 @@ class AgentLoop:
                     agents_cfg.workspace, extra_names=extra
                 )
 
+        self._cache_prompt_sections(tools, skills_prompt)
+
+        self._memory_summary_cache: str = ""
+        self._memory_summary_ts: float = 0
+
         # Cache: avoids re-building identical messages across tool rounds
         self._cached_history: list[dict] | None = None
         self._cached_history_count: int = 0
@@ -646,7 +651,8 @@ class AgentLoop:
             except Exception:
                 pass
 
-        system_text = self._build_system_prompt(state, self._get_active_tool_defs(state))
+        memory_summary = await self._fetch_memory_summary()
+        system_text = self._build_system_prompt(state, self._get_active_tool_defs(state), memory_summary)
         history = self._sanitize_api_messages(history)
         history = self._sanitize_surrogates(history)
         return [{"role": "system", "content": system_text}] + list(history)
@@ -774,16 +780,95 @@ class AgentLoop:
             logger.debug("resolve_user failed: %s", exc)
         return None
 
-    def _build_system_prompt(self, state: AgentState, active_tools: list[ToolDef]) -> str:
-        from src.prompt import build_system_prompt
-        return build_system_prompt(
-            config=self._config,
-            tools=active_tools,
-            skills_prompt=self._skills_prompt,
-            context_files=self._context_files,
-            extra_system_prompt=state.system_prompt,
-            channel=state.channel,
+    def _cache_prompt_sections(self, tools: list[ToolDef], skills_prompt: str) -> None:
+        from pathlib import Path
+        from src.prompt import (
+            _load_soul_md, _build_environment_hints, _build_tooling_rules,
+            _build_tool_guidance, _build_safety, _build_skills_section,
+            _build_workspace, _build_bootstrap_context,
         )
+
+        workspace_dir = "."
+        if self._config:
+            agents_cfg = getattr(self._config, "agents", None)
+            if agents_cfg:
+                raw_ws = getattr(agents_cfg, "workspace", ".") or "."
+                workspace_dir = str(Path(raw_ws).expanduser().resolve())
+
+        self._prompt_soul = _load_soul_md()
+        self._prompt_env = "\n".join(_build_environment_hints())
+        self._prompt_tool_rules = "\n".join(_build_tooling_rules())
+        self._prompt_tool_guidance = "\n".join(_build_tool_guidance(tools))
+        self._prompt_safety = "\n".join(_build_safety())
+        self._prompt_skills = "\n".join(_build_skills_section(skills_prompt)) if skills_prompt else ""
+        self._prompt_workspace = "\n".join(_build_workspace(workspace_dir))
+        self._prompt_bootstrap = "\n".join(_build_bootstrap_context(self._context_files)) if self._context_files else ""
+        self._prompt_platform_cache: dict[str, str] = {}
+
+        logger.info(
+            "System prompt sections cached (soul=%d, env=%d, guidance=%d, skills=%d, bootstrap=%d chars)",
+            len(self._prompt_soul), len(self._prompt_env),
+            len(self._prompt_tool_guidance), len(self._prompt_skills),
+            len(self._prompt_bootstrap),
+        )
+
+    async def _fetch_memory_summary(self) -> str:
+        import time
+        now = time.monotonic()
+        if self._memory_summary_cache and now - self._memory_summary_ts < 300:
+            return self._memory_summary_cache
+        try:
+            from src.tools.memory_tools import get_memory_store
+            store = get_memory_store()
+            items = await store.list_all(limit=20)
+            if not items:
+                self._memory_summary_ts = now
+                return ""
+            lines = [f"## 已知记忆（{len(items)} 条）"]
+            for item in items:
+                cat = item.get("category", "fact")
+                content = item.get("content", "")[:80]
+                lines.append(f"- [{cat}] {content}")
+            lines.append('以上是已加载的完整记忆摘要，直接基于这些信息回答即可，无需再次搜索。如果需要修改或补充，使用 memory 工具。')
+            result = "\n".join(lines)
+            self._memory_summary_cache = result
+            self._memory_summary_ts = now
+            return result
+        except Exception:
+            return self._memory_summary_cache or ""
+
+    def _build_system_prompt(self, state: AgentState, active_tools: list[ToolDef], memory_summary: str = "") -> str:
+        from src.prompt import _build_platform_hints
+
+        parts = [self._prompt_soul, ""]
+
+        extra = state.system_prompt.strip()
+        if extra:
+            parts.extend([extra, ""])
+
+        if memory_summary:
+            parts.extend([memory_summary, ""])
+
+        parts.append(self._prompt_env)
+
+        channel = state.channel
+        if channel not in self._prompt_platform_cache:
+            self._prompt_platform_cache[channel] = "\n".join(_build_platform_hints(channel))
+        platform = self._prompt_platform_cache[channel]
+        if platform:
+            parts.append(platform)
+
+        parts.append(self._prompt_tool_rules)
+        if self._prompt_tool_guidance:
+            parts.append(self._prompt_tool_guidance)
+        parts.append(self._prompt_safety)
+        if self._prompt_skills:
+            parts.append(self._prompt_skills)
+        parts.append(self._prompt_workspace)
+        if self._prompt_bootstrap:
+            parts.append(self._prompt_bootstrap)
+
+        return "\n".join(parts)
 
     def _build_assistant_msg(self, response: ChatResponse) -> dict:
         msg: dict[str, Any] = {"role": "assistant", "content": response.content}

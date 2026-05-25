@@ -78,6 +78,11 @@ class ReloadExecutor:
             self._app.skills_cache = skills
             self._app.agent_loop._skills_prompt = build_skills_prompt(skills)
 
+            from src.prompt import _build_skills_section
+            self._app.agent_loop._prompt_skills = "\n".join(
+                _build_skills_section(self._app.agent_loop._skills_prompt)
+            ) if self._app.agent_loop._skills_prompt else ""
+
             # Update CommandDispatcher with new skills
             if hasattr(self._app, 'dispatcher'):
                 self._app.dispatcher._reload_skills(skills)

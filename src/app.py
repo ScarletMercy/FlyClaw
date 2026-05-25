@@ -122,6 +122,10 @@ class ServiceContainer:
 
         if self.agent_loop:
             self.agent_loop._skills_prompt = build_skills_prompt(self.skills_cache)
+            from src.prompt import _build_skills_section
+            self.agent_loop._prompt_skills = "\n".join(
+                _build_skills_section(self.agent_loop._skills_prompt)
+            ) if self.agent_loop._skills_prompt else ""
         if self.dispatcher:
             self.dispatcher._reload_skills(self.skills_cache)
 

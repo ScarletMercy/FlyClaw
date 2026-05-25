@@ -444,7 +444,7 @@ _MEMORY_TOOL_DESCRIPTION = (
     "- get: 按键取回记忆。需要 key\n"
     "- list: 列出/搜索记忆。可选 query 过滤\n"
     "- delete: 请求删除记忆，用户发 /y 确认，其它消息取消。需要 keys 数组\n"
-    "- search: 语义搜索历史记忆和知识库。需要 query\n\n"
+    "- recall: 回忆历史记忆和知识库。需要 query\n\n"
     "不要保存：任务进度、闲聊、一次性指令、通用知识。"
 )
 
@@ -454,11 +454,11 @@ async def memory(action: str, content: str = "", key: str = "", category: str = 
     """Manage persistent memories that survive across sessions.
 
     Args:
-        action: Operation to perform: save, get, list, delete, search
+        action: Operation to perform: save, get, list, delete, recall
         content: Memory content (for save)
         key: Memory key (for save/get)
         category: Memory category: preference|identity|contact|project|fact (for save, default fact)
-        query: Search keyword (for list) or semantic search query (for search)
+        query: Search keyword (for list) or recall query (for recall)
         keys: List of memory keys to delete (for delete)
         max_results: Max results for semantic search (default 6)
     """
@@ -503,7 +503,7 @@ async def memory(action: str, content: str = "", key: str = "", category: str = 
             return json.dumps({"error": "None of the specified keys exist"}, ensure_ascii=False)
         raise MemoryDeleteNeedsApproval(found_keys, previews)
 
-    if normalized == "search":
+    if normalized == "recall":
         from src._container import get_container
         searcher = get_container().memory_searcher
         if not searcher:
@@ -527,7 +527,7 @@ async def memory(action: str, content: str = "", key: str = "", category: str = 
             logger.error("Memory search failed: %s", e)
             return f"Memory search error: {e}"
 
-    return json.dumps({"error": f"Unknown action '{action}'. Use: save, get, list, delete, search"}, ensure_ascii=False)
+    return json.dumps({"error": f"Unknown action '{action}'. Use: save, get, list, delete, recall"}, ensure_ascii=False)
 
 
 def get_tools() -> list[ToolDef]:
@@ -540,7 +540,7 @@ def get_tools() -> list[ToolDef]:
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["save", "get", "list", "delete", "search"],
+                        "enum": ["save", "get", "list", "delete", "recall"],
                         "description": "操作类型",
                     },
                     "content": {
@@ -558,7 +558,7 @@ def get_tools() -> list[ToolDef]:
                     },
                     "query": {
                         "type": "string",
-                        "description": "搜索关键词（list 用关键词过滤，search 用语义搜索）",
+                        "description": "搜索关键词（list 用关键词过滤，recall 用语义搜索）",
                     },
                     "keys": {
                         "type": "array",
