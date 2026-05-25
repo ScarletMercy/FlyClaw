@@ -514,15 +514,6 @@ class ServiceContainer:
         except Exception as e:
             logger.warning("安全审计失败: %s", e)
 
-    async def _start_skills_watcher(self):
-        if not (self.config.skills.enabled and self.config.skills.watch):
-            return
-        from src.skills.watcher import start_skills_watcher
-        await start_skills_watcher(
-            self._build_skill_directories(),
-            lambda: self._reload_skills(),
-        )
-
     async def _maybe_run_curator(self):
         curator_cfg = getattr(self.config.skills, "curator", None)
         if not curator_cfg or not curator_cfg.enabled:
@@ -616,7 +607,6 @@ class ServiceContainer:
     async def on_startup(self):
         await self._start_events()
         self._start_security_audit()
-        await self._start_skills_watcher()
         await self._maybe_run_curator()
         if self.cron_service:
             await self.cron_service.start()
@@ -656,9 +646,6 @@ class ServiceContainer:
                     await task_store.close()
                 except Exception:
                     pass
-            if self.config.skills.enabled and self.config.skills.watch:
-                from src.skills.watcher import stop_skills_watcher
-                await stop_skills_watcher()
             from src.memory.watcher import stop_memory_watcher
             await stop_memory_watcher()
             if getattr(self.config, "canvas", None) and self.config.canvas.enabled and self.config.canvas.live_reload:

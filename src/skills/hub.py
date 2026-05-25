@@ -1069,27 +1069,19 @@ def create_sources() -> list[SkillSource]:
     return [SkillsShSource(), ClawHubSource(), UrlSource()]
 
 
-def parallel_search(
+def _search_sources(
     sources: list[SkillSource],
     query: str,
-    limit: int = 10,
-    source_filter: str = "all",
-    timeout: float = 30,
+    limit: int,
+    timeout: float,
 ) -> list[SkillMeta]:
-    active = []
-    for src in sources:
-        if source_filter != "all" and src.source_id() != source_filter:
-            continue
-        active.append(src)
-
+    if not sources:
+        return []
     all_results: list[SkillMeta] = []
-    if not active:
-        return all_results
-
-    pool = ThreadPoolExecutor(max_workers=min(len(active), 4))
+    pool = ThreadPoolExecutor(max_workers=min(len(sources), 4))
     try:
         futures = {}
-        for src in active:
+        for src in sources:
             fut = pool.submit(src.search, query, limit)
             futures[fut] = src.source_id()
         try:
@@ -1103,17 +1095,46 @@ def parallel_search(
             pass
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
+    return all_results
 
-    _TRUST_RANK = {"builtin": 2, "trusted": 1, "community": 0}
-    seen: dict[tuple[str, str], SkillMeta] = {}
-    for r in all_results:
-        key = (r.source, r.name)
+
+def _dedup_results(results: list[SkillMeta]) -> list[SkillMeta]:
+    _SOURCE_RANK = {"clawhub": 2, "skills.sh": 1, "url": 0}
+    seen: dict[str, SkillMeta] = {}
+    for r in results:
+        key = r.name
         if key not in seen:
             seen[key] = r
-        elif _TRUST_RANK.get(r.trust_level, 0) > _TRUST_RANK.get(seen[key].trust_level, 0):
+        elif _SOURCE_RANK.get(r.source, 0) > _SOURCE_RANK.get(seen[key].source, 0):
             seen[key] = r
+    return list(seen.values())
 
-    return list(seen.values())[:limit]
+
+def parallel_search(
+    sources: list[SkillSource],
+    query: str,
+    limit: int = 10,
+    source_filter: str = "all",
+    timeout: float = 30,
+) -> list[SkillMeta]:
+    active = []
+    for src in sources:
+        if source_filter != "all" and src.source_id() != source_filter:
+            continue
+        active.append(src)
+
+    if not active:
+        return []
+
+    primary = [s for s in active if s.source_id() in ("clawhub", "url")]
+    fallback = [s for s in active if s.source_id() not in ("clawhub", "url")]
+
+    primary_results = _search_sources(primary, query, limit, timeout)
+    if primary_results:
+        return _dedup_results(primary_results)[:limit]
+
+    fallback_results = _search_sources(fallback, query, limit, timeout)
+    return _dedup_results(fallback_results)[:limit]
 
 
 def resolve_source(

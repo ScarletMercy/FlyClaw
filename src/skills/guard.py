@@ -12,7 +12,7 @@ TRUSTED_REPOS = {"openai/skills", "anthropics/skills"}
 INSTALL_POLICY = {
     "builtin": ("allow", "allow", "allow"),
     "trusted": ("allow", "allow", "block"),
-    "community": ("allow", "block", "block"),
+    "community": ("allow", "allow", "block"),
     "agent-created": ("allow", "allow", "block"),
 }
 
@@ -61,7 +61,7 @@ THREAT_PATTERNS = [
     (r'printenv|env\s*\|',
      "dump_all_env", "high", "exfiltration",
      "dumps all environment variables"),
-    (r'os\.environ\b(?!\s*\.get\s*\(\s*["\']PATH)',
+    (r'os\.environ\b(?!\s*\.get\s*\()',
      "python_os_environ", "high", "exfiltration",
      "accesses os.environ (potential env dump)"),
     (r'os\.getenv\s*\(\s*[^\)]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)',
@@ -73,9 +73,12 @@ THREAT_PATTERNS = [
     (r'ENV\[.*(?:KEY|TOKEN|SECRET|PASSWORD)',
      "ruby_env_secret", "critical", "exfiltration",
      "reads secret via Ruby ENV[]"),
-    (r'\b(dig|nslookup|host)\s+[^\n]*\$',
+    (r'\b(?:dig|nslookup)\s+[^\n]*\$',
      "dns_exfil", "critical", "exfiltration",
      "DNS lookup with variable interpolation (possible DNS exfiltration)"),
+    (r'(?<![-\w])host\s+[^\n]*\$',
+     "dns_exfil_host", "high", "exfiltration",
+     "host command with variable interpolation"),
     (r'>\s*/tmp/[^\s]*\s*&&\s*(curl|wget|nc|python)',
      "tmp_staging", "critical", "exfiltration",
      "writes to /tmp then exfiltrates"),
@@ -263,7 +266,7 @@ THREAT_PATTERNS = [
      "path_traversal_deep", "high", "traversal",
      "deep relative path traversal (3+ levels up)"),
     (r'\.\./\.\.',
-     "path_traversal", "medium", "traversal",
+     "path_traversal", "low", "traversal",
      "relative path traversal (2+ levels up)"),
     (r'/etc/passwd|/etc/shadow',
      "system_passwd_access", "critical", "traversal",
@@ -302,10 +305,10 @@ THREAT_PATTERNS = [
      "uv_run", "medium", "supply_chain",
      "uv run (may auto-install unpinned dependencies)"),
     (r'(curl|wget|httpx?\.get|requests\.get|fetch)\s*[\(]?\s*["\']https?://',
-     "remote_fetch", "medium", "supply_chain",
+     "remote_fetch", "low", "supply_chain",
      "fetches remote resource at runtime"),
     (r'git\s+clone\s+',
-     "git_clone", "medium", "supply_chain",
+     "git_clone", "low", "supply_chain",
      "clones a git repository at runtime"),
     (r'docker\s+pull\s+',
      "docker_pull", "medium", "supply_chain",
@@ -485,13 +488,24 @@ def scan_skill(skill_path: Path, source: str = "community") -> ScanResult:
     )
 
 
-def should_allow_install(result: ScanResult) -> tuple[bool, str]:
+def should_allow_install(result: ScanResult, force: bool = False) -> tuple[bool, str]:
     policy = INSTALL_POLICY.get(result.trust_level, INSTALL_POLICY["community"])
     vi = VERDICT_INDEX.get(result.verdict, 2)
     decision = policy[vi]
 
     if decision == "allow":
-        return True, f"Allowed ({result.trust_level} source, {result.verdict} verdict)"
+        msg = f"Allowed ({result.trust_level} source, {result.verdict} verdict)"
+        if result.verdict == "caution":
+            cats = sorted({f.category for f in result.findings})
+            msg = f"Allowed with {len(result.findings)} caution(s) ({', '.join(cats)})"
+        return True, msg
+
+    if force:
+        return True, (
+            f"Force-installed despite {result.verdict} verdict "
+            f"({len(result.findings)} findings)"
+        )
+
     return False, (
         f"Blocked ({result.trust_level} source + {result.verdict} verdict, "
         f"{len(result.findings)} findings)"
@@ -632,7 +646,9 @@ def _determine_verdict(findings: list[Finding]) -> str:
         return "safe"
     if any(f.severity == "critical" for f in findings):
         return "dangerous"
-    return "caution"
+    if any(f.severity in ("high", "medium") for f in findings):
+        return "caution"
+    return "safe"
 
 
 def _build_summary(name: str, source: str, trust: str, verdict: str, findings: list[Finding]) -> str:

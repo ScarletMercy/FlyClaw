@@ -64,7 +64,7 @@ _SILENT_TOOLS = frozenset({
     "text_to_speech", "send_image_to_chat", "send_file_to_chat", "send_voice",
     "qq_send_image", "qq_send_file",
     "weixin_send_image", "weixin_send_file", "weixin_send_voice",
-    "skill_manage",
+    "skills_list", "skill_view", "skill_manage", "skill_hub",
 })
 
 

@@ -18,6 +18,7 @@ from src.agent.client import ChatClient, ChatResponse, FallbackChain
 from src.agent.guardrails import ToolLoopGuardrails
 from src.agent.state import AgentState, StateStore
 from src.agent.tooldef import ToolDef
+from src.skills.manager import _SKILL_TOOL_NAMES
 
 logger = logging.getLogger("myclaw.agent.loop")
 
@@ -107,7 +108,7 @@ _PARALLEL_SAFE_TOOLS = frozenset({
     "read_file", "list_dir", "search_files",
     "web_search", "web_fetch", "session_search",
     "describe_media",
-    "memory", "cronjob", "task_manage", "skill_manage",
+    "memory", "cronjob", "task_manage", "skills_list", "skill_view", "skill_manage", "skill_hub",
 })
 
 _PATH_SCOPED_TOOLS = frozenset({
@@ -161,7 +162,7 @@ class AgentLoop:
         self._config = config
         self._skills_prompt = skills_prompt
         self._ctx_window_tokens = context_window_tokens
-        self._context_files: list[str] = []
+        self._context_files: list[dict] = []
 
         # Build tool name → ToolDef lookup
         self._tool_map: dict[str, ToolDef] = {t.name: t for t in tools}
@@ -948,7 +949,7 @@ class AgentLoop:
                 pass
             self._guardrails.record(tool_name, args, success=True, result=result if isinstance(result, str) else "")
 
-            if tool_name == "skill_manage" and self._skill_nudge_interval > 0:
+            if tool_name in _SKILL_TOOL_NAMES and self._skill_nudge_interval > 0:
                 self._iters_since_skill = 0
 
             await emit_async(

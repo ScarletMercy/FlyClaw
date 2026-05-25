@@ -153,7 +153,7 @@ def _build_tool_guidance(tools: list) -> list[str]:
     if "session_search" in tool_names:
         lines += ["## 会话搜索", SESSION_SEARCH_GUIDANCE, ""]
 
-    if "skill_manage" in tool_names:
+    if "skills_list" in tool_names:
         lines += ["## 技能维护", SKILLS_GUIDANCE, ""]
 
     if tool_names & {"edit_file", "read_file", "write_file"}:
@@ -200,11 +200,11 @@ def _build_skills_section(skills_prompt: str) -> list[str]:
     return [
         "## 技能",
         "回复前先扫描以下技能描述。如果某个技能明显适用或部分相关，"
-        "用 skill_manage(action=\"view\", name=\"...\") 加载并遵循其指令。"
+        "用 skill_view(name=\"...\") 加载并遵循其指令。"
         "如果技能有问题，用 skill_manage(action=\"patch\") 修补。\n"
-        "如果都不适用，不要调用 skill_manage。不要用 read_file 读取技能文件。",
-        "如果用户需要的功能在本地技能中找不到，用 skill_manage(action=\"search_hub\", query=\"...\") 搜索远程技能库。",
-        "搜索到合适的技能后，用 skill_manage(action=\"inspect_hub\", identifier=\"...\") 查看详情，确认后用 skill_manage(action=\"install_hub\", identifier=\"...\") 安装。",
+        "如果都不适用，不要调用任何技能工具（skills_list/skill_view/skill_manage/skill_hub）。不要用 read_file 读取技能文件。",
+        "如果用户需要的功能在本地技能中找不到，用 skill_hub(action=\"search_hub\", query=\"...\") 搜索远程技能库。",
+        "搜索到合适的技能后，用 skill_hub(action=\"inspect_hub\", identifier=\"...\") 查看详情，确认后用 skill_hub(action=\"install_hub\", identifier=\"...\") 安装。",
         "注意：如果 search_hub/inspect_hub/install_hub 返回 'Hub is disabled in configuration'，说明远程技能库已禁用，只能使用本地技能。",
         "限制：最多加载一个技能；仅在选定后加载。\n"
         "完成困难或迭代式任务后，主动提出保存为技能。",

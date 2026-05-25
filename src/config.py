@@ -321,7 +321,6 @@ class SkillsConfig(BaseModel):
     enabled: bool = True
     extra_dirs: list[str] = Field(default_factory=list)
     budget_chars: int = 30000
-    watch: bool = True
     disabled: list[str] = Field(default_factory=list)
     channel_disabled: dict[str, list[str]] = Field(default_factory=dict)
     hub: HubConfig = HubConfig()

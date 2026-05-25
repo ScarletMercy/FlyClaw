@@ -29,8 +29,8 @@ class TestDetermineVerdict:
     def test_empty_safe(self):
         assert _determine_verdict([]) == "safe"
 
-    def test_low_caution(self):
-        assert _determine_verdict([_finding("low")]) == "caution"
+    def test_low_safe(self):
+        assert _determine_verdict([_finding("low")]) == "safe"
 
     def test_medium_caution(self):
         assert _determine_verdict([_finding("medium")]) == "caution"
@@ -111,9 +111,9 @@ class TestShouldAllowInstall:
         ok, _ = should_allow_install(self._make_result("community", "safe"))
         assert ok
 
-    def test_community_caution_blocked(self):
+    def test_community_caution_allowed(self):
         ok, _ = should_allow_install(self._make_result("community", "caution"))
-        assert not ok
+        assert ok
 
     def test_community_dangerous_blocked(self):
         ok, _ = should_allow_install(self._make_result("community", "dangerous"))
@@ -224,6 +224,76 @@ class TestScanFile:
         assert result == []
 
 
+class TestDnsExfilPattern:
+    def test_dig_with_variable_critical(self, tmp_path):
+        f = tmp_path / "skill.sh"
+        f.write_text("dig $DOMAIN example.com", encoding="utf-8")
+        findings = scan_file(f)
+        assert any(fi.pattern_id == "dns_exfil" and fi.severity == "critical" for fi in findings)
+
+    def test_nslookup_with_variable_critical(self, tmp_path):
+        f = tmp_path / "skill.sh"
+        f.write_text("nslookup $TARGET", encoding="utf-8")
+        findings = scan_file(f)
+        assert any(fi.pattern_id == "dns_exfil" and fi.severity == "critical" for fi in findings)
+
+    def test_host_with_variable_high(self, tmp_path):
+        f = tmp_path / "skill.sh"
+        f.write_text("host $DOMAIN example.com", encoding="utf-8")
+        findings = scan_file(f)
+        assert any(fi.pattern_id == "dns_exfil_host" and fi.severity == "high" for fi in findings)
+
+    def test_write_host_no_match(self, tmp_path):
+        f = tmp_path / "skill.ps1"
+        f.write_text('Write-Host "Total: ${total}"', encoding="utf-8")
+        findings = scan_file(f)
+        assert not any(fi.pattern_id in ("dns_exfil", "dns_exfil_host") for fi in findings)
+
+    def test_double_dash_host_no_match(self, tmp_path):
+        f = tmp_path / "skill.sh"
+        f.write_text("node server.js --host 0.0.0.0 --port $PORT", encoding="utf-8")
+        findings = scan_file(f)
+        assert not any(fi.pattern_id in ("dns_exfil", "dns_exfil_host") for fi in findings)
+
+    def test_localhost_no_match(self, tmp_path):
+        f = tmp_path / "skill.sh"
+        f.write_text("curl http://localhost:$PORT/api", encoding="utf-8")
+        findings = scan_file(f)
+        assert not any(fi.pattern_id in ("dns_exfil", "dns_exfil_host") for fi in findings)
+
+    def test_host_without_variable_no_match(self, tmp_path):
+        f = tmp_path / "skill.sh"
+        f.write_text("host example.com", encoding="utf-8")
+        findings = scan_file(f)
+        assert not any(fi.pattern_id in ("dns_exfil", "dns_exfil_host") for fi in findings)
+
+
+class TestPythonOsEnviron:
+    def test_os_environ_get_excluded(self, tmp_path):
+        f = tmp_path / "skill.py"
+        f.write_text("val = os.environ.get('MY_KEY')", encoding="utf-8")
+        findings = scan_file(f)
+        assert not any(fi.pattern_id == "python_os_environ" for fi in findings)
+
+    def test_os_environ_get_no_arg_excluded(self, tmp_path):
+        f = tmp_path / "skill.py"
+        f.write_text("val = os.environ.get()", encoding="utf-8")
+        findings = scan_file(f)
+        assert not any(fi.pattern_id == "python_os_environ" for fi in findings)
+
+    def test_os_environ_bracket_access(self, tmp_path):
+        f = tmp_path / "skill.py"
+        f.write_text("val = os.environ['MY_KEY']", encoding="utf-8")
+        findings = scan_file(f)
+        assert any(fi.pattern_id == "python_os_environ" for fi in findings)
+
+    def test_os_environ_direct_access(self, tmp_path):
+        f = tmp_path / "skill.py"
+        f.write_text("for k, v in os.environ.items(): pass", encoding="utf-8")
+        findings = scan_file(f)
+        assert any(fi.pattern_id == "python_os_environ" for fi in findings)
+
+
 class TestScanSkill:
     def test_clean_skill_dir(self, tmp_path):
         (tmp_path / "SKILL.md").write_text("# Safe Skill\nHello world", encoding="utf-8")
@@ -311,4 +381,4 @@ class TestFormatScanReport:
             findings=findings, scanned_at="", summary="issues found",
         )
         report = format_scan_report(result)
-        assert "test_p" in report or "BLOCKED" in report or "high" in report
+        assert "HIGH" in report or "ALLOWED" in report

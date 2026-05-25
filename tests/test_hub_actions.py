@@ -26,7 +26,7 @@ def _make_skill(name, base_dir="/tmp/skill"):
 async def _call_action(action, **kwargs):
     from src.skills.manager import get_tools
     tools = get_tools()
-    tool_fn = tools[0].fn
+    tool_fn = next(t.fn for t in tools if t.name == "skill_hub")
     return await tool_fn(action=action, **kwargs)
 
 

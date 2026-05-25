@@ -72,6 +72,8 @@ _DEFAULT_DENY_PATTERNS = [
     "rm -R",
     "rmdir /s",
     "rd /s",
+    "rd /s/q",
+    "rd /s /q",
     "shutil.rmtree",
     # System destruction
     "mkfs*",
@@ -94,13 +96,51 @@ _DEFAULT_DENY_PATTERNS = [
     "/etc/passwd",
     "/etc/shadow",
     "crontab*",
+    # Windows — disk/volume destruction
+    "format *",
+    "diskpart",
+    "bcdedit",
+    "bootsect",
+    "vssadmin delete*",
+    "cipher /w*",
+    "fsutil*",
+    # Windows — persistence & privilege escalation
+    "schtasks*/create*",
+    "schtasks*/delete*",
+    "net user */add*",
+    "net localgroup**/add*",
+    "REG ADD *\\Run*",
+    "REG ADD *\\RunOnce*",
+    "sc create *",
+    "sc config *",
+    "New-Service *",
+    # Windows — defense evasion
+    "wevtutil cl*",
+    "Set-MpPreference *",
+    "taskkill /f *",
+    "net stop *",
+    "sc stop *",
+    # Windows — credential theft
+    "reg save hklm*",
+    "reg save hklm\\*",
+    "ntdsutil *",
+    # Windows — LOLBin / download & execute
+    "certutil -urlcache*",
+    "certutil -f *",
+    "bitsadmin /transfer*",
+    "mshta *",
+    "msiexec *",
+    "rundll32 *javascript*",
+    "regsvr32 */i:*",
 ]
 
 # Non-recursive delete — always requires approval (even if approval_mode=off)
 _DELETE_APPROVAL_PATTERNS = [
     "rm ",
     "del ",
+    "erase ",
     "rmdir ",
+    "rd ",
     "os.remove",
     "os.unlink",
     "remove-item",
@@ -120,6 +160,17 @@ _SHELL_BYPASS_PATTERNS = [
     ("| sh", "| sh"),
     ("| bash", "| bash"),
     ("eval ", "eval "),
+    ("cmd /c ", "cmd /c"),
+    ("cmd /r ", "cmd /r"),
+    ("cmd /k ", "cmd /k"),
+    ("powershell -encodedcommand ", "powershell -encodedcommand"),
+    ("powershell -enc ", "powershell -enc"),
+    ("powershell -e ", "powershell -e (encoded)"),
+    ("pwsh -encodedcommand ", "pwsh -encodedcommand"),
+    ("pwsh -enc ", "pwsh -enc"),
+    ("pwsh -e ", "pwsh -e (encoded)"),
+    ("powershell -command ", "powershell -command"),
+    ("pwsh -command ", "pwsh -command"),
 ]
 
 _exec_semaphore: Optional[asyncio.Semaphore] = None
