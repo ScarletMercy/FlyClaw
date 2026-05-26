@@ -684,11 +684,6 @@ class AgentLoop:
         # Proactive compression check
         if self._compressor.should_compress(history, self._ctx_window_tokens):
             history = await self._compressor.compress(history, self._ctx_window_tokens)
-            try:
-                from src.tools.file_tools import reset_read_dedup
-                reset_read_dedup(thread_id)
-            except Exception:
-                pass
 
         memory_summary = await self._fetch_memory_summary()
         system_text = self._build_system_prompt(state, self._get_active_tool_defs(state), memory_summary)

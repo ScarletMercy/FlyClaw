@@ -250,12 +250,6 @@ async def _run_single(
             )
         finally:
             _current_thread_id.reset(_child_tid_token)
-            try:
-                from src.tools.file_tools import _read_tracker, _read_tracker_lock
-                with _read_tracker_lock:
-                    _read_tracker.pop(child_thread_id, None)
-            except Exception:
-                pass
             for t in (monitor_task, stale_task):
                 if t:
                     t.cancel()

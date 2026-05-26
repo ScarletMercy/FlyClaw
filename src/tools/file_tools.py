@@ -13,11 +13,6 @@ logger = logging.getLogger("flyclaw.file_tools")
 _BASE_DIR = os.path.abspath(os.environ.get("FLYCLAW_WORKSPACE", "."))
 _edit_condition = threading.Condition()
 
-# --- Read dedup and loop detection ---
-_read_tracker_lock = threading.Lock()
-_read_tracker: dict[str, dict] = {}
-_DEDUP_CAP = 500
-
 
 def set_workspace(path: str):
     """Update the workspace root (called during init from config)."""
@@ -46,71 +41,6 @@ def _resolve_path(path: str) -> str:
     return str(real)
 
 
-def _get_tracker(thread_id: str) -> dict:
-    """Get or create read tracker for a thread, with capacity enforcement."""
-    task_data = _read_tracker.get(thread_id)
-    if task_data is None:
-        task_data = {
-            "last_key": None,
-            "consecutive": 0,
-            "dedup": {},
-            "dedup_hits": {},
-        }
-        _read_tracker[thread_id] = task_data
-    dedup = task_data.get("dedup")
-    if dedup is not None and len(dedup) > _DEDUP_CAP:
-        for _ in range(len(dedup) - _DEDUP_CAP):
-            dedup.pop(next(iter(dedup)), None)
-    dedup_hits = task_data.get("dedup_hits")
-    if dedup_hits is not None and len(dedup_hits) > _DEDUP_CAP:
-        for _ in range(len(dedup_hits) - _DEDUP_CAP):
-            dedup_hits.pop(next(iter(dedup_hits)), None)
-    return task_data
-
-
-def reset_read_dedup(thread_id: str | None = None) -> None:
-    """Clear read dedup cache. Called after context compression.
-
-    With thread_id: clear only that thread. Without: clear all.
-    """
-    with _read_tracker_lock:
-        if thread_id:
-            task_data = _read_tracker.get(thread_id)
-            if task_data:
-                if "dedup" in task_data:
-                    task_data["dedup"].clear()
-                if "dedup_hits" in task_data:
-                    task_data["dedup_hits"].clear()
-                task_data["consecutive"] = 0
-                task_data["last_key"] = None
-        else:
-            _read_tracker.clear()
-
-
-def _invalidate_dedup_for_path(resolved: str, thread_id: str) -> None:
-    """Remove all dedup cache entries whose resolved path matches."""
-    if not thread_id:
-        return
-    with _read_tracker_lock:
-        task_data = _read_tracker.get(thread_id)
-        if not task_data:
-            return
-        dedup = task_data.get("dedup")
-        if dedup:
-            stale_keys = [k for k in dedup if k[0] == resolved]
-            for k in stale_keys:
-                dedup.pop(k, None)
-        task_data.setdefault("dedup_hits", {})
-        dedup_hits = task_data["dedup_hits"]
-        for k in list(dedup_hits):
-            if k[0] == resolved:
-                dedup_hits.pop(k, None)
-        last = task_data.get("last_key")
-        if last is not None and len(last) >= 2 and last[1] == resolved:
-            task_data["consecutive"] = 0
-            task_data["last_key"] = None
-
-
 def read_file(path: str, offset: int = 0, limit: int = 500) -> str:
     """Read file contents. Returns specified line range.
 
@@ -124,43 +54,6 @@ def read_file(path: str, offset: int = 0, limit: int = 500) -> str:
     except ValueError as e:
         return f"Error: {e}"
 
-    from src.tools.exec import _current_thread_id
-    thread_id = _current_thread_id.get("")
-    dedup_key = (resolved, offset, limit)
-    read_key = ("read", resolved, offset, limit)
-
-    if thread_id:
-        with _read_tracker_lock:
-            task_data = _get_tracker(thread_id)
-            cached_mtime = task_data["dedup"].get(dedup_key)
-
-        if cached_mtime is not None:
-            try:
-                current_mtime = os.path.getmtime(resolved)
-                if current_mtime == cached_mtime:
-                    with _read_tracker_lock:
-                        task_data = _get_tracker(thread_id)
-                        hits = task_data["dedup_hits"].get(dedup_key, 0) + 1
-                        task_data["dedup_hits"][dedup_key] = hits
-
-                    if hits >= 2:
-                        return (
-                            f"BLOCKED: You have called read_file on "
-                            f"{path} (offset={offset}, limit={limit}) "
-                            f"{hits + 1} times and the file has NOT changed. "
-                            "The content from your earlier read_file result is "
-                            "still current. Proceed with the information you already have."
-                        )
-
-                    return (
-                        f"File unchanged since last read: {path} "
-                        f"(lines {offset + 1}-{offset + limit}). "
-                        "The content from the earlier read_file result in this "
-                        "conversation is still current — refer to that instead."
-                    )
-            except OSError:
-                pass
-
     try:
         with open(resolved, "r", encoding="utf-8") as f:
             lines = f.readlines()
@@ -173,45 +66,13 @@ def read_file(path: str, offset: int = 0, limit: int = 500) -> str:
         header = f"File: {path} (lines {offset + 1}-{min(end, total)} of {total})\n"
         if end < total:
             header += f"(showing {limit} of {total - offset} remaining lines)\n"
-        content = header + "\n".join(result)
+        return header + "\n".join(result)
     except FileNotFoundError:
         return f"Error: file not found: {path} (resolved to: {resolved}, workspace: {_BASE_DIR})"
     except PermissionError:
         return f"Error: permission denied: {path}"
     except Exception as e:
         return f"Error reading {path}: {e}"
-
-    if thread_id:
-        with _read_tracker_lock:
-            task_data = _get_tracker(thread_id)
-            task_data["dedup_hits"].pop(dedup_key, None)
-            if task_data["last_key"] == read_key:
-                task_data["consecutive"] += 1
-            else:
-                task_data["last_key"] = read_key
-                task_data["consecutive"] = 1
-            count = task_data["consecutive"]
-
-            try:
-                task_data["dedup"][dedup_key] = os.path.getmtime(resolved)
-            except OSError:
-                pass
-
-        if count >= 4:
-            return (
-                f"BLOCKED: You have read this exact file region "
-                f"({path}, offset={offset}, limit={limit}) {count} times in a row. "
-                "The content has NOT changed. STOP re-reading and proceed with your task."
-            )
-        if count >= 3:
-            content += (
-                f"\n\nWARNING: You have read this exact file region "
-                f"({path}, offset={offset}, limit={limit}) {count} times consecutively. "
-                "The content has not changed since your last read. "
-                "Use the information you already have."
-            )
-
-    return content
 
 
 def write_file(path: str, content: str) -> str:
@@ -238,8 +99,6 @@ def write_file(path: str, content: str) -> str:
                 os.fsync(f.fileno())
             _edit_condition.notify_all()
             lines = content.count("\n") + (0 if content.endswith("\n") else 1)
-            from src.tools.exec import _current_thread_id
-            _invalidate_dedup_for_path(resolved, _current_thread_id.get(""))
             return f"Written {lines} lines to {path}"
         except PermissionError:
             return f"Error: permission denied: {path}"
@@ -285,8 +144,6 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
                 f.write(new_content)
             old_lines = old_string.count("\n") + 1
             new_lines = new_string.count("\n") + 1
-            from src.tools.exec import _current_thread_id
-            _invalidate_dedup_for_path(resolved, _current_thread_id.get(""))
             return f"Replaced {old_lines} lines with {new_lines} lines in {path}"
         except Exception as e:
             return f"Error writing {path}: {e}"
