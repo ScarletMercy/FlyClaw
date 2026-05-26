@@ -52,14 +52,14 @@ class LearningLoop:
         }
 
         # 1. 会话结束记忆提取
-        if self.config.memory_store.enabled and self.config.memory_store.memory_judge_model:
+        if self.config.memory_store.enabled:
             try:
                 from src.tools.memory_tools import extract_session_end_memories
                 count = await extract_session_end_memories(
                     messages,
-                    self.config.memory_store.memory_judge_model,
-                    self.config.memory_store.memory_judge_base_url or "",
-                    self.config.memory_store.memory_judge_api_key or "",
+                    self.config.memory_store.memory_judge_model or self.config.model.name,
+                    self.config.memory_store.memory_judge_base_url or self.config.model.base_url,
+                    self.config.memory_store.memory_judge_api_key or self.config.model.api_key,
                 )
                 result["memories_extracted"] = count
                 if count > 0:

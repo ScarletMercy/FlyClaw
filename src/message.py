@@ -588,7 +588,7 @@ class MessageHandler:
                     if extracted:
                         content, category = extracted
                         await save_memory(content, category=category)
-                    elif self._container.config.memory_store.memory_judge_model:
+                    else:
                         task = asyncio.create_task(self._memory_llm_judge(
                             original_text, display_text, reply_fn,
                         ))
@@ -822,12 +822,9 @@ class MessageHandler:
         try:
             from src.tools.memory_tools import judge_memory_with_llm, save_memory
 
-            model_name = self._container.config.memory_store.memory_judge_model
+            model_name = self._container.config.memory_store.memory_judge_model or self._container.config.model.name
             base_url = self._container.config.memory_store.memory_judge_base_url or self._container.config.model.base_url
             api_key = self._container.config.memory_store.memory_judge_api_key or self._container.config.model.api_key
-
-            if not model_name or not base_url or not api_key:
-                return
 
             result = await judge_memory_with_llm(
                 user_input, ai_response, model_name, base_url, api_key,

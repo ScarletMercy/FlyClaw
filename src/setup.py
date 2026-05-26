@@ -248,7 +248,7 @@ def _configure_fallbacks(model: dict) -> None:
 
 
 def _step_model(config: dict) -> None:
-    print("  [1/7] 模型提供商")
+    print("  [1/8] 模型提供商")
     print("  ────────────────────")
 
     model = _section(config, "model")
@@ -318,7 +318,7 @@ def _step_model(config: dict) -> None:
 
 def _step_gateway(config: dict) -> None:
     print()
-    print("  [2/7] 网关配置")
+    print("  [2/8] 网关配置")
     print("  ────────────")
 
     gw = _section(config, "gateway")
@@ -334,7 +334,7 @@ def _step_gateway(config: dict) -> None:
 
 def _step_qq(config: dict) -> None:
     print()
-    print("  [3/7] QQ 机器人")
+    print("  [3/8] QQ 机器人")
     print("  ─────────────────────")
 
     channels = _section(config, "channels")
@@ -396,7 +396,7 @@ def _step_qq(config: dict) -> None:
 
 def _step_search(config: dict) -> None:
     print()
-    print("  [5/7] 网页搜索")
+    print("  [5/8] 网页搜索")
     print("  ────────────────")
 
     tools = _section(config, "tools")
@@ -412,7 +412,7 @@ def _step_search(config: dict) -> None:
 
 def _step_weixin(config: dict) -> None:
     print()
-    print("  [4/7] 微信机器人（可选）")
+    print("  [4/8] 微信机器人（可选）")
     print("  ────────────────────────────")
 
     channels = _section(config, "channels")
@@ -470,7 +470,7 @@ def _step_weixin(config: dict) -> None:
 
 def _step_media_understanding(config: dict) -> None:
     print()
-    print("  [6/7] 媒体理解（可选）")
+    print("  [6/8] 媒体理解（可选）")
     print("  ────────────────────────────")
     print("  启用后，AI 可以识别图片内容、转录音频等。")
     print("  需要多模态模型 API（如 OpenAI GPT-4o、Anthropic Claude 等）。")
@@ -487,6 +487,30 @@ def _step_media_understanding(config: dict) -> None:
         mu["api_key"] = _ask("  API 密钥", default=mu.get("api_key", "${OPENAI_API_KEY}"))
 
 
+def _step_memory_store(config: dict) -> None:
+    print()
+    print("  [7/8] 记忆存储（可选）")
+    print("  ─────────────────────────")
+    print("  启用后，AI 可以记住你的偏好、身份等信息。")
+    print("  记忆数据保存在本地。配置模型判断更精准，但有额外开销；不配置则使用规则匹配。")
+
+    ms = _section(config, "memory_store")
+
+    enabled = _ask_yn("  启用记忆存储？", default=ms.get("enabled", False))
+    ms["enabled"] = enabled
+
+    if enabled:
+        inherit = _ask_yn("  使用主模型进行记忆判断？", default=not bool(ms.get("memory_judge_model")))
+        if inherit:
+            ms["memory_judge_model"] = ""
+            ms["memory_judge_base_url"] = ""
+            ms["memory_judge_api_key"] = ""
+        else:
+            ms["memory_judge_model"] = _ask("  模型名称", default=ms.get("memory_judge_model", ""))
+            ms["memory_judge_base_url"] = _ask("  API 地址", default=ms.get("memory_judge_base_url", ""))
+            ms["memory_judge_api_key"] = _ask("  API 密钥", default=ms.get("memory_judge_api_key", ""))
+
+
 def _step_summary(config: dict) -> None:
     model = config.get("model", {})
     gw = config.get("gateway", {})
@@ -494,9 +518,10 @@ def _step_summary(config: dict) -> None:
     weixin = config.get("channels", {}).get("weixin", {})
     ws = config.get("tools", {}).get("web_search", {})
     mu = config.get("tools", {}).get("media_understanding", {})
+    ms = config.get("memory_store", {})
 
     print()
-    print("  [7/7] 配置总览")
+    print("  [8/8] 配置总览")
     print("  ─────────────")
     print(f"  模型:       {model.get('provider', '?')}/{model.get('name', '?')}")
     if model.get("base_url"):
@@ -517,6 +542,13 @@ def _step_summary(config: dict) -> None:
     print(f"  媒体理解:   {'已启用' if mu.get('enabled') else '未启用'}")
     if mu.get("enabled") and mu.get("name"):
         print(f"    模型:     {mu['name']}")
+    print(f"  记忆存储:   {'已启用' if ms.get('enabled') else '未启用'}")
+    if ms.get("enabled"):
+        judge_model = ms.get("memory_judge_model", "")
+        if judge_model:
+            print(f"    判断模型: {judge_model}")
+        else:
+            print(f"    判断模型: 继承主模型")
 
 
 # ── Main ──
@@ -540,6 +572,7 @@ def run_wizard():
     _step_weixin(config)
     _step_search(config)
     _step_media_understanding(config)
+    _step_memory_store(config)
     _step_summary(config)
 
     save = _ask_yn("  保存配置？")

@@ -844,7 +844,7 @@ def register_dashboard(app: FastAPI, application):
             "memory_judge_model": getattr(cfg.memory_store, "memory_judge_model", ""),
             "curated_memory_sync": True,
             "skill_curation": True,
-            "session_end_extraction": getattr(cfg.memory_store, "enabled", False) and bool(getattr(cfg.memory_store, "memory_judge_model", "")),
+            "session_end_extraction": getattr(cfg.memory_store, "enabled", False),
         }
 
     @router.post("/api/dashboard/learning/trigger")
