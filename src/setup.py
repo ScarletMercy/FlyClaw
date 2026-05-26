@@ -18,12 +18,6 @@ import yaml
 CONFIG_PATH = Path.home() / ".flyclaw" / "config.yaml"
 
 PRESETS = {
-    "anthropic": {
-        "provider": "anthropic",
-        "name": "claude-sonnet-4-6",
-        "env_key": "ANTHROPIC_API_KEY",
-        "base_url": None,
-    },
     "openai": {
         "provider": "openai",
         "name": "gpt-4o",
@@ -76,7 +70,6 @@ PRESETS = {
 }
 
 PRESET_LABELS = {
-    "anthropic": "Anthropic (Claude)",
     "openai": "OpenAI (GPT)",
     "deepseek": "DeepSeek",
     "groq": "Groq (Llama)",
@@ -256,7 +249,7 @@ def _step_model(config: dict) -> None:
     if _ask_skip("模型", model, "provider", "name", "api_key"):
         _configure_fallbacks(model)
         return
-    existing_provider = model.get("provider", "anthropic")
+    existing_provider = model.get("provider", "openai")
 
     current_preset = "custom"
     for key, preset in PRESETS.items():
@@ -311,7 +304,7 @@ def _step_model(config: dict) -> None:
                 if not _ask_yn("  是否仍然使用此 API Key？", default=True):
                     model["api_key"] = _ask_required("  重新输入 API 密钥", default="")
 
-    model["temperature"] = float(_ask("  温度参数", default=str(model.get("temperature", 0.0))))
+    model.setdefault("temperature", 1.0)
 
     _configure_fallbacks(model)
 
@@ -391,7 +384,7 @@ def _step_qq(config: dict) -> None:
             "  群聊策略", ["allowlist", "open", "disabled"], default=qq.get("group_policy", "allowlist")
         )
         qq["require_mention"] = _ask_yn("  群聊中需要 @机器人？", default=qq.get("require_mention", True))
-        qq["markdown_support"] = _ask_yn("  启用 Markdown 支持？", default=qq.get("markdown_support", False))
+        qq["markdown_support"] = _ask_yn("  启用 Markdown 支持？", default=qq.get("markdown_support", True))
 
 
 def _step_search(config: dict) -> None:
@@ -473,7 +466,7 @@ def _step_media_understanding(config: dict) -> None:
     print("  [6/8] 媒体理解（可选）")
     print("  ────────────────────────────")
     print("  启用后，AI 可以识别图片内容、转录音频等。")
-    print("  需要多模态模型 API（如 OpenAI GPT-4o、Anthropic Claude 等）。")
+    print("  需要多模态模型 API（如 OpenAI GPT-4o 等）。")
 
     tools = _section(config, "tools")
     mu = _section(tools, "media_understanding")

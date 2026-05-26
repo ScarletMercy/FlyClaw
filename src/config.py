@@ -50,9 +50,9 @@ class GatewayConfig(BaseModel):
 
 
 class ModelConfig(BaseModel):
-    provider: str = "anthropic"
-    name: str = "claude-sonnet-4-6"
-    temperature: float = 0.0
+    provider: str = "openai"
+    name: str = "gpt-4o"
+    temperature: float = 1.0
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     context_window: int = 1000000

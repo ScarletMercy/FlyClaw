@@ -23,7 +23,7 @@ class DaemonManager:
     def __init__(self):
         self._platform = self.get_platform()
         self._python_path = sys.executable
-        self._project_dir = Path(__file__).parent.parent.resolve()
+        self._project_dir = Path.home() / ".flyclaw"
         self._current_user = getpass.getuser()
 
     def get_platform(self) -> str:

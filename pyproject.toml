@@ -58,6 +58,9 @@ build-backend = "setuptools.build_meta"
 where = ["."]
 include = ["src*"]
 
+[tool.setuptools.package-data]
+"src.dashboard" = ["templates/**/*"]
+
 [tool.uv.sources]
 
 [project.scripts]
