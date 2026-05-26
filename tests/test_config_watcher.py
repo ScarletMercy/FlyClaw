@@ -22,13 +22,13 @@ class TestDiffEngine:
 
     def test_model_name_change(self):
         a = AppConfig()
-        b = AppConfig(model=ModelConfig(name="gpt-4o"))
+        b = AppConfig(model=ModelConfig(name="claude-sonnet-4-6"))
         changes = DiffEngine.diff(a, b)
         paths = [c.path for c in changes]
         assert "model.name" in paths
         change = next(c for c in changes if c.path == "model.name")
-        assert change.old_value == "claude-sonnet-4-6"
-        assert change.new_value == "gpt-4o"
+        assert change.old_value == "gpt-4o"
+        assert change.new_value == "claude-sonnet-4-6"
 
     def test_nested_change(self):
         a = AppConfig()

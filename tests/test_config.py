@@ -15,7 +15,7 @@ class TestLoadConfig:
         cfg = load_config(tmp_path / "nonexistent.yaml")
         assert cfg.gateway.host == "127.0.0.1"
         assert cfg.gateway.port == 18080
-        assert cfg.model.provider == "anthropic"
+        assert cfg.model.provider == "openai"
         assert cfg.agents.max_tool_rounds == 100
 
     def test_yaml_config(self, tmp_path):

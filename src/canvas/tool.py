@@ -98,7 +98,7 @@ async def canvas_eval(java_script: str) -> str:
     return f"Canvas eval executed ({len(java_script)} chars)"
 
 
-def get_canvas_tools() -> list[ToolDef]:
+def get_tools() -> list[ToolDef]:
     return [
         ToolDef.from_function(canvas_render),
         ToolDef.from_function(canvas_navigate),

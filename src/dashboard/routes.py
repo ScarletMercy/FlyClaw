@@ -178,6 +178,8 @@ def register_dashboard(app: FastAPI, application):
             _app_ref.state_store.delete(thread_id)
             if _app_ref.session_tracker:
                 _app_ref.session_tracker.remove(thread_id)
+            if _app_ref.agent_loop:
+                _app_ref.agent_loop.invalidate_memory_cache()
             return {"ok": True}
         except Exception as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)

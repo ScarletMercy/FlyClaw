@@ -207,6 +207,8 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 if state:
                     state.messages = []
                     await container.state_store.save(thread_id, state)
+                if container.agent_loop:
+                    container.agent_loop.invalidate_memory_cache()
                 return "会话已重置。" if zh else "Session reset."
             except Exception as e:
                 return f"重置失败: {e}" if zh else f"Reset failed: {e}"
@@ -287,6 +289,8 @@ def register_builtin_commands(dispatcher, container, tools, skills):
             return "无法确定会话。" if zh else "Cannot determine session."
         user_hash = user_key.split(":")[-1] if user_key else "unknown"
         sid = container.session_registry.new_session(user_key, channel_prefix, user_hash)
+        if container.agent_loop:
+            container.agent_loop.invalidate_memory_cache()
         if zh:
             return f"新会话已创建: {sid}\n发送消息即可开始。/old 查看会话列表，/re <id> 切换会话。"
         return f"New session started: {sid}\nSend messages to begin. Use /old to list sessions, /re <id> to switch."
@@ -360,6 +364,8 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 return "用法: /re <会话ID>\n使用 /old 查看会话列表。"
             return "Usage: /re <session_id>\nUse /old to list sessions."
         tid = container.session_registry.switch_to(user_key, session_id)
+        if tid and container.agent_loop:
+            container.agent_loop.invalidate_memory_cache()
         if tid == "default":
             return "已切换回默认会话。" if zh else "Switched back to default session."
         if tid:

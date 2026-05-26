@@ -67,20 +67,6 @@ PLATFORM_HINTS: dict[str, str] = {
     ),
 }
 
-SESSION_SEARCH_GUIDANCE = (
-    "当用户提及过去的对话内容，或需要跨会话回忆时，用 session_search 检索历史记录，"
-    "不要让用户重复。"
-)
-
-SKILLS_GUIDANCE = (
-    "完成复杂任务（5+ 次工具调用）、修复棘手错误、发现非显而易见的工作流后，"
-    "用 skill_manage(action=\"create\") 保存为技能以便下次复用。\n"
-    "使用技能时发现过时、不完整或错误，立即用 skill_manage(action=\"patch\") 修补，"
-    "不要等到被要求才改。未维护的技能会成为负债。\n"
-    "用户纠正了你的风格、格式、工作流时，这些偏好应嵌入到相关技能中——"
-    "而不仅是保存在记忆里。技能捕获'如何为该用户完成此类任务'。"
-)
-
 
 def _load_soul_md() -> str:
     soul_path = Path.home() / ".flyclaw" / "SOUL.md"
@@ -141,43 +127,25 @@ def _build_tooling_rules() -> list[str]:
         "优先使用工具调用，而非让用户手动执行 CLI 命令。",
         "不要尝试通过 exec_command 执行 flyclaw、openclaw 等命令来操作平台内部功能（定时任务、记忆、会话等），这些都有对应的工具。",
         "",
+        "## 工具使用约定",
+        "- edit_file 前必须先 read_file，需要精确匹配 old_string",
+        "- 优先使用 file_tools（read_file/write_file/edit_file/list_dir/search_files）而非 exec_command",
+        "- 在回复文本中用 <media>path</media> 标签包裹本地文件路径，系统自动识别类型并发送",
+        "- 浏览器自动化：先 browser_navigate 打开网页，再 browser_snapshot 获取元素引用（@e1, @e2...），操作失败时重新 snapshot",
+        "- 当用户提及过去的对话内容，用 session_search 检索历史记录，不要让用户重复",
+        "- 完成复杂任务（5+ 次工具调用）后，主动用 skill_manage(action=\"create\") 保存为技能；发现技能过时立即用 patch 修补",
+        "",
     ]
 
 
 def _build_tool_guidance(tools: list) -> list[str]:
-    tool_names = {t.name for t in tools}
-    lines: list[str] = []
-
-    if "session_search" in tool_names:
-        lines += ["## 会话搜索", SESSION_SEARCH_GUIDANCE, ""]
-
-    if "skills_list" in tool_names:
-        lines += ["## 技能维护", SKILLS_GUIDANCE, ""]
-
-    if tool_names & {"edit_file", "read_file", "write_file"}:
-        lines += [
-            "## 文件操作",
-            "- edit_file 前必须先 read_file，需要精确匹配 old_string",
-            "- 优先使用 file_tools（read_file/write_file/edit_file/list_dir/search_files）而非 exec_command",
-            "",
-        ]
-
-    if tool_names & {"qq_send_image", "qq_send_file", "send_voice"}:
-        lines += [
-            "## 媒体发送",
-            "在回复文本中用 <media>path</media> 标签包裹本地文件路径，系统自动识别类型并发送。",
-            "",
-        ]
-
-    if "browser_navigate" in tool_names:
-        lines += [
-            "## 浏览器自动化",
-            "- 先 browser_navigate 打开网页，再 browser_snapshot 获取元素引用（@e1, @e2...）",
-            "- 通过引用操作：browser_click(\"@e1\")、browser_type(\"@e2\", \"text\")",
-            "- 操作失败时重新 browser_snapshot 获取最新状态",
-            "",
-        ]
-
+    if not tools:
+        return []
+    lines = ["## 可用工具", ""]
+    for t in tools:
+        desc = t.description.split("\n")[0].strip()
+        lines.append(f"{t.name}：{desc}")
+    lines.append("")
     return lines
 
 

@@ -272,6 +272,9 @@ class AgentLoop:
     def get_store(self) -> StateStore:
         return self._store
 
+    def invalidate_memory_cache(self) -> None:
+        self._memory_summary_ts = 0
+
     def is_thread_busy(self, thread_id: str) -> bool:
         lock = self._store._locks.get(thread_id)
         return lock is not None and lock.locked()

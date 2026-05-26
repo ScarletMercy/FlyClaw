@@ -178,7 +178,14 @@ def cmd_model(args):
     sub = getattr(args, "model_command", None)
 
     # flyclaw model list
-    if sub == "list" or sub is None:
+    if sub == "list":
+        print(f"模型列表 ({len(model_list)}):")
+        for i, m in enumerate(model_list):
+            key_status = "(有密钥)" if m.get("api_key") else "(无密钥)"
+            print(f"  [{i}] {m['provider']}/{m['name']} {key_status}")
+        return 0
+
+    if sub is None:
         print(f"模型列表 ({len(model_list)}):")
         for i, m in enumerate(model_list):
             key_status = "(有密钥)" if m.get("api_key") else "(无密钥)"

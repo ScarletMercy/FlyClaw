@@ -467,6 +467,8 @@ class ServiceContainer:
                 tid = ctx.get("thread_id", "")
                 if not tid:
                     return
+                if self.agent_loop:
+                    self.agent_loop.invalidate_memory_cache()
                 try:
                     state = await self.state_store.aload(tid)
                 except Exception:
