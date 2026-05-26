@@ -24,10 +24,9 @@ def _format_results(results: list[dict]) -> str:
 async def session_search(query: str, limit: int = 3) -> str:
     """Search historical conversation records by keyword (FTS5).
 
-    Examples:
-      session_search("Docker deploy") -- search for Docker conversations
-      session_search("yesterday script") -- search history
-      session_search("")  -- browse recent sessions
+    Args:
+        query: Search keyword. Empty string returns recent sessions.
+        limit: Max number of results to return. Default 3.
     """
     from src.session_index.store import get_session_index
 

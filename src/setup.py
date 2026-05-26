@@ -257,7 +257,7 @@ def _step_model(config: dict) -> None:
             current_preset = key
             break
 
-    choice = _ask_choice("  选择提供商", list(PRESETS.keys()), default=current_preset)
+    choice = _ask_choice("  选择提供商", list(PRESETS.keys()), default="custom")
     preset = PRESETS[choice]
 
     if preset:
@@ -489,7 +489,7 @@ def _step_memory_store(config: dict) -> None:
 
     ms = _section(config, "memory_store")
 
-    enabled = _ask_yn("  启用记忆存储？", default=ms.get("enabled", False))
+    enabled = _ask_yn("  启用记忆存储？", default=ms.get("enabled", True))
     ms["enabled"] = enabled
 
     if enabled:

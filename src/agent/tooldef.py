@@ -91,11 +91,46 @@ def _extract_description(fn: Callable) -> str:
     return " ".join(desc_parts) if desc_parts else lines[0].strip()
 
 
+def _parse_args_doc(fn: Callable) -> dict[str, str]:
+    doc = fn.__doc__
+    if not doc:
+        return {}
+    parts = doc.split("Args:")
+    if len(parts) < 2:
+        return {}
+    tail = parts[1]
+    for stop in ("Returns:", "Raises:", "Example"):
+        tail = tail.split(stop)[0]
+    sig = inspect.signature(fn)
+    valid_names = frozenset(p for p in sig.parameters if p not in ("self", "cls"))
+    result: dict[str, str] = {}
+    current_name = ""
+    current_desc: list[str] = []
+    for raw_line in tail.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        colon_pos = stripped.find(":")
+        candidate = stripped[:colon_pos].replace("_", "").replace("-", "") if colon_pos > 0 else ""
+        if candidate and candidate.isalnum() and stripped[:colon_pos].strip() in valid_names:
+            if current_name:
+                result[current_name] = " ".join(current_desc).strip()
+            current_name = stripped[:colon_pos].strip()
+            current_desc = [stripped[colon_pos + 1:].strip()]
+        elif current_name:
+            current_desc.append(stripped)
+    if current_name:
+        result[current_name] = " ".join(current_desc).strip()
+    return result
+
+
 def _extract_parameters(fn: Callable) -> dict[str, Any]:
     try:
         hints = get_type_hints(fn, include_extras=True)
     except Exception:
         hints = {}
+
+    arg_docs = _parse_args_doc(fn)
 
     sig = inspect.signature(fn)
     properties: dict[str, Any] = {}
@@ -121,6 +156,9 @@ def _extract_parameters(fn: Callable) -> dict[str, Any]:
                 prop["default"] = param.default
             elif isinstance(param.default, (int, float, str)):
                 prop["default"] = param.default
+
+        if param_name in arg_docs:
+            prop["description"] = arg_docs[param_name]
 
         properties[param_name] = prop
 
