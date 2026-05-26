@@ -211,6 +211,8 @@ class AgentLoop:
 
         self._guardrails = ToolLoopGuardrails()
 
+        self._auto_deny_approval: bool = False
+
         self._iters_since_skill = 0
         self._skill_nudge_interval = 0
         if config and hasattr(config, "skills"):
@@ -975,6 +977,13 @@ class AgentLoop:
             args_preview=args_preview,
         )
 
+        from src.tools.exec import _current_agent_context
+        _ctx_token = _current_agent_context.set({
+            "sender_id": state.sender_id,
+            "chat_id": state.chat_id,
+            "channel": state.channel,
+            "parent_thread_id": thread_id,
+        })
         try:
             result = await tool_def.execute(args)
             duration_ms = (_time.monotonic() - start) * 1000
@@ -1029,6 +1038,8 @@ class AgentLoop:
                 channel=getattr(state, 'channel', ''),
             )
             return f"[error] {type(e).__name__}: {e}"
+        finally:
+            _current_agent_context.reset(_ctx_token)
 
     def _should_parallelize(self, tool_calls: list[Any]) -> bool:
         if len(tool_calls) <= 1:
@@ -1093,6 +1104,12 @@ class AgentLoop:
 
     async def _handle_approval(self, error: Exception, tc: Any, state: AgentState, thread_id: str) -> str:
         """Handle approval-needed error by saving state and raising ApprovalPending."""
+        if getattr(self, '_auto_deny_approval', False):
+            tool_name = getattr(error, "tool_name", "exec_command")
+            cmd = getattr(error, "command_preview", "") or getattr(error, "command", "")
+            logger.info("Auto-denying approval in sub-agent for %s: %s", tool_name, cmd[:80])
+            return "[denied] 此操作需要用户审批，子代理模式下自动拒绝。请使用其他方式完成任务。"
+
         from src.tools.approval import get_approval_manager
         mgr = get_approval_manager()
         cmd = getattr(error, "command_preview", "") or getattr(error, "command", "")

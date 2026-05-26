@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Optional
 
@@ -10,15 +11,52 @@ from src.agent.tooldef import ToolDef
 
 logger = logging.getLogger("flyclaw.agents.delegate")
 
+_HEARTBEAT_INTERVAL = 30
+_HEARTBEAT_STALE_IDLE_SECONDS = 450
+
 
 def _register_builtin_tools(config) -> list[ToolDef]:
-    from src.tools.registry import get_tool_registry
-    return list(get_tool_registry().collect())
+    from src._container import get_container
+    container = get_container()
+    if container.agent_loop and container.agent_loop._tools:
+        return list(container.agent_loop._tools)
+    return []
 
 
 def _filter_tools(tools: list[ToolDef], config) -> list[ToolDef]:
     blocked = set(config.delegation.blocked_tools)
     return [t for t in tools if t.name not in blocked]
+
+
+def _resolve_child_timeout(
+    explicit_timeout: int | None,
+    config,
+) -> float:
+    """Resolve effective child timeout with priority chain and guards.
+
+    Priority: explicit param > env var > config value > hardcoded default.
+    Floor: child_timeout_floor (default 30s).
+    Ceiling: max(default * 3, 1800).
+    """
+    default_timeout = float(config.delegation.child_timeout_seconds)
+    floor = float(getattr(config.delegation, "child_timeout_floor", 30))
+
+    # Step 1: determine raw value from priority chain
+    if explicit_timeout and explicit_timeout > 0:
+        raw = float(explicit_timeout)
+    else:
+        env_val = os.getenv("FLYCLAW_CHILD_TIMEOUT_SECONDS")
+        if env_val:
+            try:
+                raw = float(env_val)
+            except (TypeError, ValueError):
+                raw = default_timeout
+        else:
+            raw = default_timeout
+
+    # Step 2: apply floor and ceiling
+    ceiling = max(default_timeout * 3, 1800)
+    return max(floor, min(raw, ceiling))
 
 
 async def _run_single(
@@ -28,12 +66,14 @@ async def _run_single(
     config,
     run_registry,
     depth: int,
+    timeout: int | None = None,
 ) -> dict:
     """Run a single sub-agent. Returns result dict."""
     from src.agents.registry import get_agent_registry
     from src.agent.state import AgentState, MemoryStateStore
     from src.agent.loop import AgentLoop
     from src.agent.client import create_chain
+    from src.tools.exec import _current_agent_context
 
     registry = get_agent_registry()
     agent_config = registry.get(agent_name)
@@ -46,14 +86,17 @@ async def _run_single(
             "duration_seconds": 0,
         }
 
+    parent_ctx = _current_agent_context.get({})
+    parent_thread_id = parent_ctx.get("parent_thread_id", "")
+
     run_id = None
     agent_loop = None
     start = time.monotonic()
+    effective_timeout = _resolve_child_timeout(timeout, config)
 
     try:
         run_id = await run_registry.start_run(agent_name, task, depth=depth)
 
-        # Progress: child started
         try:
             from src.events import emit_async
             await emit_async("delegate.child_started", agent_name=agent_name, task=task[:100], run_id=run_id)
@@ -78,13 +121,26 @@ async def _run_single(
         else:
             client = create_chain(config)
 
+        skills_prompt = ""
+        try:
+            from src._container import get_container
+            container = get_container()
+            if container.agent_loop:
+                skills_prompt = container.agent_loop._skills_prompt
+        except Exception:
+            pass
+
         state_store = MemoryStateStore()
         agent_loop = AgentLoop(
             client=client,
             tools=all_tools,
             state_store=state_store,
             config=config,
+            skills_prompt=skills_prompt,
+            context_window_tokens=config.model.context_window,
         )
+
+        agent_loop._auto_deny_approval = True
 
         prompt = agent_config.system_prompt
         if context:
@@ -93,12 +149,14 @@ async def _run_single(
         state = AgentState(
             messages=[{"role": "user", "content": task}],
             system_prompt=prompt,
+            sender_id=parent_ctx.get("sender_id", ""),
+            chat_id=parent_ctx.get("chat_id", ""),
+            channel=parent_ctx.get("channel", ""),
         )
 
         max_rounds = config.delegation.max_iterations
-        timeout = config.delegation.child_timeout_seconds
+        child_thread_id = f"delegate:{agent_name}:{depth}"
 
-        # Check for interrupt before starting
         if run_id and run_registry.is_interrupt_requested(run_id):
             await run_registry.complete_run(run_id, result="[interrupted]")
             return {
@@ -108,16 +166,130 @@ async def _run_single(
                 "duration_seconds": 0,
             }
 
-        result_state = await asyncio.wait_for(
-            agent_loop.run(state, f"delegate:{agent_name}:{depth}", max_rounds=max_rounds),
-            timeout=timeout,
-        )
+        # Background monitors
+        monitor_task: asyncio.Task | None = None
+        if run_id:
+            async def _monitor(
+                _run_id: str,
+                _loop: AgentLoop,
+                _child_tid: str,
+                _interval: float = 1.5,
+            ):
+                last_touch = time.monotonic()
+                while True:
+                    await asyncio.sleep(_interval)
+                    now = time.monotonic()
 
+                    # Check interrupt
+                    if run_registry.is_interrupt_requested(_run_id):
+                        flag = _loop._store.get_interrupt_flag(_child_tid)
+                        flag.interrupt("Interrupted by parent")
+                        return
+
+                    # Heartbeat: touch run activity timestamp every HEARTBEAT_INTERVAL
+                    if now - last_touch >= _HEARTBEAT_INTERVAL:
+                        run_registry.touch(_run_id)
+                        last_touch = now
+
+            monitor_task = asyncio.create_task(
+                _monitor(run_id, agent_loop, child_thread_id)
+            )
+
+        # Stale detection heartbeat
+        stale_task: asyncio.Task | None = None
+        if run_id:
+            async def _stale_detector(_run_id: str):
+                while True:
+                    await asyncio.sleep(_HEARTBEAT_INTERVAL)
+                    run = run_registry._runs.get(_run_id)
+                    if not run or run["status"] != "running":
+                        return
+                    last = run.get("last_activity_at") or run["started_at"]
+                    idle = time.time() - last
+                    if idle > _HEARTBEAT_STALE_IDLE_SECONDS:
+                        logger.warning(
+                            "Sub-agent run '%s' appears stale: no activity for %.0fs",
+                            _run_id, idle,
+                        )
+
+            stale_task = asyncio.create_task(_stale_detector(run_id))
+
+        # Forward key tool events at delegation layer
+        event_unsubs: list = []
+        if parent_thread_id:
+            from src.events import subscribe_async
+
+            async def _make_forwarder(child_tid: str, parent_tid: str):
+                async def _forward(event: str, **kwargs):
+                    if kwargs.get("thread_id") != child_tid:
+                        return
+                    from src.events import emit_async
+                    await emit_async(event, **{**kwargs, "thread_id": parent_tid, "_delegated": True})
+                return _forward
+
+            for evt in ("tool.exec_started", "tool.exec_completed", "tool.exec_failed"):
+                fwd = await _make_forwarder(child_thread_id, parent_thread_id)
+                unsub = subscribe_async(evt, fwd)
+                event_unsubs.append(unsub)
+
+        from src.tools.exec import _current_thread_id
+        _child_tid_token = _current_thread_id.set(child_thread_id)
+        try:
+            result_state = await asyncio.wait_for(
+                agent_loop.run(state, child_thread_id, max_rounds=max_rounds),
+                timeout=effective_timeout,
+            )
+        finally:
+            _current_thread_id.reset(_child_tid_token)
+            try:
+                from src.tools.file_tools import _read_tracker, _read_tracker_lock
+                with _read_tracker_lock:
+                    _read_tracker.pop(child_thread_id, None)
+            except Exception:
+                pass
+            for t in (monitor_task, stale_task):
+                if t:
+                    t.cancel()
+                    try:
+                        await t
+                    except (asyncio.CancelledError, Exception):
+                        pass
+            for unsub in event_unsubs:
+                try:
+                    unsub()
+                except Exception:
+                    pass
+
+        # Result extraction with fallbacks
         result_text = ""
         for msg in reversed(result_state.messages):
             if msg.get("role") == "assistant" and msg.get("content"):
                 result_text = msg["content"]
                 break
+
+        if not result_text:
+            for msg in reversed(result_state.messages):
+                if msg.get("role") == "assistant":
+                    for tc in msg.get("tool_calls", []):
+                        tc_id = tc.get("id", "")
+                        if tc_id:
+                            for m in result_state.messages:
+                                if m.get("role") == "tool" and m.get("tool_call_id") == tc_id:
+                                    content = m.get("content", "")
+                                    if content and not content.startswith("[error]"):
+                                        result_text = content[:2000]
+                                        break
+                            if result_text:
+                                break
+                    break
+
+        if not result_text:
+            tool_parts = []
+            for msg in result_state.messages:
+                if msg.get("role") == "tool" and msg.get("content"):
+                    tool_parts.append(msg["content"][:500])
+            if tool_parts:
+                result_text = "[No final summary] Tool results:\n" + "\n---\n".join(tool_parts[-3:])
 
         duration = round(time.monotonic() - start, 2)
         await run_registry.complete_run(run_id, result=result_text[:500])
@@ -132,12 +304,12 @@ async def _run_single(
     except asyncio.TimeoutError:
         duration = round(time.monotonic() - start, 2)
         if run_id:
-            await run_registry.fail_run(run_id, error=f"Timeout after {timeout}s")
-        logger.warning("Sub-agent '%s' timed out after %ds", agent_name, timeout)
+            await run_registry.timeout_run(run_id, error=f"Timeout after {effective_timeout}s")
+        logger.warning("Sub-agent '%s' timed out after %.0fs", agent_name, effective_timeout)
         return {
             "agent_name": agent_name,
             "status": "timeout",
-            "result": f"Agent '{agent_name}' exceeded {timeout}s limit.",
+            "result": f"Agent '{agent_name}' exceeded {effective_timeout:.0f}s limit.",
             "duration_seconds": duration,
         }
 
@@ -161,13 +333,15 @@ async def _run_single(
             pass
 
 
-async def delegate_task(agent_name: str, task: str, context: str = "") -> str:
+async def delegate_task(agent_name: str, task: str, context: str = "",
+                       timeout: int | None = None) -> str:
     """Delegate a task to a specialized sub-agent. Use for tasks requiring specific expertise.
 
     Args:
         agent_name: Name of the sub-agent (e.g. "research", "coder", "reviewer").
         task: Clear description of the task to delegate.
         context: Optional background information for the sub-agent.
+        timeout: Optional timeout in seconds for the sub-agent run.
     """
     from src.agents.run_registry import get_current_depth, set_current_depth, get_run_registry
     from src.config import load_config
@@ -184,7 +358,7 @@ async def delegate_task(agent_name: str, task: str, context: str = "") -> str:
     run_registry = get_run_registry()
     set_current_depth(current_depth + 1)
     try:
-        result = await _run_single(agent_name, task, context, config, run_registry, current_depth + 1)
+        result = await _run_single(agent_name, task, context, config, run_registry, current_depth + 1, timeout=timeout)
         if result["status"] == "completed":
             return result["result"]
         return f"[{result['status']}] {result['result']}"
@@ -205,7 +379,6 @@ async def delegate_batch(tasks: str) -> str:
     if not config.delegation.enabled:
         return "Delegation is disabled in config."
 
-    # Parse tasks
     try:
         parsed = json.loads(tasks) if isinstance(tasks, str) else tasks
     except json.JSONDecodeError as e:
@@ -218,7 +391,6 @@ async def delegate_batch(tasks: str) -> str:
     if len(parsed) > max_concurrent:
         return f"[error] Too many tasks ({len(parsed)}). Max concurrent: {max_concurrent}."
 
-    # Validate each task
     for i, t in enumerate(parsed):
         if not isinstance(t, dict) or not t.get("agent_name") or not t.get("task"):
             return f"[error] Task {i} must have 'agent_name' and 'task' fields."
@@ -241,6 +413,7 @@ async def delegate_batch(tasks: str) -> str:
                 config,
                 run_registry,
                 current_depth + 1,
+                timeout=t.get("timeout"),
             )
             for t in parsed
         ]
@@ -269,12 +442,12 @@ async def delegate_batch(tasks: str) -> str:
 
 
 async def _delegate_unified(agent_name: str = "", task: str = "", context: str = "",
-                            tasks: str = "") -> str:
+                            tasks: str = "", timeout: int | None = None) -> str:
     if tasks:
         return await delegate_batch(tasks)
     if not agent_name or not task:
         return "[error] Provide either (agent_name + task) for single delegation or tasks JSON array for batch."
-    return await delegate_task(agent_name, task, context)
+    return await delegate_task(agent_name, task, context, timeout=timeout)
 
 
 def get_tools() -> list[ToolDef]:
@@ -305,6 +478,10 @@ def get_tools() -> list[ToolDef]:
                     "tasks": {
                         "type": "string",
                         "description": "批量任务的 JSON 数组（批量模式）",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "超时时间（秒），不传则使用全局默认值（当前600秒）。复杂任务可适当增大。环境变量 FLYCLAW_CHILD_TIMEOUT_SECONDS 可覆盖默认值。",
                     },
                 },
                 "required": [],

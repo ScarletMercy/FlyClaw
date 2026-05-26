@@ -28,6 +28,7 @@ class SubagentRun(TypedDict):
     completed_at: Optional[float]
     result: Optional[str]
     interrupt_requested: bool
+    last_activity_at: Optional[float]
 
 
 _current_depth: ContextVar[int] = ContextVar("_current_depth", default=0)
@@ -60,6 +61,7 @@ class RunRegistry:
             "completed_at": None,
             "result": None,
             "interrupt_requested": False,
+            "last_activity_at": time.time(),
         }
         async with self._lock:
             self._runs[run_id] = run
@@ -82,6 +84,19 @@ class RunRegistry:
                 run["status"] = "error"
                 run["completed_at"] = time.time()
                 run["result"] = error[:500] if error else None
+
+    async def timeout_run(self, run_id: str, error: str = "") -> None:
+        async with self._lock:
+            run = self._runs.get(run_id)
+            if run:
+                run["status"] = "timeout"
+                run["completed_at"] = time.time()
+                run["result"] = error[:500] if error else None
+
+    def touch(self, run_id: str) -> None:
+        run = self._runs.get(run_id)
+        if run and run["status"] == "running":
+            run["last_activity_at"] = time.time()
 
     async def list_runs(self, agent_name: Optional[str] = None, limit: int = 20) -> list[dict]:
         async with self._lock:
@@ -111,6 +126,8 @@ class RunRegistry:
                         "status": r["status"],
                         "started_at": r["started_at"],
                         "elapsed": round(now - r["started_at"], 1),
+                        "last_activity_at": r.get("last_activity_at"),
+                        "idle_seconds": round(now - (r.get("last_activity_at") or r["started_at"]), 1),
                         "interrupt_requested": r.get("interrupt_requested", False),
                     })
             return sorted(active, key=lambda x: x["started_at"])

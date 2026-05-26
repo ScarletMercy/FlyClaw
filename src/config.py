@@ -269,8 +269,9 @@ class DelegationConfig(BaseModel):
     """Sub-agent delegation configuration."""
     enabled: bool = True
     max_concurrent: int = 3
-    child_timeout_seconds: int = 300
-    max_iterations: int = 10
+    child_timeout_seconds: int = 600
+    child_timeout_floor: int = 30
+    max_iterations: int = 50
     blocked_tools: list[str] = Field(
         default_factory=lambda: ["delegate_task", "delegate_batch"]
     )

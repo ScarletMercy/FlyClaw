@@ -15,6 +15,10 @@ logger = logging.getLogger("flyclaw.exec")
 
 _current_thread_id: ContextVar[str] = ContextVar("_current_thread_id", default="")
 
+_current_agent_context: ContextVar[dict] = ContextVar(
+    "_current_agent_context", default={}
+)
+
 _cached_config = None
 
 
