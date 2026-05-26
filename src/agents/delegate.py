@@ -15,7 +15,7 @@ _HEARTBEAT_INTERVAL = 30
 _HEARTBEAT_STALE_IDLE_SECONDS = 450
 
 _ESSENTIAL_TOOLS = frozenset([
-    "write_file", "edit_file", "read_file", "search_files", "list_dir",
+    "write_file", "edit_file", "read_file", "grep", "glob", "list_dir",
 ])
 
 

@@ -81,7 +81,7 @@ class ApprovalNeededError(Exception):
         self.denylisted = denylisted
         self.timeout = timeout
         self.auto_deny = auto_deny
-        super().__init__(f"Approval needed for: {command[:100]}")
+        super().__init__(f"需要审批: {command[:100]}")
 
 
 _DEFAULT_DENY_PATTERNS = [
@@ -464,7 +464,7 @@ async def exec_command(
 
         allowed = [workspace.resolve()] + [Path(d).expanduser().resolve() for d in sandbox_allowed_dirs]
         if not any(str(wd).startswith(str(a)) for a in allowed):
-            raise ToolExecutionError(f"Working directory not allowed by sandbox: {wd}")
+            raise ToolExecutionError(f"当前为沙盒模式，无法访问工作目录之外的路径：{wd}（允许范围：{workspace}）")
 
     # Background mode: spawn via ProcessRegistry and return immediately
     if background:

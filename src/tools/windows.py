@@ -30,7 +30,11 @@ else:
 
 
 def _screenshot_dir() -> str:
-    d = Path.home() / ".flyclaw" / "data" / "screenshots"
+    from src.config import load_config
+
+    cfg = load_config()
+    workspace = Path(cfg.agents.workspace).expanduser().resolve()
+    d = workspace / "screenshots"
     d.mkdir(parents=True, exist_ok=True)
     return str(d)
 

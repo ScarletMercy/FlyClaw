@@ -250,7 +250,7 @@ class WindowsUseConfig(BaseModel):
     """Windows desktop automation via pyautogui."""
 
     enabled: bool = True
-    screenshot_dir: str = "~/.flyclaw/data/screenshots"
+    screenshot_dir: str = ""
     default_timeout: float = 5.0
     ocr_lang: str = "ch"
 

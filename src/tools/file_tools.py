@@ -37,7 +37,7 @@ def _resolve_path(path: str) -> str:
     try:
         real.relative_to(base)
     except ValueError:
-        raise ValueError(f"Path '{path}' is outside the workspace")
+        raise ValueError(f"当前为沙盒模式，无法访问工作目录之外的路径：{path}（允许范围：{_BASE_DIR}）")
     return str(real)
 
 
@@ -187,26 +187,65 @@ def list_dir(path: str = ".") -> str:
         return f"Error listing {path}: {e}"
 
 
-def search_files(mode: str = "content", pattern: str = "", path: str = ".",
-                  file_pattern: str = "*") -> str:
-    """Search files by content (regex) or by name (glob pattern).
+_EXCLUDED_DIRS = frozenset((".git", "__pycache__", "node_modules"))
+_GREP_HARD_LIMIT = 10000
+_GLOB_HARD_LIMIT = 10000
+
+
+def _path_not_found_hint(path: str, resolved: str) -> str:
+    parent = os.path.dirname(resolved)
+    basename = os.path.basename(path)
+    hint = ""
+    if os.path.isdir(parent):
+        try:
+            entries = sorted(os.listdir(parent))
+        except OSError:
+            entries = []
+        lower_b = basename.lower()
+        similar = [e for e in entries if lower_b in e.lower() or e.lower().startswith(lower_b[:3])]
+        if similar[:5]:
+            hint = f"\n相似路径: {', '.join(similar[:5])}"
+    return f"Error: 路径不存在: {path}{hint}"
+
+
+def grep(pattern: str, path: str = ".", file_pattern: str = "*",
+         limit: int = 50, offset: int = 0,
+         output_mode: str = "content") -> str:
+    """在文件内容中搜索匹配的文本行（正则表达式）。
 
     Args:
-        mode: "content" to search text with regex, "name" to find files by glob pattern
-        pattern: Search pattern (regex for content mode, glob for name mode)
-        path: Directory to search in (relative to workspace)
-        file_pattern: Glob filter for content mode (e.g. "*.py", "*.md")
+        pattern: 正则表达式搜索模式
+        path: 搜索目录（相对于工作区）
+        file_pattern: 文件名过滤，如 "*.py"、"*.md"
+        limit: 最大返回条数（默认 50）
+        offset: 跳过前 N 条结果（默认 0）
+        output_mode: "content" 显示匹配行，"files_only" 仅列出匹配的文件路径
     """
-    if mode in ("name", "glob"):
-        return _glob_impl(pattern or "*", path)
-    return _grep_impl(pattern, path, file_pattern)
+    return _grep_impl(pattern, path, file_pattern, limit, offset, output_mode)
 
 
-def _grep_impl(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
+def glob(pattern: str = "*", path: str = ".",
+         limit: int = 50, offset: int = 0) -> str:
+    """按文件名模式递归搜索文件（glob 模式，按修改时间倒序）。
+
+    Args:
+        pattern: glob 模式，如 "*.py"、"*config*"
+        path: 搜索目录（相对于工作区）
+        limit: 最大返回条数（默认 50）
+        offset: 跳过前 N 条结果（默认 0）
+    """
+    return _glob_impl(pattern, path, limit, offset)
+
+
+def _grep_impl(pattern: str, path: str = ".", file_pattern: str = "*",
+               limit: int = 50, offset: int = 0,
+               output_mode: str = "content") -> str:
     try:
         resolved = _resolve_path(path)
     except ValueError as e:
         return f"Error: {e}"
+    if not os.path.exists(resolved):
+        return _path_not_found_hint(path, resolved)
     if not os.path.isdir(resolved):
         return f"Error: not a directory: {path}"
 
@@ -217,11 +256,19 @@ def _grep_impl(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
     except re.error as e:
         return f"Error: invalid regex pattern: {e}"
 
+    if output_mode == "files_only":
+        return _grep_files_only(regex, resolved, path, file_pattern, limit, offset, pattern=pattern)
+
     results = []
+    truncated = False
     try:
         for root, dirs, files in os.walk(resolved):
-            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in ("__pycache__", "node_modules", ".git")]
+            if truncated:
+                break
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _EXCLUDED_DIRS]
             for fname in files:
+                if truncated:
+                    break
                 if not fnmatch.fnmatch(fname, file_pattern):
                     continue
                 filepath = os.path.join(root, fname)
@@ -231,40 +278,109 @@ def _grep_impl(pattern: str, path: str = ".", file_pattern: str = "*") -> str:
                         for i, line in enumerate(f, 1):
                             if regex.search(line):
                                 results.append(f"{rel}:{i}: {line.rstrip()[:200]}")
-                                if len(results) >= 50:
-                                    results.append("... (truncated, max 50 matches)")
-                                    return "\n".join(results)
+                                if len(results) >= _GREP_HARD_LIMIT:
+                                    truncated = True
+                                    break
                 except (PermissionError, OSError):
                     continue
     except Exception as e:
         return f"Error searching: {e}"
 
-    if not results:
+    total = len(results)
+    if not total:
         return f"No matches found for '{pattern}' in {path}"
-    return f"Found {len(results)} match(es) for '{pattern}':\n" + "\n".join(results)
+    page = results[offset:offset + limit]
+    header = f"Found {len(page)} of {total} match(es) for '{pattern}':\n"
+    suffix = ""
+    if truncated:
+        suffix = f"\n... (结果过多，仅收集前 {total} 条，可用更精确的 pattern 或 file_pattern 缩小范围)"
+    elif offset + limit < total:
+        suffix = f"\n... (截断，共 {total} 条，可用 offset={offset + limit} 查看更多)"
+    return header + "\n".join(page) + suffix
 
 
-def _glob_impl(pattern: str, path: str = ".") -> str:
+def _grep_files_only(regex, resolved: str, path: str,
+                     file_pattern: str, limit: int, offset: int,
+                     pattern: str = "") -> str:
+    files = []
+    try:
+        for root, dirs, fnames in os.walk(resolved):
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _EXCLUDED_DIRS]
+            for fname in fnames:
+                if not fnmatch.fnmatch(fname, file_pattern):
+                    continue
+                filepath = os.path.join(root, fname)
+                try:
+                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                        for line in f:
+                            if regex.search(line):
+                                rel = os.path.relpath(filepath, resolved)
+                                files.append(rel)
+                                break
+                except (PermissionError, OSError):
+                    continue
+                if len(files) >= _GREP_HARD_LIMIT:
+                    break
+            if len(files) >= _GREP_HARD_LIMIT:
+                break
+    except Exception as e:
+        return f"Error searching: {e}"
+
+    total = len(files)
+    if not total:
+        return f"No files matching '{pattern}'"
+    page = files[offset:offset + limit]
+    header = f"Found {len(page)} of {total} file(s) matching pattern in {path}:\n"
+    suffix = ""
+    if total >= _GREP_HARD_LIMIT:
+        suffix = f"\n... (结果过多，仅收集前 {total} 个文件，可用更精确的 pattern 或 file_pattern 缩小范围)"
+    elif offset + limit < total:
+        suffix = f"\n... (截断，共 {total} 个文件，可用 offset={offset + limit} 查看更多)"
+    return header + "\n".join(f"  {f}" for f in page) + suffix
+
+
+def _glob_impl(pattern: str, path: str = ".", limit: int = 50, offset: int = 0) -> str:
     try:
         resolved = _resolve_path(path)
     except ValueError as e:
         return f"Error: {e}"
+    if not os.path.exists(resolved):
+        return _path_not_found_hint(path, resolved)
+    if not os.path.isdir(resolved):
+        return f"Error: not a directory: {path}"
     try:
-        matches = sorted(Path(resolved).glob(pattern))
-        if not matches:
+        all_matches = []
+        truncated = False
+        for m in Path(resolved).rglob(pattern):
+            parts = m.relative_to(resolved).parts
+            if any(p.startswith(".") and p not in (".", "..") for p in parts):
+                continue
+            if any(p in _EXCLUDED_DIRS for p in parts):
+                continue
+            all_matches.append(m)
+            if len(all_matches) >= _GLOB_HARD_LIMIT:
+                truncated = True
+                break
+        if not all_matches:
             return f"No files matched '{pattern}' in {path}"
+        all_matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        total = len(all_matches)
+        page = all_matches[offset:offset + limit]
         lines = []
-        for m in matches:
+        for m in page:
             rel = str(m.relative_to(resolved))
             if m.is_dir():
                 lines.append(f"  {rel}/")
             else:
                 size = m.stat().st_size
                 lines.append(f"  {rel}  ({size}B)")
-            if len(lines) >= 100:
-                lines.append("... (truncated, max 100 matches)")
-                break
-        return f"Found {len(matches)} match(es) for '{pattern}':\n" + "\n".join(lines)
+        header = f"Found {len(page)} of {total} match(es) for '{pattern}':\n"
+        suffix = ""
+        if truncated:
+            suffix = f"\n... (结果过多，仅收集前 {total} 条，可用更精确的 pattern 缩小范围)"
+        elif offset + limit < total:
+            suffix = f"\n... (截断，共 {total} 条，可用 offset={offset + limit} 查看更多)"
+        return header + "\n".join(lines) + suffix
     except Exception as e:
         return f"Error: {e}"
 
@@ -276,5 +392,6 @@ def get_tools() -> list:
         ToolDef.from_function(write_file),
         ToolDef.from_function(edit_file),
         ToolDef.from_function(list_dir),
-        ToolDef.from_function(search_files),
+        ToolDef.from_function(grep),
+        ToolDef.from_function(glob),
     ]

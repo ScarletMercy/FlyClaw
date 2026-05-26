@@ -123,14 +123,14 @@ def _repair_tool_args(args_str: str) -> str:
     return "{}"
 
 _PARALLEL_SAFE_TOOLS = frozenset({
-    "read_file", "list_dir", "search_files",
+    "read_file", "list_dir", "grep", "glob",
     "web_search", "web_fetch", "session_search",
     "describe_media",
     "memory", "cronjob", "task_manage", "skills_list", "skill_view", "skill_manage", "skill_hub",
 })
 
 _PATH_SCOPED_TOOLS = frozenset({
-    "read_file", "write_file", "edit_file", "search_files",
+    "read_file", "write_file", "edit_file", "grep", "glob",
 })
 
 
@@ -161,7 +161,7 @@ class ApprovalPending(Exception):
         self.timeout = timeout
         self.auto_deny = auto_deny
         self.keys = keys or []
-        super().__init__(f"Approval needed: {tool_name} — {command_preview[:80]}")
+        super().__init__(f"需要审批: {tool_name} — {command_preview[:80]}")
 
 
 class AgentLoop:
@@ -551,7 +551,7 @@ class AgentLoop:
                                         state.append_message({
                                             "role": "tool",
                                             "tool_call_id": tid,
-                                            "content": "[skipped] Execution paused due to pending approval.",
+                                            "content": "[已跳过] 等待审批中，执行已暂停。",
                                         })
                                         existing_results.add(tid)
                                 await self._store.save(thread_id, state)
@@ -1090,7 +1090,7 @@ class AgentLoop:
                     if results[j] is NotImplemented:
                         tc_j = tool_calls[j]
                         tc_j_id = tc_j.id if hasattr(tc_j, "id") else tc_j.get("id", "")
-                        final.append((tc_j_id, "[skipped] Execution paused due to pending approval."))
+                        final.append((tc_j_id, "[已跳过] 等待审批中，执行已暂停。"))
                     elif not isinstance(results[j], BaseException):
                         final.append(results[j])
                 raise r

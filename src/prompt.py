@@ -129,7 +129,7 @@ def _build_tooling_rules() -> list[str]:
         "",
         "## 工具使用约定",
         "- edit_file 前必须先 read_file，需要精确匹配 old_string",
-        "- 优先使用 file_tools（read_file/write_file/edit_file/list_dir/search_files）而非 exec_command",
+        "- 优先使用 file_tools（read_file/write_file/edit_file/list_dir/grep/glob）而非 exec_command",
         "- 在回复文本中用 <media>path</media> 标签包裹本地文件路径，系统自动识别类型并发送",
         "- 浏览器自动化：先 browser_navigate 打开网页，再 browser_snapshot 获取元素引用（@e1, @e2...），操作失败时重新 snapshot",
         "- 当用户提及过去的对话内容，用 session_search 检索历史记录，不要让用户重复",

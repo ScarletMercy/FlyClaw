@@ -29,7 +29,7 @@ class MemoryDeleteNeedsApproval(Exception):
         self.request_id = ""
         self.denylisted = False
         self.thread_id = ""
-        super().__init__(f"Memory delete needs approval: {len(keys)} items")
+        super().__init__(f"记忆删除需要审批: {len(keys)} 条")
 
 _MEMORY_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("preference", re.compile(

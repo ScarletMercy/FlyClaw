@@ -176,7 +176,7 @@ class MessageHandler:
                             if req.tool_name in ("memory_delete", "memory"):
                                 await reply_fn("✅ 已确认删除记忆")
                             else:
-                                await reply_fn("Approval granted." if not zh else "✅ 已批准执行。")
+                                await reply_fn("✅ Approved." if not zh else "✅ 已批准执行。")
                             if req.thread_id not in self._approval_handler_threads:
                                 asyncio.create_task(self._resume_and_reply(req.thread_id, "allow_once", chat_id))
                             return
@@ -733,11 +733,18 @@ class MessageHandler:
                         f"发送 /y 确认，其它任何消息自动取消（{approval_timeout}秒超时）"
                     )
                 else:
-                    warn = "DANGEROUS" if current_exc.denylisted else "requires approval"
-                    msg_text = (
-                        f"**Approval Required** ({warn})\n```\n{current_exc.command_preview}\n```\n"
-                        f"Send /y to confirm. Any other message will cancel. (request: {current_exc.request_id})"
-                    )
+                    if zh:
+                        warn = "危险" if current_exc.denylisted else "需要审批"
+                        msg_text = (
+                            f"**需要审批** ({warn})\n```\n{current_exc.command_preview}\n```\n"
+                            f"发送 /y 确认，其它任何消息自动取消。(请求: {current_exc.request_id})"
+                        )
+                    else:
+                        warn = "DANGEROUS" if current_exc.denylisted else "requires approval"
+                        msg_text = (
+                            f"**Approval Required** ({warn})\n```\n{current_exc.command_preview}\n```\n"
+                            f"Send /y to confirm. Any other message will cancel. (request: {current_exc.request_id})"
+                        )
 
                 await approval_ch.send_text(chat_id, msg_text)
                 decision, user_response = await mgr.await_approval(current_exc.request_id, timeout=approval_timeout)

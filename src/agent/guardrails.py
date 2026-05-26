@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 logger = logging.getLogger("flyclaw.agent.guardrails")
 
 _IDEMPOTENT_TOOLS: frozenset[str] = frozenset({
-    "read_file", "list_dir", "search_files",
+    "read_file", "list_dir", "grep", "glob",
     "web_search", "web_fetch", "session_search",
     "cronjob", "task_manage",
 })
