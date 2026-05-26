@@ -27,16 +27,8 @@ class RBAC:
         sender_id: str,
         display_name: str = "",
     ) -> User:
-        """Resolve or auto-register a user by channel sender_id.
+        """Resolve or auto-register a user by channel sender_id."""
 
-        If the sender matches owner_id in config, force role=owner.
-        """
-        # Check if this is the configured owner
-        owner_id = ""
-        if self._config:
-            owner_id = getattr(self._config, "owner_id", "") or ""
-
-        # Use configured default_role (e.g. "owner") instead of hardcoded guest
         default_role = UserRole.guest
         if self._config:
             cfg_default = getattr(self._config.auth, "default_role", "") if hasattr(self._config, "auth") else ""
@@ -45,19 +37,12 @@ class RBAC:
                     default_role = UserRole(cfg_default)
                 except ValueError:
                     pass
-        if sender_id == owner_id:
-            default_role = UserRole.owner
 
         user = self._store.get_or_create_user(
             user_id=sender_id,
             display_name=display_name,
             default_role=default_role,
         )
-
-        # Ensure owner always has owner role
-        if sender_id == owner_id and user.role != UserRole.owner:
-            self._store.update_user_role(sender_id, UserRole.owner)
-            user.role = UserRole.owner
 
         # Upgrade existing user if config default_role is higher than current role
         from src.auth.models import ROLE_HIERARCHY

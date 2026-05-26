@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -99,6 +100,38 @@ def _ask(prompt: str, default: str = "") -> str:
         print()
         sys.exit(0)
     return val or default
+
+
+def _ask_required(prompt: str, default: str = "") -> str:
+    """要求用户必须输入，不能为空。"""
+    while True:
+        suffix = f" [{default}]" if default else ""
+        try:
+            val = input(f"  {prompt}{suffix}: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            sys.exit(0)
+        if val:
+            return val
+        if default:
+            return default
+        print("  [错误] 此项不能为空，请重新输入")
+
+
+async def _verify_api_key_async(provider: str, name: str, base_url: str, api_key: str) -> tuple[bool, str]:
+    """验证 API Key 是否可用。"""
+    try:
+        from src.agent.client import ChatClient
+        client = ChatClient(base_url=base_url or "", api_key=api_key, model=name)
+        resp = await client.chat_simple([{"role": "user", "content": "你好"}])
+        return True, resp
+    except Exception as e:
+        return False, str(e)
+
+
+def _verify_api_key(provider: str, name: str, base_url: str, api_key: str) -> tuple[bool, str]:
+    """验证 API Key 是否可用（同步包装）。"""
+    return asyncio.run(_verify_api_key_async(provider, name, base_url, api_key))
 
 
 def _ask_choice(prompt: str, choices: list[str], default: str = "") -> str:
@@ -201,14 +234,13 @@ def _configure_fallbacks(model: dict) -> None:
                     fb["base_url"] = _ask("  接口地址", default=preset["base_url"])
                 if preset["env_key"]:
                     env_name = preset["env_key"]
-                    default_key = f"${{{env_name}}}"
+                    default_key = ""
                     fb["api_key"] = _ask(f"  API 密钥 ({env_name})", default=default_key)
             else:
                 fb["provider"] = "openai"
                 fb["name"] = _ask("  模型名称", default="")
                 fb["base_url"] = _ask("  接口地址", default="")
-                env_name = _ask("  密钥环境变量名", default="OPENAI_API_KEY")
-                fb["api_key"] = f"${{{env_name}}}"
+                fb["api_key"] = _ask("  API 密钥", default="")
             fallbacks.append(fb)
             print(f"  已添加 {fb['provider']}/{fb['name']}")
 
@@ -216,7 +248,7 @@ def _configure_fallbacks(model: dict) -> None:
 
 
 def _step_model(config: dict) -> None:
-    print("  [1/6] 模型提供商")
+    print("  [1/7] 模型提供商")
     print("  ────────────────────")
 
     model = _section(config, "model")
@@ -244,27 +276,40 @@ def _step_model(config: dict) -> None:
             model.pop("base_url", None)
         if preset["env_key"]:
             env_name = preset["env_key"]
-            has_key = bool(os.environ.get(env_name))
             current_api_key = model.get("api_key", "")
             if current_api_key and current_api_key.startswith("${") and current_api_key.endswith("}"):
                 inner = current_api_key[2:-1]
                 if not inner.isupper() or "_" not in inner:
                     current_api_key = inner
-            if current_api_key:
-                default_key = current_api_key
-            elif has_key:
-                default_key = f"${{{env_name}}} (已在环境变量中设置)"
-            else:
-                default_key = f"${{{env_name}}}"
-            model["api_key"] = _ask(f"  API 密钥 ({env_name})", default=default_key)
+            default_key = current_api_key or ""
+            model["api_key"] = _ask_required(f"  API 密钥 ({env_name})", default=default_key)
+            # 验证 API Key
+            if model["api_key"]:
+                print("  验证 API Key 中...")
+                success, msg = _verify_api_key(model.get("provider", ""), model.get("name", ""), model.get("base_url", ""), model["api_key"])
+                if success:
+                    print("  [通过] API Key 验证成功")
+                else:
+                    print(f"  [警告] API Key 验证失败: {msg}")
+                    if not _ask_yn("  是否仍然使用此 API Key？", default=True):
+                        model["api_key"] = _ask_required(f"  重新输入 API 密钥 ({env_name})", default="")
         else:
             model.pop("api_key", None)
     else:
         model["provider"] = "openai"
         model["name"] = _ask("  模型名称", default=model.get("name", ""))
         model["base_url"] = _ask("  接口地址", default=model.get("base_url", ""))
-        env_name = _ask("  密钥环境变量名", default="OPENAI_API_KEY")
-        model["api_key"] = f"${{{env_name}}}"
+        model["api_key"] = _ask_required("  API 密钥", default=model.get("api_key", ""))
+        # 验证 API Key
+        if model["api_key"]:
+            print("  验证 API Key 中...")
+            success, msg = _verify_api_key(model.get("provider", ""), model.get("name", ""), model.get("base_url", ""), model["api_key"])
+            if success:
+                print("  [通过] API Key 验证成功")
+            else:
+                print(f"  [警告] API Key 验证失败: {msg}")
+                if not _ask_yn("  是否仍然使用此 API Key？", default=True):
+                    model["api_key"] = _ask_required("  重新输入 API 密钥", default="")
 
     model["temperature"] = float(_ask("  温度参数", default=str(model.get("temperature", 0.0))))
 
@@ -273,7 +318,7 @@ def _step_model(config: dict) -> None:
 
 def _step_gateway(config: dict) -> None:
     print()
-    print("  [2/6] 网关配置")
+    print("  [2/7] 网关配置")
     print("  ────────────")
 
     gw = _section(config, "gateway")
@@ -283,13 +328,13 @@ def _step_gateway(config: dict) -> None:
     gw["host"] = _ask("  监听地址", default=gw.get("host", "127.0.0.1"))
     gw["port"] = int(_ask("  监听端口", default=str(gw.get("port", 18080))))
     token = _ask("  认证令牌（留空则不启用认证）", default="")
-    gw["auth_token"] = f"${{GATEWAY_AUTH_TOKEN}}" if not token else token
+    gw["auth_token"] = token
 
 
 
 def _step_qq(config: dict) -> None:
     print()
-    print("  [3/6] QQ 机器人")
+    print("  [3/7] QQ 机器人")
     print("  ─────────────────────")
 
     channels = _section(config, "channels")
@@ -351,7 +396,7 @@ def _step_qq(config: dict) -> None:
 
 def _step_search(config: dict) -> None:
     print()
-    print("  [5/6] 网页搜索")
+    print("  [5/7] 网页搜索")
     print("  ────────────────")
 
     tools = _section(config, "tools")
@@ -364,13 +409,10 @@ def _step_search(config: dict) -> None:
     if ws["enabled"]:
         ws["api_key"] = _ask("  Tavily API 密钥", default=ws.get("api_key", "${TAVILY_API_KEY}"))
 
-    wf = _section(tools, "web_fetch")
-    wf["enabled"] = ws["enabled"] if not wf.get("enabled") else True
-
 
 def _step_weixin(config: dict) -> None:
     print()
-    print("  [4/6] 微信机器人（可选）")
+    print("  [4/7] 微信机器人（可选）")
     print("  ────────────────────────────")
 
     channels = _section(config, "channels")
@@ -426,15 +468,35 @@ def _step_weixin(config: dict) -> None:
         )
 
 
+def _step_media_understanding(config: dict) -> None:
+    print()
+    print("  [6/7] 媒体理解（可选）")
+    print("  ────────────────────────────")
+    print("  启用后，AI 可以识别图片内容、转录音频等。")
+    print("  需要多模态模型 API（如 OpenAI GPT-4o、Anthropic Claude 等）。")
+
+    tools = _section(config, "tools")
+    mu = _section(tools, "media_understanding")
+
+    enabled = _ask_yn("  启用媒体理解？", default=mu.get("enabled", False))
+    mu["enabled"] = enabled
+
+    if enabled:
+        mu["provider"] = _ask("  模型提供商", default=mu.get("provider", "openai"))
+        mu["name"] = _ask("  模型名称", default=mu.get("name", "gpt-4o-mini"))
+        mu["api_key"] = _ask("  API 密钥", default=mu.get("api_key", "${OPENAI_API_KEY}"))
+
+
 def _step_summary(config: dict) -> None:
     model = config.get("model", {})
     gw = config.get("gateway", {})
     qq = config.get("channels", {}).get("qq", {})
     weixin = config.get("channels", {}).get("weixin", {})
     ws = config.get("tools", {}).get("web_search", {})
+    mu = config.get("tools", {}).get("media_understanding", {})
 
     print()
-    print("  [6/6] 配置总览")
+    print("  [7/7] 配置总览")
     print("  ─────────────")
     print(f"  模型:       {model.get('provider', '?')}/{model.get('name', '?')}")
     if model.get("base_url"):
@@ -452,6 +514,9 @@ def _step_summary(config: dict) -> None:
     if weixin.get("enabled"):
         print(f"    account_id: {weixin.get('account_id', '')}")
     print(f"  网页搜索:   {'已启用' if ws.get('enabled') else '未启用'}")
+    print(f"  媒体理解:   {'已启用' if mu.get('enabled') else '未启用'}")
+    if mu.get("enabled") and mu.get("name"):
+        print(f"    模型:     {mu['name']}")
 
 
 # ── Main ──
@@ -474,6 +539,7 @@ def run_wizard():
     _step_qq(config)
     _step_weixin(config)
     _step_search(config)
+    _step_media_understanding(config)
     _step_summary(config)
 
     save = _ask_yn("  保存配置？")
@@ -481,9 +547,8 @@ def run_wizard():
         _save_config(config)
         print()
         print("  后续步骤:")
-        print("    1. 设置所需的环境变量（API 密钥）")
-        print("    2. 运行: flyclaw")
-        print("    3. 或运行: flyclaw doctor（检查配置）")
+        print("    1. 运行: flyclaw")
+        print("    2. 或运行: flyclaw doctor（检查配置）")
         print()
     else:
         print("\n  配置已丢弃。")

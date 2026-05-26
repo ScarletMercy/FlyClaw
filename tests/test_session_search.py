@@ -7,11 +7,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 
 class TestSessionSearchConfig:
-    def test_default_disabled(self, tmp_path):
+    def test_default_enabled(self, tmp_path):
         from src.config import load_config
 
         cfg = load_config(tmp_path / "nonexistent.yaml")
-        assert cfg.session_search.enabled is False
+        assert cfg.session_search.enabled is True
         assert cfg.session_search.index_path == "~/.flyclaw/data/session_index.db"
         assert cfg.session_search.auto_sync is True
         assert cfg.session_search.max_results == 10

@@ -15,7 +15,7 @@ logger = logging.getLogger("flyclaw.memory.search")
 class MemorySearcher:
     """End-to-end memory search: embed query → hybrid search → format results."""
 
-    def __init__(self, store: BaseMemoryStore, embeddings: EmbeddingProvider, config: MemoryConfig):
+    def __init__(self, store: BaseMemoryStore, embeddings: Optional[EmbeddingProvider], config: MemoryConfig):
         self.store = store
         self.embeddings = embeddings
         self.config = config
@@ -31,24 +31,21 @@ class MemorySearcher:
         """
         max_results = max_results or self.config.max_results
 
-        # Get query embedding for vector search
         query_embedding = None
-        if self.store.dimensions > 0:
+        if self.embeddings is not None and self.store.dimensions > 0:
             try:
                 query_embedding = await self.embeddings.embed_query(query)
             except Exception as e:
                 logger.warning("Query embedding failed, using FTS5-only: %s", e)
 
-        # Hybrid search
         results = await self.store.search(
             query_embedding=query_embedding,
             query_text=query,
             max_results=max_results,
-            vector_weight=self.config.vector_weight,
+            vector_weight=getattr(self.config, "vector_weight", 0.7),
             min_score=self.config.min_score,
         )
 
-        # Format for agent consumption
         formatted = []
         for r in results:
             formatted.append(
@@ -66,18 +63,15 @@ class MemorySearcher:
 
         Returns number of chunks added.
         """
-        # Add chunks to store
         count = await self.store.add_document(path, content)
-        if count == 0:
-            return 0
+        if count == 0 or self.embeddings is None:
+            return count
 
-        # Get chunk IDs and embed
         chunk_ids = await self.store.get_chunk_ids_for_path(path)
         if not chunk_ids:
             return count
 
         try:
-            # Re-chunk to get text for embedding
             from src.memory.chunker import chunk_markdown
 
             chunks = chunk_markdown(content)

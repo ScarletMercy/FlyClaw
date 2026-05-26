@@ -185,14 +185,12 @@ class TestAuthStore:
 
 
 class TestRBAC:
-    def _make_rbac(self, tmp_path, owner_id=""):
+    def _make_rbac(self, tmp_path):
         from src.auth.rbac import RBAC
         from src.auth.store import AuthStore
-        from src.config import AppConfig
 
         store = AuthStore(db_path=str(tmp_path / "auth.db"))
-        config = AppConfig(owner_id=owner_id) if owner_id else None
-        return RBAC(store, config)
+        return RBAC(store, config=None)
 
     def test_resolve_unknown_user(self, tmp_path):
         from src.auth.models import UserRole
@@ -202,12 +200,17 @@ class TestRBAC:
         assert user.role == UserRole.guest
         rbac.store.close()
 
-    def test_resolve_owner(self, tmp_path):
+    def test_resolve_user_with_default_role_user(self, tmp_path):
         from src.auth.models import UserRole
+        from src.auth.rbac import RBAC
+        from src.auth.store import AuthStore
+        from src.config import AppConfig
 
-        rbac = self._make_rbac(tmp_path, owner_id="admin_user")
-        user = rbac.resolve_user("admin_user")
-        assert user.role == UserRole.owner
+        store = AuthStore(db_path=str(tmp_path / "auth.db"))
+        config = AppConfig()
+        rbac = RBAC(store, config)
+        user = rbac.resolve_user("someuser")
+        assert user.role == UserRole.user
         rbac.store.close()
 
     def test_check_tool_access_guest(self, tmp_path):

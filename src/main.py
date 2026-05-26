@@ -80,7 +80,18 @@ def main():
 
         ctypes.windll.kernel32.SetConsoleCtrlHandler(_HANDLER(_ctrl_handler), True)
 
-    app = Application()
+    from src.config import load_config
+
+    config = load_config()
+    if not config.model.api_key:
+        print("\n[错误] 模型 API 密钥未配置")
+        print("请运行以下命令初始化配置:")
+        print("  flyclaw setup")
+        print("  或")
+        print("  flyclaw-setup\n")
+        sys.exit(1)
+
+    app = Application(config)
 
     async def _run():
         await app.setup()

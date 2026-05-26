@@ -47,10 +47,6 @@ def run_security_audit(config) -> dict[str, Any]:
 
     if getattr(config, "auth", None) and config.auth.enabled:
         _check("rbac-enabled", "PASS", "")
-        if not getattr(config, "owner_id", ""):
-            _check("rbac-owner", "WARN", "owner_id 未设置 — 没有用户会自动获得 owner 角色")
-        else:
-            _check("rbac-owner", "PASS", "")
     else:
         _check("rbac-enabled", "INFO", "认证/RBAC 已禁用")
 

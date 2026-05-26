@@ -14,6 +14,10 @@ logger = logging.getLogger("flyclaw.agents.delegate")
 _HEARTBEAT_INTERVAL = 30
 _HEARTBEAT_STALE_IDLE_SECONDS = 450
 
+_ESSENTIAL_TOOLS = frozenset([
+    "write_file", "edit_file", "read_file", "search_files", "list_dir",
+])
+
 
 def _register_builtin_tools(config) -> list[ToolDef]:
     from src._container import get_container
@@ -107,7 +111,12 @@ async def _run_single(
 
         if agent_config.tools and agent_config.tools != ["*"]:
             tool_map = {t.name: t for t in all_tools}
-            all_tools = [tool_map[p] for p in agent_config.tools if p in tool_map]
+            filtered = [tool_map[p] for p in agent_config.tools if p in tool_map]
+            filtered_names = {t.name for t in filtered}
+            for name in _ESSENTIAL_TOOLS:
+                if name not in filtered_names and name in tool_map:
+                    filtered.append(tool_map[name])
+            all_tools = filtered
 
         if agent_config.model:
             from src.agent.client import create_client

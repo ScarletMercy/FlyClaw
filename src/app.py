@@ -199,25 +199,34 @@ class ServiceContainer:
             from src.memory.search import MemorySearcher
 
             backend = getattr(self.config.memory, "backend", "sqlite")
+            dimensions = getattr(self.config.memory, "embedding_dimensions", 1536)
             if backend == "lancedb":
                 from src.memory.lance_store import LanceMemoryStore
+                lancedb_uri = getattr(self.config.memory, "lancedb_uri", str(Path.home() / ".flyclaw" / "data" / "memory_lancedb"))
                 store = LanceMemoryStore(
                     self.config.memory.db_path,
-                    dimensions=self.config.memory.embedding_dimensions,
+                    dimensions=dimensions,
                     fts_tokenizer=self.config.memory.fts_tokenizer,
-                    lancedb_uri=getattr(self.config.memory, "lancedb_uri", str(Path.home() / ".flyclaw" / "data" / "memory_lancedb")),
+                    lancedb_uri=lancedb_uri,
                 )
             else:
                 from src.memory.store import MemoryStore
                 store = MemoryStore(
                     self.config.memory.db_path,
-                    dimensions=self.config.memory.embedding_dimensions,
+                    dimensions=dimensions,
                     fts_tokenizer=self.config.memory.fts_tokenizer,
                 )
             await store.initialize()
             self.memory_store = store
 
-            embeddings = EmbeddingProvider(self.config.memory, self.config.model)
+            embeddings = None
+            if getattr(self.config.memory, "api_key", "") or self.config.model.api_key:
+                try:
+                    from src.memory.embeddings import EmbeddingProvider
+                    embeddings = EmbeddingProvider(self.config.memory, self.config.model)
+                except Exception as e:
+                    logger.warning("Embedding provider init failed, using FTS5-only: %s", e)
+
             searcher = MemorySearcher(store, embeddings, self.config.memory)
             self.memory_searcher = searcher
 

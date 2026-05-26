@@ -264,7 +264,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
     async def cmd_search(args: str, ctx: dict) -> str:
         zh = container.config.agents.language == "zh"
         from src.session_index.store import get_session_index
-        from src.tools.session_search_tools import _format_results, _try_llm_search
+        from src.tools.session_search_tools import _format_results
 
         store = get_session_index()
         if not store:
@@ -272,22 +272,10 @@ def register_builtin_commands(dispatcher, container, tools, skills):
 
         limit = container.config.session_search.max_results
 
-        if not args.strip():
-            results = store.search("", limit=limit)
-            if results:
-                return _format_results(results)
-            return "暂无会话" if zh else "No sessions"
-
-        results = await _try_llm_search(store, args, limit)
-        if results is not None:
-            if results:
-                return _format_results(results)
-            return "未找到结果" if zh else "No results found"
-
         results = store.search(args, limit=limit)
         if results:
             return _format_results(results)
-        return "未找到结果" if zh else "No results found"
+        return "暂无会话" if zh else "No sessions" if not args.strip() else ("未找到结果" if zh else "No results found")
 
     dispatcher.register_builtin("search", cmd_search)
 
@@ -568,6 +556,24 @@ def register_builtin_commands(dispatcher, container, tools, skills):
             _save_config()
             return f"模型名称已设为 {val}" if zh else f"Model name set to {val}"
 
+        # /model test
+        if sub == "test":
+            try:
+                m = model_list[active_idx] if active_idx < len(model_list) else model_list[0]
+                test_client = ChatClient(
+                    base_url=m.get("base_url") or "",
+                    api_key=m.get("api_key") or "",
+                    model=m["name"],
+                )
+                resp = await test_client.chat_simple([{"role": "user", "content": "你好"}])
+                if zh:
+                    return f"[通过] 模型验证成功\n响应: {resp[:100]}..."
+                return f"[OK] Model verification passed\nResponse: {resp[:100]}..."
+            except Exception as e:
+                if zh:
+                    return f"[错误] 模型验证失败: {e}"
+                return f"[Error] Model verification failed: {e}"
+
         # /model — show current status
         m = model_list[active_idx] if active_idx < len(model_list) else model_list[0]
         if zh:
@@ -582,6 +588,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 "  /model switch <id>       — 切换模型",
                 "  /model temp <0-2>        — 设置温度",
                 "  /model name <名称>       — 修改主模型名称",
+                "  /model test              — 测试当前模型",
             ]
         else:
             lines = [
@@ -595,6 +602,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 "  /model switch <id>       — switch model",
                 "  /model temp <0-2>        — set temperature",
                 "  /model name <name>       — change primary model",
+                "  /model test              — test current model",
             ]
         return "\n".join(lines)
 

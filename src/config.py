@@ -77,8 +77,24 @@ class AgentSubconfig(BaseModel):
 class AgentConfig(BaseModel):
     system_prompt: str = "You are a helpful AI assistant."
     workspace: str = "~/.flyclaw/workspace"
-    max_tool_rounds: int = 15
-    subagents: dict[str, AgentSubconfig] = Field(default_factory=dict)
+    max_tool_rounds: int = 100
+    subagents: dict[str, AgentSubconfig] = Field(default_factory=lambda: {
+        "research": AgentSubconfig(
+            system_prompt="You are a research specialist. Find and synthesize information thoroughly.",
+            tools=["web_search", "web_fetch"],
+            description="Research specialist - finds and synthesizes information",
+        ),
+        "coder": AgentSubconfig(
+            system_prompt="You are a coding specialist. Write, analyze, and debug code.",
+            tools=["exec_command"],
+            description="Coding specialist - writes and analyzes code",
+        ),
+        "reviewer": AgentSubconfig(
+            system_prompt="You are a critical reviewer. Analyze content, code, or proposals.",
+            tools=["*"],
+            description="Critical reviewer - analyzes and provides feedback",
+        ),
+    })
     subagent_max_depth: int = 2
     timezone: str = "Asia/Shanghai"
     language: Literal["zh", "en"] = "zh"
@@ -155,7 +171,7 @@ class WebSearchToolConfig(BaseModel):
 
 
 class WebFetchToolConfig(BaseModel):
-    enabled: bool = False
+    enabled: bool = True
 
 
 class FeishuToolConfig(BaseModel):
@@ -186,10 +202,10 @@ class MediaUnderstandingConfig(BaseModel):
     """Media understanding (image description, audio transcription, video description). Video uses the image model config."""
 
     enabled: bool = False
-    provider: str = "openai"
-    name: str = ""  # Empty = auto-detect (gpt-4o-mini for openai)
-    base_url: str = ""  # Empty = use provider default
-    api_key: str = ""  # Empty = use main model api_key
+    provider: str = ""
+    name: str = ""
+    base_url: str = ""
+    api_key: str = ""
     max_image_size: int = 20 * 1024 * 1024  # 20MB
     max_audio_size: int = 25 * 1024 * 1024  # 25MB
     max_video_size: int = 50 * 1024 * 1024  # 50MB
@@ -217,7 +233,7 @@ class LinkUnderstandingConfig(BaseModel):
 
 
 class BrowserConfig(BaseModel):
-    enabled: bool = False
+    enabled: bool = True
     headless: bool = True
     browser: Literal["chromium", "firefox", "webkit"] = "chromium"
     viewport_width: int = 1280
@@ -323,24 +339,18 @@ class PluginsConfig(BaseModel):
 
 
 class MemoryConfig(BaseModel):
-    enabled: bool = False
+    enabled: bool = True
     backend: Literal["sqlite", "lancedb"] = "sqlite"
     db_path: str = "~/.flyclaw/data/memory.db"
-    lancedb_uri: str = "~/.flyclaw/data/memory_lancedb"  # LanceDB data directory
-    embedding_provider: str = "openai"
-    embedding_model: str = "text-embedding-3-small"
-    embedding_dimensions: int = 1536
     chunk_tokens: int = 400
     chunk_overlap: int = 80
-    vector_weight: float = 0.7  # 70% vector, 30% BM25
     min_score: float = 0.35
     max_results: int = 6
     fts_tokenizer: str = "unicode61"
     api_key: str = ""
-    base_url: str = ""
     extra_paths: list[str] = Field(default_factory=list)
-    watch: bool = True  # Auto-watch extra_paths for changes
-    auto_session_memory: bool = False  # Auto-write Q&A pairs to memory
+    watch: bool = True
+    auto_session_memory: bool = False
 
 
 class MemoryStoreConfig(BaseModel):
@@ -368,7 +378,7 @@ class AuthConfig(BaseModel):
     """Authentication and access control configuration."""
 
     enabled: bool = True
-    default_role: Literal["owner", "admin", "user", "guest"] = "guest"
+    default_role: Literal["owner", "admin", "user", "guest"] = "user"
     pairing_enabled: bool = True
     pairing_ttl_seconds: int = 300  # Pairing code validity
     db_path: str = "~/.flyclaw/data/auth.db"
@@ -383,14 +393,11 @@ class TimeoutsConfig(BaseModel):
 
 
 class SessionSearchConfig(BaseModel):
-    enabled: bool = False
+    enabled: bool = True
     index_path: str = "~/.flyclaw/data/session_index.db"
     auto_sync: bool = True
     max_results: int = 10
     tool_content_max_chars: int = 500
-    search_model: str = ""  # Small model for semantic search (e.g. "gpt-4o-mini")
-    search_model_base_url: str = ""  # Empty = inherit from main model
-    search_model_api_key: str = ""  # Empty = inherit from main model
 
 
 class CompressionConfig(BaseModel):
@@ -444,7 +451,6 @@ class AppConfig(BaseModel):
     snapshot: SnapshotConfig = Field(default_factory=SnapshotConfig)
     delegation: DelegationConfig = Field(default_factory=DelegationConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
-    owner_id: str = ""
 
 
 
@@ -458,7 +464,6 @@ def _expand_paths(config: AppConfig) -> AppConfig:
     
     # Memory
     config.memory.db_path = str(Path(config.memory.db_path).expanduser().resolve())
-    config.memory.lancedb_uri = str(Path(config.memory.lancedb_uri).expanduser().resolve())
     
     # Auth
     config.auth.db_path = str(Path(config.auth.db_path).expanduser().resolve())

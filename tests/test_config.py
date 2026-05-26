@@ -16,7 +16,7 @@ class TestLoadConfig:
         assert cfg.gateway.host == "127.0.0.1"
         assert cfg.gateway.port == 18080
         assert cfg.model.provider == "anthropic"
-        assert cfg.agents.max_tool_rounds == 15
+        assert cfg.agents.max_tool_rounds == 100
 
     def test_yaml_config(self, tmp_path):
         """Loading from a YAML file applies values."""
@@ -79,7 +79,7 @@ class TestConfigModels:
 
         auth = AuthConfig()
         assert auth.enabled is True
-        assert auth.default_role == "guest"
+        assert auth.default_role == "user"
         assert auth.pairing_enabled is True
         assert auth.pairing_ttl_seconds == 300
 
@@ -87,17 +87,15 @@ class TestConfigModels:
         from src.config import MemoryConfig
 
         mem = MemoryConfig()
-        assert mem.enabled is False
+        assert mem.enabled is True
         assert mem.backend == "sqlite"
-        assert mem.vector_weight == 0.7
         assert mem.chunk_tokens == 400
 
     def test_memory_config_lancedb(self):
         from src.config import MemoryConfig
 
-        mem = MemoryConfig(backend="lancedb", lancedb_uri="/tmp/lance")
+        mem = MemoryConfig(backend="lancedb")
         assert mem.backend == "lancedb"
-        assert mem.lancedb_uri == "/tmp/lance"
 
     def test_exec_tool_config(self):
         from src.config import ExecToolConfig

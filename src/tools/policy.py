@@ -108,11 +108,9 @@ def apply_tool_policy(
     if policy_cfg is None:
         return tools
 
-    owner_id = getattr(config, "owner_id", "") or ""
-
     policy = ToolPolicy(
         allowed_patterns=policy_cfg.allow or ["*"],
         denied_patterns=policy_cfg.deny or [],
         owner_only_tools=policy_cfg.owner_only or [],
     )
-    return policy.filter_tools(tools, sender_id=sender_id, owner_id=owner_id, user=user)
+    return policy.filter_tools(tools, sender_id=sender_id, owner_id="", user=user)

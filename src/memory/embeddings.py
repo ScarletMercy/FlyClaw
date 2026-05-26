@@ -17,10 +17,10 @@ class EmbeddingProvider:
 
     def __init__(self, config: MemoryConfig, model_config: ModelConfig):
         self.config = config
-        self._model = config.embedding_model
-        self._dimensions = config.embedding_dimensions
-        api_key = config.api_key or model_config.api_key or ""
-        base_url = (config.base_url or model_config.base_url or "https://api.openai.com").rstrip("/")
+        self._model = getattr(config, "embedding_model", "text-embedding-3-small")
+        self._dimensions = getattr(config, "embedding_dimensions", 1536)
+        api_key = getattr(config, "api_key", "") or model_config.api_key or ""
+        base_url = (getattr(config, "base_url", "") or model_config.base_url or "https://api.openai.com").rstrip("/")
         self._url = f"{base_url}/v1/embeddings"
         self._headers = {
             "Authorization": f"Bearer {api_key}",
