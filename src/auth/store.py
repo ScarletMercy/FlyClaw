@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-import random
+import secrets
 import sqlite3
 import string
 import threading
@@ -60,6 +60,7 @@ class AuthStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        self._verify_timestamps: dict[str, float] = {}
 
     # ── Users ──────────────────────────────────────────────
 
@@ -208,7 +209,7 @@ class AuthStore:
     ) -> PairingCode:
         with self._lock:
             self._conn.execute("DELETE FROM pairing_codes WHERE expires_at < ?", (time.time(),))
-            code = "".join(random.choices(string.digits, k=6))
+            code = "".join(secrets.choice(string.digits) for _ in range(6))
             now = time.time()
             expires_at = now + ttl_seconds
             self._conn.execute(
@@ -227,6 +228,12 @@ class AuthStore:
         platform: str = "",
         name: str = "",
     ) -> Optional[User]:
+        prefix = code[:2]
+        now = time.time()
+        last = self._verify_timestamps.get(prefix, 0.0)
+        if now - last < 0.5:
+            return None
+        self._verify_timestamps[prefix] = now
         with self._lock:
             self._conn.execute("DELETE FROM pairing_codes WHERE expires_at < ?", (time.time(),))
             row = self._conn.execute("SELECT * FROM pairing_codes WHERE code = ?", (code,)).fetchone()

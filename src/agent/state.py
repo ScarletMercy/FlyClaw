@@ -73,19 +73,6 @@ class AgentState(BaseModel):
             raise ValueError("Tool messages must have 'tool_call_id'")
         self.messages.append(msg)
 
-    def copy(self) -> AgentState:
-        return AgentState(
-            messages=list(self.messages),
-            system_prompt=self.system_prompt,
-            sender_id=self.sender_id,
-            chat_id=self.chat_id,
-            chat_type=self.chat_type,
-            message_id=self.message_id,
-            user_role=self.user_role,
-            channel=self.channel,
-            pending_approval=self.pending_approval,
-        )
-
 
 _MAX_LOCKS = 4096
 

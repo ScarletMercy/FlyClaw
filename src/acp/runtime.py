@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import AsyncIterator
 
 from src.acp.session import AcpSessionManager
+from src.agent.loop import interruptible
 
 logger = logging.getLogger("flyclaw.acp.runtime")
 
@@ -73,8 +74,14 @@ class AgentLoopRuntime:
             system_prompt="",
         )
 
+        cancel_ev = asyncio.Event()
+        self._cancel_events[session_id] = cancel_ev
         try:
-            result = await loop.run(state, thread_id)
+            result = await interruptible(cancel_ev, loop.run(state, thread_id))
+            if result is None:
+                yield AcpRuntimeEvent(type="cancelled")
+                yield AcpRuntimeEvent(type="done", stop_reason="cancelled")
+                return
             for msg in result.messages:
                 if msg.get("role") == "assistant" and msg.get("content"):
                     yield AcpRuntimeEvent(type="text_delta", text=msg["content"])
@@ -83,6 +90,8 @@ class AgentLoopRuntime:
             logger.error("ACP run_turn failed: %s", e, exc_info=True)
             yield AcpRuntimeEvent(type="error", text=str(e))
             yield AcpRuntimeEvent(type="done", stop_reason="end_turn")
+        finally:
+            self._cancel_events.pop(session_id, None)
 
     async def cancel(self, session_id: str) -> None:
         ev = self._cancel_events.get(session_id)

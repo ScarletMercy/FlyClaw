@@ -928,6 +928,9 @@ def _install_from_zip(zip_path: Path) -> str:
         dest = _USER_SKILLS_DIR / skill_dir_name
         if dest.exists():
             return json.dumps({"error": f"Skill already exists: {dest}"})
+        for name in names:
+            if name.startswith("/") or ".." in Path(name).parts:
+                return json.dumps({"error": f"Zip entry contains unsafe path: {name}"})
         zf.extractall(dest)
     _reload_skills_from_manager()
     return json.dumps({"success": True, "installed": str(dest)})

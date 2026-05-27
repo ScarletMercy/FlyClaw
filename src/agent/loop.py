@@ -83,7 +83,7 @@ def _repair_tool_args(args_str: str) -> str:
 
     s = args_str.strip()
 
-    for i in range(min(len(s), len(s) - 1)):
+    for i in range(len(s)):
         try:
             json.loads(s[:len(s) - i], strict=False)
             return s[:len(s) - i]

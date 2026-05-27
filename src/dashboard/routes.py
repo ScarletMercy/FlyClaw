@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import logging
 import time
 from collections import deque
@@ -91,11 +92,10 @@ def register_dashboard(app: FastAPI, application):
     @router.get("/dashboard", response_class=HTMLResponse)
     async def dashboard_page():
         cfg = _app_ref.config
-        import re
         html = _html_template
-        html = html.replace('{{ auth_token }}', cfg.gateway.auth_token or "")
-        html = html.replace('{{ model_provider }}', cfg.model.provider)
-        html = html.replace('{{ model_name }}', cfg.model.name)
+        html = html.replace('"{{ auth_token }}"', json.dumps(cfg.gateway.auth_token or ""))
+        html = html.replace('"{{ model_provider }}"', json.dumps(cfg.model.provider))
+        html = html.replace('"{{ model_name }}"', json.dumps(cfg.model.name))
         return HTMLResponse(html)
 
     @router.get("/api/dashboard/status")

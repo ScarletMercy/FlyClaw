@@ -93,26 +93,6 @@ class TestAppendMessage:
 
 
 # ---------------------------------------------------------------------------
-# AgentState — copy
-# ---------------------------------------------------------------------------
-
-class TestCopy:
-    def test_copy_independence(self):
-        state = AgentState(messages=[{"role": "user", "content": "hi"}], sender_id="u1")
-        copied = state.copy()
-        copied.messages.append({"role": "assistant", "content": "hello"})
-        assert len(state.messages) == 1
-        assert len(copied.messages) == 2
-
-    def test_copy_preserves_fields(self):
-        state = AgentState(sender_id="u1", chat_id="c1", channel="qq")
-        copied = state.copy()
-        assert copied.sender_id == "u1"
-        assert copied.chat_id == "c1"
-        assert copied.channel == "qq"
-
-
-# ---------------------------------------------------------------------------
 # AgentState — meta_dict
 # ---------------------------------------------------------------------------
 
