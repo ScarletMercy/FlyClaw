@@ -241,7 +241,7 @@ def _configure_fallbacks(model: dict) -> None:
 
 
 def _step_model(config: dict) -> None:
-    print("  [1/9] 模型提供商")
+    print("  [1/8] 模型提供商")
     print("  ────────────────────")
 
     model = _section(config, "model")
@@ -311,7 +311,7 @@ def _step_model(config: dict) -> None:
 
 def _step_gateway(config: dict) -> None:
     print()
-    print("  [2/9] 网关配置")
+    print("  [2/8] 网关配置")
     print("  ────────────")
 
     gw = _section(config, "gateway")
@@ -325,71 +325,136 @@ def _step_gateway(config: dict) -> None:
 
 
 
-def _step_qq(config: dict) -> None:
+def _step_channel(config: dict) -> None:
     print()
-    print("  [3/9] QQ 机器人")
-    print("  ─────────────────────")
+    print("  [3/8] 渠道配置")
+    print("  ─────────────")
 
     channels = _section(config, "channels")
     qq = _section(channels, "qq")
+    weixin = _section(channels, "weixin")
 
-    if qq.get("enabled") and _ask_skip("QQ 机器人", qq, "app_id", "client_secret"):
+    # Determine current default based on existing config
+    if weixin.get("enabled") and not qq.get("enabled"):
+        default_channel = "微信"
+    else:
+        default_channel = "QQ"
+
+    channel = _ask_choice("  选择渠道", ["QQ", "微信"], default=default_channel)
+
+    if channel == "QQ":
+        weixin["enabled"] = False
+        _configure_qq(qq)
+    else:
+        qq["enabled"] = False
+        _configure_weixin(weixin)
+
+
+def _configure_qq(qq: dict) -> None:
+    """Configure QQ channel (called from _step_channel)."""
+    qq["enabled"] = True
+
+    if qq.get("app_id") and qq.get("client_secret") and _ask_skip("QQ 机器人", qq, "app_id", "client_secret"):
         return
 
-    enabled = _ask_yn("  启用 QQ 机器人？", default=qq.get("enabled", False))
-    qq["enabled"] = enabled
+    has_existing = bool(qq.get("app_id") and qq.get("client_secret"))
+    if has_existing:
+        method = _ask_choice("  配置方式", ["保留当前配置", "扫码一键配置", "手动输入"], default="保留当前配置")
+    else:
+        method = _ask_choice("  配置方式", ["扫码一键配置", "手动输入"], default="扫码一键配置")
 
-    if enabled:
-        has_existing = bool(qq.get("app_id") and qq.get("client_secret"))
-        if has_existing:
-            method = _ask_choice("  配置方式", ["保留当前配置", "扫码一键配置", "手动输入"], default="保留当前配置")
+    if method == "保留当前配置":
+        pass
+    elif method == "扫码一键配置":
+        print()
+        print("  正在生成配置链接...")
+        try:
+            import cryptography  # noqa: F401
+        except ImportError:
+            print("  缺少 cryptography 库，请运行: pip install cryptography")
+            result = None
         else:
-            method = _ask_choice("  配置方式", ["扫码一键配置", "手动输入"], default="扫码一键配置")
-
-        if method == "保留当前配置":
-            pass
-        elif method == "扫码一键配置":
-            print()
-            print("  正在生成配置链接...")
             try:
-                import cryptography  # noqa: F401
-            except ImportError:
-                print("  缺少 cryptography 库，请运行: pip install cryptography")
+                from src.channels.qq_onboard import qr_register
+                result = qr_register()
+            except Exception as exc:
+                print(f"  扫码配置失败: {exc}")
                 result = None
-            else:
-                try:
-                    from src.channels.qq_onboard import qr_register
 
-                    result = qr_register()
-                except Exception as exc:
-                    print(f"  扫码配置失败: {exc}")
-                    result = None
-
-            if result:
-                qq["app_id"] = result["app_id"]
-                qq["client_secret"] = result["client_secret"]
-                print(f"  已自动填入 App ID: {result['app_id']}")
-                if result.get("user_openid") and not qq.get("allow_from"):
-                    qq.setdefault("allow_from", [result["user_openid"]])
-            else:
-                print("  扫码未完成，将使用手动输入。")
-                qq["app_id"] = _ask("  应用 ID (App ID)", default=qq.get("app_id", ""))
-                qq["client_secret"] = _ask("  应用密钥 (Client Secret)", default=qq.get("client_secret", ""))
+        if result:
+            qq["app_id"] = result["app_id"]
+            qq["client_secret"] = result["client_secret"]
+            print(f"  已自动填入 App ID: {result['app_id']}")
+            if result.get("user_openid") and not qq.get("allow_from"):
+                qq.setdefault("allow_from", [result["user_openid"]])
         else:
+            print("  扫码未完成，将使用手动输入。")
             qq["app_id"] = _ask("  应用 ID (App ID)", default=qq.get("app_id", ""))
             qq["client_secret"] = _ask("  应用密钥 (Client Secret)", default=qq.get("client_secret", ""))
+    else:
+        qq["app_id"] = _ask("  应用 ID (App ID)", default=qq.get("app_id", ""))
+        qq["client_secret"] = _ask("  应用密钥 (Client Secret)", default=qq.get("client_secret", ""))
 
-        qq["dm_policy"] = _ask_choice("  私聊策略", ["open", "allowlist"], default=qq.get("dm_policy", "open"))
-        qq["group_policy"] = _ask_choice(
-            "  群聊策略", ["allowlist", "open", "disabled"], default=qq.get("group_policy", "allowlist")
-        )
-        qq["require_mention"] = _ask_yn("  群聊中需要 @机器人？", default=qq.get("require_mention", True))
-        qq["markdown_support"] = _ask_yn("  启用 Markdown 支持？", default=qq.get("markdown_support", True))
+    qq["dm_policy"] = _ask_choice("  私聊策略", ["open", "allowlist"], default=qq.get("dm_policy", "open"))
+    qq["group_policy"] = _ask_choice(
+        "  群聊策略", ["allowlist", "open", "disabled"], default=qq.get("group_policy", "allowlist")
+    )
+    qq["require_mention"] = _ask_yn("  群聊中需要 @机器人？", default=qq.get("require_mention", True))
+    qq["markdown_support"] = _ask_yn("  启用 Markdown 支持？", default=qq.get("markdown_support", True))
+
+
+def _configure_weixin(weixin: dict) -> None:
+    """Configure WeChat channel (called from _step_channel)."""
+    weixin["enabled"] = True
+
+    if weixin.get("account_id") and weixin.get("token") and _ask_skip("微信机器人", weixin, "account_id", "token"):
+        return
+
+    has_existing = bool(weixin.get("account_id") and weixin.get("token"))
+    if has_existing:
+        method = _ask_choice("  配置方式", ["保留当前配置", "扫码登录", "手动输入"], default="保留当前配置")
+    else:
+        method = _ask_choice("  配置方式", ["扫码登录", "手动输入"], default="扫码登录")
+
+    if method == "保留当前配置":
+        pass
+    elif method == "扫码登录":
+        print()
+        print("  正在获取微信二维码...")
+        try:
+            from src.channels.weixin_onboard import qr_login
+            result = qr_login()
+        except ImportError:
+            print("  缺少 aiohttp 或 cryptography 库，请运行: pip install aiohttp cryptography")
+            result = None
+        except Exception as exc:
+            print(f"  扫码登录失败: {exc}")
+            result = None
+
+        if result:
+            weixin["account_id"] = result["account_id"]
+            weixin["token"] = result["token"]
+            weixin["base_url"] = result.get("base_url", "https://ilinkai.weixin.qq.com")
+            print(f"  已自动填入 Account ID: {result['account_id']}")
+            if result.get("user_id") and not weixin.get("allowed_users"):
+                weixin.setdefault("allowed_users", [result["user_id"]])
+        else:
+            print("  扫码未完成，将使用手动输入。")
+            weixin["account_id"] = _ask("  Account ID", default=weixin.get("account_id", ""))
+            weixin["token"] = _ask("  Token", default=weixin.get("token", ""))
+    else:
+        weixin["account_id"] = _ask("  Account ID", default=weixin.get("account_id", ""))
+        weixin["token"] = _ask("  Token", default=weixin.get("token", ""))
+
+    weixin["dm_policy"] = _ask_choice("  私聊策略", ["open", "allowlist", "disabled"], default=weixin.get("dm_policy", "open"))
+    weixin["group_policy"] = _ask_choice(
+        "  群聊策略", ["disabled", "allowlist", "open"], default=weixin.get("group_policy", "disabled")
+    )
 
 
 def _step_search(config: dict) -> None:
     print()
-    print("  [5/9] 网页搜索")
+    print("  [4/8] 网页搜索")
     print("  ────────────────")
 
     tools = _section(config, "tools")
@@ -401,64 +466,6 @@ def _step_search(config: dict) -> None:
     ws["enabled"] = _ask_yn("  启用网页搜索？", default=ws.get("enabled", False))
     if ws["enabled"]:
         ws["api_key"] = _ask("  Tavily API 密钥", default=ws.get("api_key", "${TAVILY_API_KEY}"))
-
-
-def _step_weixin(config: dict) -> None:
-    print()
-    print("  [4/9] 微信机器人（可选）")
-    print("  ────────────────────────────")
-
-    channels = _section(config, "channels")
-    weixin = _section(channels, "weixin")
-
-    if weixin.get("enabled") and _ask_skip("微信机器人", weixin, "account_id", "token"):
-        return
-
-    enabled = _ask_yn("  启用微信机器人？", default=weixin.get("enabled", False))
-    weixin["enabled"] = enabled
-
-    if enabled:
-        has_existing = bool(weixin.get("account_id") and weixin.get("token"))
-        if has_existing:
-            method = _ask_choice("  配置方式", ["保留当前配置", "扫码登录", "手动输入"], default="保留当前配置")
-        else:
-            method = _ask_choice("  配置方式", ["扫码登录", "手动输入"], default="扫码登录")
-
-        if method == "保留当前配置":
-            pass
-        elif method == "扫码登录":
-            print()
-            print("  正在获取微信二维码...")
-            try:
-                from src.channels.weixin_onboard import qr_login
-
-                result = qr_login()
-            except ImportError:
-                print("  缺少 aiohttp 或 cryptography 库，请运行: pip install aiohttp cryptography")
-                result = None
-            except Exception as exc:
-                print(f"  扫码登录失败: {exc}")
-                result = None
-
-            if result:
-                weixin["account_id"] = result["account_id"]
-                weixin["token"] = result["token"]
-                weixin["base_url"] = result.get("base_url", "https://ilinkai.weixin.qq.com")
-                print(f"  已自动填入 Account ID: {result['account_id']}")
-                if result.get("user_id") and not weixin.get("allowed_users"):
-                    weixin.setdefault("allowed_users", [result["user_id"]])
-            else:
-                print("  扫码未完成，将使用手动输入。")
-                weixin["account_id"] = _ask("  Account ID", default=weixin.get("account_id", ""))
-                weixin["token"] = _ask("  Token", default=weixin.get("token", ""))
-        else:
-            weixin["account_id"] = _ask("  Account ID", default=weixin.get("account_id", ""))
-            weixin["token"] = _ask("  Token", default=weixin.get("token", ""))
-
-        weixin["dm_policy"] = _ask_choice("  私聊策略", ["open", "allowlist", "disabled"], default=weixin.get("dm_policy", "open"))
-        weixin["group_policy"] = _ask_choice(
-            "  群聊策略", ["disabled", "allowlist", "open"], default=weixin.get("group_policy", "disabled")
-        )
 
 
 def _check_chromium_installed() -> bool:
@@ -480,7 +487,7 @@ def _check_chromium_installed() -> bool:
 
 def _step_browser(config: dict) -> None:
     print()
-    print("  [6/9] 浏览器工具（可选）")
+    print("  [5/8] 浏览器工具（可选）")
     print("  ────────────────────────────")
     print("  启用后，AI 可以通过浏览器访问网页、截图、执行自动化操作。")
 
@@ -508,7 +515,7 @@ def _step_browser(config: dict) -> None:
 
 def _step_media_understanding(config: dict) -> None:
     print()
-    print("  [7/9] 媒体理解（可选）")
+    print("  [6/8] 媒体理解（可选）")
     print("  ────────────────────────────")
     print("  启用后，AI 可以识别图片内容、转录音频等。")
     print("  需要多模态模型 API（如 OpenAI GPT-4o 等）。")
@@ -527,7 +534,7 @@ def _step_media_understanding(config: dict) -> None:
 
 def _step_memory_store(config: dict) -> None:
     print()
-    print("  [8/9] 记忆存储（可选）")
+    print("  [7/8] 记忆存储（可选）")
     print("  ─────────────────────────")
     print("  启用后，AI 可以记住你的偏好、身份等信息。")
     print("  记忆数据保存在本地。配置模型判断更精准，但有额外开销；不配置则使用规则匹配。")
@@ -560,7 +567,7 @@ def _step_summary(config: dict) -> None:
     ms = config.get("memory_store", {})
 
     print()
-    print("  [9/9] 配置总览")
+    print("  [8/8] 配置总览")
     print("  ─────────────")
     print(f"  模型:       {model.get('provider', '?')}/{model.get('name', '?')}")
     if model.get("base_url"):
@@ -571,12 +578,12 @@ def _step_summary(config: dict) -> None:
         for fb in fallbacks:
             print(f"    - {fb.get('provider', '?')}/{fb.get('name', '?')}")
     print(f"  网关:       {gw.get('host', '?')}:{gw.get('port', '?')}")
-    print(f"  QQ 机器人:  {'已启用' if qq.get('enabled') else '未启用'}")
     if qq.get("enabled"):
-        print(f"    app_id:   {qq.get('app_id', '')}")
-    print(f"  微信机器人:  {'已启用' if weixin.get('enabled') else '未启用'}")
-    if weixin.get("enabled"):
-        print(f"    account_id: {weixin.get('account_id', '')}")
+        print(f"  渠道:       QQ (app_id: {qq.get('app_id', '')})")
+    elif weixin.get("enabled"):
+        print(f"  渠道:       微信 (account_id: {weixin.get('account_id', '')})")
+    else:
+        print(f"  渠道:       未启用")
     print(f"  网页搜索:   {'已启用' if ws.get('enabled') else '未启用'}")
     print(f"  浏览器工具: {'已启用' if br.get('enabled') else '未启用'}")
     print(f"  媒体理解:   {'已启用' if mu.get('enabled') else '未启用'}")
@@ -608,8 +615,7 @@ def run_wizard():
 
     _step_model(config)
     _step_gateway(config)
-    _step_qq(config)
-    _step_weixin(config)
+    _step_channel(config)
     _step_search(config)
     _step_browser(config)
     _step_media_understanding(config)

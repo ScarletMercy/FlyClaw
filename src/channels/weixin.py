@@ -1103,9 +1103,9 @@ class WeixinChannel(Channel):
         return await self.send_text(chat_id, text, reply_to)
 
     async def send_voice(self, chat_id: str, audio_path: str, caption: Optional[str] = None) -> bool:
-        fallback_caption = caption or "[voice message as attachment]"
+        fallback_caption = caption or "[voice message]"
         try:
-            result = await self._send_file_internal(chat_id, audio_path, fallback_caption, force_file_attachment=True)
+            result = await self._send_file_internal(chat_id, audio_path, fallback_caption, force_file_attachment=False)
             return result is not None
         except Exception as exc:
             logger.error("weixin send_voice failed to=%s: %s", _safe_id(chat_id), exc)
@@ -1307,6 +1307,13 @@ class WeixinChannel(Channel):
         chat_type_str = "group" if chat_type == "group" else "p2p"
         reply_fn = lambda t: self.send_text(effective_chat_id, t, message_id)
         stream_fn = self._create_stream_sender(effective_chat_id, message_id)
+
+        # Inject chat_id for WeChat send tools (so they can default to current chat)
+        try:
+            from src.tools.weixin_tools import set_current_weixin_chat_id
+            set_current_weixin_chat_id(effective_chat_id)
+        except ImportError:
+            pass  # weixin_tools not available, tools will handle missing chat_id
 
         logger.info("weixin: inbound from=%s type=%s media=%d", _safe_id(sender_id), chat_type_str, len(media_paths))
         await self._on_message_callback(
