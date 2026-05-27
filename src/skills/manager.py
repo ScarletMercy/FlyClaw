@@ -726,8 +726,8 @@ def get_tools() -> list:
                         "source": bundle.source,
                         "trust_level": bundle.trust_level,
                         "scan_verdict": scan_result.verdict,
-                        "install_path": str(install_dir),
                     },
+                    "message": f"技能 '{bundle.name}' 安装成功，可用 skill_view(name=\"{bundle.name}\") 查看和使用。",
                 }, ensure_ascii=False)
             except Exception as e:
                 logger.error("Hub install failed: %s", e)

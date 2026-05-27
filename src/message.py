@@ -70,6 +70,28 @@ _MAX_INTERRUPT_DEPTH = 5
 _MAX_PENDING_QUEUE = 10
 
 
+class _DrainContext:
+    __slots__ = (
+        "thread_id", "session_key", "chat_id", "sender_id",
+        "chat_type", "channel_prefix", "reply_fn", "stream_fn",
+        "system_prompt", "depth",
+    )
+
+    def __init__(self, *, thread_id, session_key, chat_id, sender_id,
+                 chat_type, channel_prefix, reply_fn, stream_fn,
+                 system_prompt, depth):
+        self.thread_id = thread_id
+        self.session_key = session_key
+        self.chat_id = chat_id
+        self.sender_id = sender_id
+        self.chat_type = chat_type
+        self.channel_prefix = channel_prefix
+        self.reply_fn = reply_fn
+        self.stream_fn = stream_fn
+        self.system_prompt = system_prompt
+        self.depth = depth
+
+
 class MessageHandler:
     def __init__(self, container):
         self._container = container
@@ -449,7 +471,21 @@ class MessageHandler:
                 result_state = await self._container.agent_loop.run(input_state, thread_id)
             except AP as exc:
                 self._approval_handler_threads.add(exc.thread_id)
-                asyncio.create_task(self._handle_approval_pending(exc, chat_id, channel_prefix))
+                saved_interrupt = self._interrupted_threads.pop(thread_id, None)
+                saved_queue = self._pending_queue.pop(thread_id, None)
+                drain_ctx = _DrainContext(
+                    thread_id=thread_id, session_key=session_key,
+                    chat_id=chat_id, sender_id=sender_id,
+                    chat_type=chat_type, channel_prefix=channel_prefix,
+                    reply_fn=reply_fn, stream_fn=stream_fn,
+                    system_prompt=system_prompt, depth=depth,
+                )
+                asyncio.create_task(self._handle_approval_pending(
+                    exc, chat_id, channel_prefix,
+                    saved_interrupt=saved_interrupt,
+                    saved_queue=saved_queue,
+                    drain_ctx=drain_ctx,
+                ))
                 return
 
             logger.debug("[flow] agent_loop run done")
@@ -649,6 +685,12 @@ class MessageHandler:
         if interrupt_msg:
             latest = await self._container.state_store.aload(thread_id)
             if latest:
+                has_msg = any(
+                    m.get("content") == interrupt_msg and m.get("role") == "user"
+                    for m in latest.messages[-5:]
+                )
+                if not has_msg:
+                    latest.append_message({"role": "user", "content": interrupt_msg})
                 await self._run_agent_turn(
                     input_state=latest,
                     thread_id=thread_id,
@@ -705,6 +747,10 @@ class MessageHandler:
         exc,
         chat_id: str,
         channel_prefix: str = "qq",
+        *,
+        saved_interrupt: str | None = None,
+        saved_queue: list[str] | None = None,
+        drain_ctx: _DrainContext | None = None,
     ):
         from src.tools.approval import get_approval_manager
         from src.agent.loop import ApprovalPending
@@ -794,6 +840,23 @@ class MessageHandler:
                 pass
         finally:
             self._approval_handler_threads.discard(thread_id)
+            if drain_ctx is not None:
+                if saved_interrupt is not None:
+                    self._interrupted_threads.setdefault(drain_ctx.thread_id, saved_interrupt)
+                if saved_queue:
+                    self._pending_queue.setdefault(drain_ctx.thread_id, saved_queue)
+                await self._drain_pending(
+                    thread_id=drain_ctx.thread_id,
+                    session_key=drain_ctx.session_key,
+                    chat_id=drain_ctx.chat_id,
+                    sender_id=drain_ctx.sender_id,
+                    chat_type=drain_ctx.chat_type,
+                    channel_prefix=drain_ctx.channel_prefix,
+                    reply_fn=drain_ctx.reply_fn,
+                    stream_fn=drain_ctx.stream_fn,
+                    system_prompt=drain_ctx.system_prompt,
+                    depth=drain_ctx.depth,
+                )
 
     async def _resume_and_reply(self, thread_id: str, decision: str, chat_id: str):
         """Fallback resume when _handle_approval_pending is not running.

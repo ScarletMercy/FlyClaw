@@ -108,6 +108,17 @@ async def describe_media(media_url: str) -> str:
 
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef
+    from src._container import get_container
+
+    container = get_container()
+    mu_config = container.config.tools.media_understanding
+    if not mu_config.enabled:
+        return []
+
+    model_name = mu_config.name or mu_config.image.name
+    if not model_name:
+        return []
+
     return [
         ToolDef.from_function(describe_media),
     ]

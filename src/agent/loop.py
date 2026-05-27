@@ -40,6 +40,8 @@ async def interruptible(event: asyncio.Event, coro):
             await p
         except (asyncio.CancelledError, Exception):
             pass
+    if wait_task in done:
+        return None
     if task in done:
         return task.result()
     return None
@@ -375,7 +377,9 @@ class AgentLoop:
                     get_approval_manager().clear_session(thread_id)
                 except Exception:
                     pass
-                self._store.get_interrupt_flag(thread_id).clear()
+                flag = self._store.get_interrupt_flag(thread_id)
+                if not flag.check()[0]:
+                    flag.clear()
                 duration_ms = (_time.monotonic() - start_ts) * 1000
                 await emit_async(
                     "agent_loop.completed",
@@ -394,7 +398,7 @@ class AgentLoop:
             tool_round += 1
             if self._should_parallelize(response.tool_calls):
                 try:
-                    parallel_results = await self._execute_tools_parallel(response.tool_calls, state, thread_id)
+                    parallel_results = await self._execute_tools_parallel(response.tool_calls, state, thread_id, interrupt_event=ie)
                 except ApprovalPending as ap:
                     for tc_id, result in ap.partial_results:
                         state.append_message({
@@ -1100,7 +1104,7 @@ class AgentLoop:
                 seen.add(p)
         return True
 
-    async def _execute_tools_parallel(self, tool_calls: list[Any], state: AgentState, thread_id: str) -> list[tuple[str, str]]:
+    async def _execute_tools_parallel(self, tool_calls: list[Any], state: AgentState, thread_id: str, interrupt_event: asyncio.Event | None = None) -> list[tuple[str, str]]:
         results: list[tuple[str, str] | BaseException] = [NotImplemented] * len(tool_calls)
 
         async def _run_one(idx: int, tc: Any) -> None:
@@ -1112,7 +1116,27 @@ class AgentLoop:
                 results[idx] = exc
 
         tasks = [asyncio.create_task(_run_one(i, tc)) for i, tc in enumerate(tool_calls)]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        gather_task = asyncio.gather(*tasks, return_exceptions=True)
+
+        if interrupt_event is not None:
+            gather_result = await interruptible(interrupt_event, gather_task)
+            if gather_result is None:
+                for t in tasks:
+                    if not t.done():
+                        t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                for i, r in enumerate(results):
+                    tc_id = tool_calls[i].id if hasattr(tool_calls[i], "id") else tool_calls[i].get("id", "")
+                    if r is NotImplemented:
+                        results[i] = (tc_id, "[error] 工具执行被打断")
+                    elif isinstance(r, ApprovalPending):
+                        from src.tools.approval import get_approval_manager
+                        get_approval_manager().cancel_pending(r.request_id)
+                        results[i] = (tc_id, "[error] 工具执行被打断（审批已取消）")
+                if state.pending_approval is not None:
+                    state.pending_approval = None
+        else:
+            await gather_task
 
         final: list[tuple[str, str]] = []
         for i, r in enumerate(results):
