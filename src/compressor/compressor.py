@@ -44,6 +44,43 @@ _SUMMARY_SYSTEM = """你是一个会话摘要助手。你需要将一段对话�
 _PLACEHOLDER = "[旧工具输出已清除以节省上下文空间]"
 
 
+def _find_safe_cut(non_system: list[dict], desired_tail_count: int) -> int:
+    """Find a cut point that doesn't split assistant+tool_results groups.
+
+    A group is: an assistant message with tool_calls + all its tool_results.
+    If the desired cut falls inside a group, the cut is moved to the group's
+    start so the group stays entirely in the tail.
+    """
+    n = len(non_system)
+    cut = n - desired_tail_count
+    if cut <= 0:
+        return 0
+
+    tc_id_to_asst_idx: dict[str, int] = {}
+    for i, m in enumerate(non_system):
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            for tc in m["tool_calls"]:
+                tid = tc.get("id", "")
+                if tid:
+                    tc_id_to_asst_idx[tid] = i
+
+    asst_to_max_result: dict[int, int] = {}
+    for i, m in enumerate(non_system):
+        if m.get("role") == "tool" and m.get("tool_call_id"):
+            asst_idx = tc_id_to_asst_idx.get(m["tool_call_id"])
+            if asst_idx is not None:
+                prev = asst_to_max_result.get(asst_idx, asst_idx)
+                asst_to_max_result[asst_idx] = max(prev, i)
+
+    for asst_idx in sorted(asst_to_max_result):
+        max_result = asst_to_max_result[asst_idx]
+        if asst_idx < cut <= max_result:
+            cut = asst_idx
+            break
+
+    return max(0, cut)
+
+
 def _estimate_tokens(messages: list[dict]) -> int:
     total = 0
     for m in messages:
@@ -128,8 +165,9 @@ class ContextCompressor:
             return messages
 
         tail_count = max(self.config.tail_messages, len(non_system) // 4)
-        tail = non_system[-tail_count:]
-        middle = non_system[:-tail_count]
+        cut = _find_safe_cut(non_system, tail_count)
+        tail = non_system[cut:]
+        middle = non_system[:cut]
 
         # 确保tail中的tool_call都有对应的tool result
         tail_tc_ids: set[str] = set()
@@ -207,10 +245,6 @@ class ContextCompressor:
             if m.get("role") == "tool":
                 content = m.get("content", "")
                 if isinstance(content, str) and len(content) > 300:
-                    # Skip if already truncated by _truncate_large_outputs (has file path reference)
-                    if "Full content saved to:" in content:
-                        result.append(m)
-                        continue
                     tool_name = call_id_to_name.get(
                         m.get("tool_call_id", ""), "unknown"
                     )
@@ -302,8 +336,9 @@ class ContextCompressor:
             return messages
 
         keep_recent = max(6, len(non_system) // 3)
-        kept = non_system[-keep_recent:]
-        pruned = non_system[:-keep_recent]
+        cut = _find_safe_cut(non_system, keep_recent)
+        kept = non_system[cut:]
+        pruned = non_system[:cut]
 
         if not pruned:
             return messages

@@ -152,7 +152,7 @@ def _estimate_tokens_simple(messages: list[dict]) -> int:
 class ApprovalPending(Exception):
     """Raised when a tool needs user approval. Loop pauses, caller resumes."""
 
-    def __init__(self, thread_id: str, request_id: str, tool_name: str, command_preview: str, denylisted: bool = False, timeout: int | None = None, auto_deny: bool = False, keys: list[str] | None = None):
+    def __init__(self, thread_id: str, request_id: str, tool_name: str, command_preview: str, denylisted: bool = False, timeout: int | None = None, auto_deny: bool = False, keys: list[str] | None = None, partial_results: list[tuple[str, str]] | None = None):
         self.thread_id = thread_id
         self.request_id = request_id
         self.tool_name = tool_name
@@ -161,6 +161,7 @@ class ApprovalPending(Exception):
         self.timeout = timeout
         self.auto_deny = auto_deny
         self.keys = keys or []
+        self.partial_results: list[tuple[str, str]] = list(partial_results) if partial_results else []
         super().__init__(f"需要审批: {tool_name} — {command_preview[:80]}")
 
 
@@ -204,10 +205,6 @@ class AgentLoop:
 
         self._memory_summary_cache: str = ""
         self._memory_summary_ts: float = 0
-
-        # Cache: avoids re-building identical messages across tool rounds
-        self._cached_history: list[dict] | None = None
-        self._cached_history_count: int = 0
 
         self._guardrails = ToolLoopGuardrails()
 
@@ -386,10 +383,28 @@ class AgentLoop:
             # 6. Execute tool calls (parallel when safe)
             tool_round += 1
             if self._should_parallelize(response.tool_calls):
-                parallel_results = await interruptible(ie, self._execute_tools_parallel(response.tool_calls, state, thread_id))
+                try:
+                    parallel_results = await interruptible(ie, self._execute_tools_parallel(response.tool_calls, state, thread_id))
+                except ApprovalPending as ap:
+                    for tc_id, result in ap.partial_results:
+                        state.append_message({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": result,
+                        })
+                    await self._store.save(thread_id, state)
+                    raise
                 if parallel_results is None:
                     if await self._check_interrupt(state, thread_id, start_ts, tool_round):
                         return state
+                    for tc in response.tool_calls:
+                        tc_id = tc.id if hasattr(tc, "id") else tc.get("id", "")
+                        state.append_message({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": "[error] interrupted",
+                        })
+                    await self._store.save(thread_id, state)
                     continue
                 for tc_id, result in parallel_results:
                     state.append_message({
@@ -695,19 +710,12 @@ class AgentLoop:
         return [{"role": "system", "content": system_text}] + list(history)
 
     def _truncate_large_outputs(self, messages: list[dict], thread_id: str = "") -> None:
-        """Truncate large tool outputs in-place, caching full content to temp files.
-
-        Modifies ``state.messages`` directly so that the ``_truncated`` flag
-        and truncated content persist across loop iterations.
-        """
-        from src.agent.tool_cache import cache_large_output
-
+        """Truncate large tool outputs in-place."""
         for m in messages:
-            if m.get("role") == "tool" and not m.get("_truncated"):
+            if m.get("role") == "tool":
                 content = m.get("content", "")
-                if isinstance(content, str) and len(content) > 8000:
-                    truncated, _ = cache_large_output(content, thread_id)
-                    m["content"] = truncated
+                if isinstance(content, str) and len(content) > 8000 and not m.get("_truncated"):
+                    m["content"] = content[:8000] + f"\n... [truncated, {len(content)} chars total]"
                     m["_truncated"] = True
 
 
@@ -875,7 +883,7 @@ class AgentLoop:
             return self._memory_summary_cache or ""
 
     def _build_system_prompt(self, state: AgentState, active_tools: list[ToolDef], memory_summary: str = "") -> str:
-        from src.prompt import _build_platform_hints
+        from src.prompt import _build_platform_hints, _build_tool_guidance
 
         parts = [self._prompt_soul, ""]
 
@@ -896,8 +904,9 @@ class AgentLoop:
             parts.append(platform)
 
         parts.append(self._prompt_tool_rules)
-        if self._prompt_tool_guidance:
-            parts.append(self._prompt_tool_guidance)
+        tool_guidance = "\n".join(_build_tool_guidance(active_tools))
+        if tool_guidance:
+            parts.append(tool_guidance)
         parts.append(self._prompt_safety)
         if self._prompt_skills:
             parts.append(self._prompt_skills)
@@ -1093,6 +1102,7 @@ class AgentLoop:
                         final.append((tc_j_id, "[已跳过] 等待审批中，执行已暂停。"))
                     elif not isinstance(results[j], BaseException):
                         final.append(results[j])
+                r.partial_results = list(final)
                 raise r
             if isinstance(r, BaseException):
                 final.append((tc_id, f"[error] {type(r).__name__}: {r}"))
