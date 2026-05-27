@@ -1137,8 +1137,10 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         await asyncio.sleep(0.5)
 
         import os
-        import sys
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        import subprocess
+
+        subprocess.Popen(["flyclaw"], close_fds=True)
+        os._exit(0)
 
     dispatcher.register_builtin("restart", cmd_restart)
 
