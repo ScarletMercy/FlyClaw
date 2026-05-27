@@ -471,7 +471,7 @@ def _check_chromium_installed() -> bool:
         )
         for line in ret.stdout.splitlines():
             stripped = line.strip().lower()
-            if "chromium-" in stripped and "headless" not in stripped:
+            if ("chromium-" in stripped or stripped.endswith("chromium")) and "headless shell" not in stripped:
                 return True
     except Exception:
         pass

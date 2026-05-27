@@ -210,7 +210,7 @@ class TestRBAC:
         config = AppConfig()
         rbac = RBAC(store, config)
         user = rbac.resolve_user("someuser")
-        assert user.role == UserRole.user
+        assert user.role == UserRole.owner
         rbac.store.close()
 
     def test_check_tool_access_guest(self, tmp_path):

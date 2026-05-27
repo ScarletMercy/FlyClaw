@@ -268,7 +268,6 @@ def register_dashboard(app: FastAPI, application):
                 "exec_enabled": cfg.tools.exec.enabled,
                 "exec_approval": cfg.tools.exec.approval_mode,
                 "exec_sandbox": cfg.tools.exec.sandbox_enabled,
-                "web_search": cfg.tools.web_search.enabled,
                 "web_fetch": cfg.tools.web_fetch.enabled,
                 "media": cfg.tools.media_understanding.enabled,
             },

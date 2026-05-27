@@ -166,7 +166,6 @@ class ExecToolConfig(BaseModel):
 
 
 class WebSearchToolConfig(BaseModel):
-    enabled: bool = False
     api_key: str = ""
 
 
@@ -388,7 +387,7 @@ class AuthConfig(BaseModel):
     """Authentication and access control configuration."""
 
     enabled: bool = True
-    default_role: Literal["owner", "admin", "user", "guest"] = "user"
+    default_role: Literal["owner", "admin", "user", "guest"] = "owner"
     pairing_enabled: bool = True
     pairing_ttl_seconds: int = 300  # Pairing code validity
     db_path: str = "~/.flyclaw/data/auth.db"

@@ -90,7 +90,6 @@ def cmd_doctor(args):
         print(f"[通过] 记忆系统已启用 (db={config.memory.db_path})")
 
     print(f"[通过] 命令执行: 已启用={config.tools.exec.enabled}, 审批模式={config.tools.exec.approval_mode}")
-    print(f"[通过] 网页搜索: 已启用={config.tools.web_search.enabled}")
 
     if config.security.enabled:
         print("[通过] 安全检查已启用")

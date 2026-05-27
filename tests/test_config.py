@@ -79,7 +79,7 @@ class TestConfigModels:
 
         auth = AuthConfig()
         assert auth.enabled is True
-        assert auth.default_role == "user"
+        assert auth.default_role == "owner"
         assert auth.pairing_enabled is True
         assert auth.pairing_ttl_seconds == 300
 

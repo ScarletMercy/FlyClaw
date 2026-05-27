@@ -194,6 +194,10 @@ def _resolve_type(py_type: Any) -> dict[str, Any]:
     if origin is Literal:
         args = getattr(py_type, "__args__", ())
         values = [a for a in args if a is not type(None)]
+        if not values:
+            return {"type": "string"}
+        if all(isinstance(v, bool) for v in values):
+            return {"type": "boolean", "enum": values}
         if all(isinstance(v, str) for v in values):
             return {"type": "string", "enum": values}
         if all(isinstance(v, int) for v in values):
