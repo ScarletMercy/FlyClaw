@@ -4,13 +4,14 @@ import asyncio
 import json
 import logging
 from pathlib import Path
+from typing import Literal
 
 from src.agent.tooldef import ToolDef
 
 logger = logging.getLogger("flyclaw.canvas.tool")
 
 
-async def canvas_render(text: str, format: str = "text", surface_id: str = "main") -> str:
+async def canvas_render(text: str, format: Literal["text", "markdown", "json", "html"] = "text", surface_id: str = "main") -> str:
     """Render content on the canvas. Use this to display rich output to the user.
 
     Args:

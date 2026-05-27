@@ -154,7 +154,7 @@ class ExecToolConfig(BaseModel):
     approval_mode: Literal["off", "ask", "on_denylist_miss", "always"] = "off"
     deny_patterns: list[str] = []
     max_output_bytes: int = 102400
-    max_concurrent: int = 3
+    max_concurrent: int = 5
     audit_log: bool = True
     sandbox_enabled: bool = True
     sandbox_allowed_dirs: list[str] = Field(
@@ -255,6 +255,15 @@ class WindowsUseConfig(BaseModel):
     ocr_lang: str = "ch"
 
 
+class GuardrailConfig(BaseModel):
+    """Tool loop guardrail thresholds."""
+
+    enabled: bool = True
+    repeat_fail_block: int = 5
+    storm_block: int = 8
+    stall_block: int = 5
+
+
 class ToolsConfig(BaseModel):
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     web_search: WebSearchToolConfig = Field(default_factory=WebSearchToolConfig)
@@ -264,6 +273,7 @@ class ToolsConfig(BaseModel):
     media_understanding: MediaUnderstandingConfig = Field(default_factory=MediaUnderstandingConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     windows_use: WindowsUseConfig = Field(default_factory=WindowsUseConfig)
+    guardrails: GuardrailConfig = Field(default_factory=GuardrailConfig)
 
 
 class SnapshotConfig(BaseModel):

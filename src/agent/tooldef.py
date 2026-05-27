@@ -9,7 +9,7 @@ from __future__ import annotations
 import inspect
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, get_type_hints
+from typing import Any, Callable, Literal, get_type_hints
 
 logger = logging.getLogger("flyclaw.agent.tooldef")
 
@@ -190,6 +190,15 @@ def _resolve_type(py_type: Any) -> dict[str, Any]:
         if args:
             result["items"] = _resolve_type(args[0])
         return result
+
+    if origin is Literal:
+        args = getattr(py_type, "__args__", ())
+        values = [a for a in args if a is not type(None)]
+        if all(isinstance(v, str) for v in values):
+            return {"type": "string", "enum": values}
+        if all(isinstance(v, int) for v in values):
+            return {"type": "integer", "enum": values}
+        return {"type": "string", "enum": [str(v) for v in values]}
 
     if origin is object or (hasattr(py_type, "__args__") and py_type.__args__):
         args = getattr(py_type, "__args__", ())

@@ -60,6 +60,8 @@ def _make_config(**overrides):
     config.tools.policy.allow = ["*"]
     config.tools.policy.deny = []
     config.tools.policy.owner_only = []
+    config.tools.guardrails = MagicMock()
+    config.tools.guardrails.enabled = False
     config.compression = CompressionConfig()
     config.skills = MagicMock()
     config.skills.creation_nudge_interval = 0

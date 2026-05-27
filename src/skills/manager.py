@@ -12,7 +12,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from src.skills.loader import load_skill
 from src.skills.types import Skill, SkillMetadata
@@ -448,7 +448,7 @@ def get_tools() -> list:
         return json.dumps({"error": f"Skill not found: {name}"})
 
     async def skill_manage(
-        action: str,
+        action: Literal["create", "edit", "patch", "delete", "toggle", "write_file", "remove_file"],
         name: str = "",
         content: str = "",
         description: str = "",
@@ -590,7 +590,7 @@ def get_tools() -> list:
             return json.dumps({"error": f"Unknown action: {action}. Valid actions: create, edit, patch, delete, toggle, write_file, remove_file"})
 
     async def skill_hub(
-        action: str,
+        action: Literal["search_hub", "inspect_hub", "install_hub", "scan_hub", "install", "uninstall"],
         query: str = "",
         identifier: str = "",
         name: str = "",

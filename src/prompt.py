@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import platform
@@ -119,8 +120,22 @@ def _build_platform_hints(channel: str) -> list[str]:
     return ["## 平台", hint, ""]
 
 
-def _build_tooling_rules() -> list[str]:
+def _build_sandbox_hints(sandbox_enabled: bool, workspace_dir: str = "") -> list[str]:
+    if not sandbox_enabled:
+        return []
+    scope = workspace_dir or os.getcwd()
     return [
+        "## 沙盒模式",
+        "当前为沙盒模式，所有文件读写和命令执行都被限制在工作目录范围内。",
+        f"允许范围：{scope}",
+        "不要尝试访问工作目录之外的文件或路径，所有活动都只能在工作目录进行。",
+        "",
+    ]
+
+
+def _build_tooling_rules(tools: list | None = None) -> list[str]:
+    tool_names = {t.name for t in tools} if tools else set()
+    lines = [
         "## 工具调用规则",
         "始终使用原生工具调用，不要将工具调用输出为文本、XML 或伪标签。",
         "不要描述常规工具调用 — 直接调用。仅在多步骤工作、敏感操作或被要求时才描述。",
@@ -131,11 +146,15 @@ def _build_tooling_rules() -> list[str]:
         "- edit_file 前必须先 read_file，需要精确匹配 old_string",
         "- 优先使用 file_tools（read_file/write_file/edit_file/list_dir/grep/glob）而非 exec_command",
         "- 在回复文本中用 <media>path</media> 标签包裹本地文件路径，系统自动识别类型并发送",
-        "- 浏览器自动化：先 browser_navigate 打开网页，再 browser_snapshot 获取元素引用（@e1, @e2...），操作失败时重新 snapshot",
+    ]
+    if "browser_navigate" in tool_names:
+        lines.append("- 浏览器自动化：先 browser_navigate 打开网页，再 browser_snapshot 获取元素引用（@e1, @e2...），操作失败时重新 snapshot")
+    lines.extend([
         "- 当用户提及过去的对话内容，用 session_search 检索历史记录，不要让用户重复",
         "- 完成复杂任务（5+ 次工具调用）后，主动用 skill_manage(action=\"create\") 保存为技能；发现技能过时立即用 patch 修补",
         "",
-    ]
+    ])
+    return lines
 
 
 def _build_tool_guidance(tools: list) -> list[str]:
@@ -144,7 +163,40 @@ def _build_tool_guidance(tools: list) -> list[str]:
     lines = ["## 可用工具", ""]
     for t in tools:
         desc = t.description.split("\n")[0].strip()
-        lines.append(f"{t.name}：{desc}")
+        props = t.parameters.get("properties", {})
+        required = set(t.parameters.get("required", []))
+        if not props:
+            lines.append(f"- {t.name}() — {desc}")
+            continue
+        sig_parts = []
+        has_more = False
+        shown_optional = 0
+        for pname, pdef in props.items():
+            is_req = pname in required
+            enum_vals = pdef.get("enum")
+            if is_req or enum_vals or shown_optional < 2:
+                ptype = pdef.get("type", "string")
+                if enum_vals:
+                    type_str = "|".join(json.dumps(v) for v in enum_vals)
+                elif ptype == "array":
+                    type_str = "array"
+                else:
+                    type_str = ptype
+                default = pdef.get("default")
+                if is_req:
+                    sig_parts.append(f"{pname}: {type_str}")
+                elif default is not None:
+                    sig_parts.append(f"{pname}: {type_str} = {json.dumps(default)}")
+                else:
+                    sig_parts.append(f"{pname}: {type_str}")
+                if not is_req and not enum_vals:
+                    shown_optional += 1
+            else:
+                has_more = True
+        sig = ", ".join(sig_parts)
+        if has_more:
+            sig += ", ..."
+        lines.append(f"- {t.name}({sig}) — {desc}")
     lines.append("")
     return lines
 
@@ -239,7 +291,15 @@ def build_system_prompt(
 
     lines.extend(_build_environment_hints(workspace_dir))
     lines.extend(_build_platform_hints(channel))
-    lines.extend(_build_tooling_rules())
+
+    sandbox_enabled = True
+    if config:
+        exec_cfg = getattr(getattr(config, "tools", None), "exec", None)
+        if exec_cfg:
+            sandbox_enabled = getattr(exec_cfg, "sandbox_enabled", True)
+    lines.extend(_build_sandbox_hints(sandbox_enabled, workspace_dir))
+
+    lines.extend(_build_tooling_rules(tools))
     lines.extend(_build_tool_guidance(tools))
     lines.extend(_build_safety())
     lines.extend(_build_skills_section(skills_prompt))

@@ -127,10 +127,11 @@ _PARALLEL_SAFE_TOOLS = frozenset({
     "web_search", "web_fetch", "session_search",
     "describe_media",
     "memory", "cronjob", "task_manage", "skills_list", "skill_view", "skill_manage", "skill_hub",
+    "exec_command",
 })
 
 _PATH_SCOPED_TOOLS = frozenset({
-    "read_file", "write_file", "edit_file", "grep", "glob",
+    "read_file", "write_file", "edit_file", "grep", "glob", "exec_command",
 })
 
 
@@ -206,7 +207,17 @@ class AgentLoop:
         self._memory_summary_cache: str = ""
         self._memory_summary_ts: float = 0
 
-        self._guardrails = ToolLoopGuardrails()
+        gr_cfg = None
+        if config and hasattr(config, "tools"):
+            gr_cfg = getattr(config.tools, "guardrails", None)
+        if gr_cfg and getattr(gr_cfg, "enabled", False):
+            self._guardrails = ToolLoopGuardrails(
+                repeat_fail_block=getattr(gr_cfg, "repeat_fail_block", 5),
+                storm_block=getattr(gr_cfg, "storm_block", 8),
+                stall_block=getattr(gr_cfg, "stall_block", 5),
+            )
+        else:
+            self._guardrails = ToolLoopGuardrails()
 
         self._auto_deny_approval: bool = False
 
@@ -842,7 +853,7 @@ class AgentLoop:
 
         self._prompt_soul = _load_soul_md()
         self._prompt_env = "\n".join(_build_environment_hints(workspace_dir))
-        self._prompt_tool_rules = "\n".join(_build_tooling_rules())
+        self._prompt_tool_rules = "\n".join(_build_tooling_rules(tools))
         self._prompt_tool_guidance = "\n".join(_build_tool_guidance(tools))
         self._prompt_safety = "\n".join(_build_safety())
         self._prompt_skills = "\n".join(_build_skills_section(skills_prompt)) if skills_prompt else ""
@@ -883,7 +894,8 @@ class AgentLoop:
             return self._memory_summary_cache or ""
 
     def _build_system_prompt(self, state: AgentState, active_tools: list[ToolDef], memory_summary: str = "") -> str:
-        from src.prompt import _build_platform_hints, _build_tool_guidance
+        from src.prompt import _build_platform_hints, _build_tool_guidance, _build_sandbox_hints
+        from src.tools.exec import is_sandbox_enabled
 
         parts = [self._prompt_soul, ""]
 
@@ -902,6 +914,18 @@ class AgentLoop:
         platform = self._prompt_platform_cache[channel]
         if platform:
             parts.append(platform)
+
+        # Sandbox hints — dynamically read current state (not cached, since /sandbox toggles at runtime)
+        from pathlib import Path as _Path
+        workspace_dir = "."
+        if self._config:
+            agents_cfg = getattr(self._config, "agents", None)
+            if agents_cfg:
+                raw_ws = getattr(agents_cfg, "workspace", ".") or "."
+                workspace_dir = str(_Path(raw_ws).expanduser().resolve())
+        sandbox_hints = _build_sandbox_hints(is_sandbox_enabled(), workspace_dir)
+        if sandbox_hints:
+            parts.append("\n".join(sandbox_hints))
 
         parts.append(self._prompt_tool_rules)
         tool_guidance = "\n".join(_build_tool_guidance(active_tools))
@@ -1063,7 +1087,7 @@ class AgentLoop:
             try:
                 args_str = tc.function.arguments if hasattr(tc, "function") else tc.get("function", {}).get("arguments", "")
                 args = json.loads(args_str) if args_str else {}
-                p = args.get("path", args.get("file_path", args.get("directory", "")))
+                p = args.get("path", args.get("file_path", args.get("directory", args.get("workdir", ""))))
                 if p:
                     paths.append(str(p).lower().rstrip("/\\"))
             except (json.JSONDecodeError, TypeError):

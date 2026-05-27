@@ -7,7 +7,7 @@ import logging
 import threading
 import time
 from contextvars import ContextVar
-from typing import Optional
+from typing import Literal, Optional
 
 from src.tools.exceptions import ToolExecutionError
 
@@ -621,7 +621,7 @@ async def exec_command(
             raise ToolExecutionError(f"{type(e).__name__}: {e}")
 
 
-async def process_status(action: str, session_id: str = "", timeout: int = 300, offset: int = 0, limit: int = 200) -> str:
+async def process_status(action: Literal["list", "poll", "wait", "kill", "log"], session_id: str = "", timeout: int = 300, offset: int = 0, limit: int = 200) -> str:
     """Manage background processes started with exec_command(background=true).
 
     Args:
@@ -634,9 +634,9 @@ async def process_status(action: str, session_id: str = "", timeout: int = 300, 
     from src.tools.process import get_process_registry
 
     registry = get_process_registry()
-    action = action.strip().lower()
+    normalized = action.strip().lower()
 
-    if action == "list":
+    if normalized == "list":
         sessions = registry.list_sessions()
         if not sessions:
             return "No background processes."
@@ -648,29 +648,29 @@ async def process_status(action: str, session_id: str = "", timeout: int = 300, 
             )
         return "\n".join(lines)
 
-    if action == "poll":
+    if normalized == "poll":
         if not session_id:
             return "Error: session_id required for poll."
         result = await registry.poll(session_id)
         return json.dumps(result, ensure_ascii=False)
 
-    if action == "wait":
+    if normalized == "wait":
         if not session_id:
             return "Error: session_id required for wait."
         result = await registry.wait(session_id, timeout=timeout)
         return json.dumps(result, ensure_ascii=False)
 
-    if action == "kill":
+    if normalized == "kill":
         if not session_id:
             return "Error: session_id required for kill."
         return await registry.kill(session_id)
 
-    if action == "log":
+    if normalized == "log":
         if not session_id:
             return "Error: session_id required for log."
         return await registry.log(session_id, offset=offset, limit=limit)
 
-    return f"Unknown action: '{action}'. Use: list, poll, wait, kill, log."
+    return f"Unknown action: '{normalized}'. Use: list, poll, wait, kill, log."
 
 
 def get_tools() -> list:

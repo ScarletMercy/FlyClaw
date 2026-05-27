@@ -241,7 +241,7 @@ def _configure_fallbacks(model: dict) -> None:
 
 
 def _step_model(config: dict) -> None:
-    print("  [1/8] 模型提供商")
+    print("  [1/9] 模型提供商")
     print("  ────────────────────")
 
     model = _section(config, "model")
@@ -311,7 +311,7 @@ def _step_model(config: dict) -> None:
 
 def _step_gateway(config: dict) -> None:
     print()
-    print("  [2/8] 网关配置")
+    print("  [2/9] 网关配置")
     print("  ────────────")
 
     gw = _section(config, "gateway")
@@ -327,7 +327,7 @@ def _step_gateway(config: dict) -> None:
 
 def _step_qq(config: dict) -> None:
     print()
-    print("  [3/8] QQ 机器人")
+    print("  [3/9] QQ 机器人")
     print("  ─────────────────────")
 
     channels = _section(config, "channels")
@@ -389,7 +389,7 @@ def _step_qq(config: dict) -> None:
 
 def _step_search(config: dict) -> None:
     print()
-    print("  [5/8] 网页搜索")
+    print("  [5/9] 网页搜索")
     print("  ────────────────")
 
     tools = _section(config, "tools")
@@ -405,7 +405,7 @@ def _step_search(config: dict) -> None:
 
 def _step_weixin(config: dict) -> None:
     print()
-    print("  [4/8] 微信机器人（可选）")
+    print("  [4/9] 微信机器人（可选）")
     print("  ────────────────────────────")
 
     channels = _section(config, "channels")
@@ -461,9 +461,54 @@ def _step_weixin(config: dict) -> None:
         )
 
 
+def _check_chromium_installed() -> bool:
+    """检查 Playwright Chromium 是否已安装。"""
+    import subprocess
+    try:
+        ret = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "--list"],
+            capture_output=True, text=True, timeout=15,
+        )
+        for line in ret.stdout.splitlines():
+            stripped = line.strip().lower()
+            if "chromium-" in stripped and "headless" not in stripped:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _step_browser(config: dict) -> None:
+    print()
+    print("  [6/9] 浏览器工具（可选）")
+    print("  ────────────────────────────")
+    print("  启用后，AI 可以通过浏览器访问网页、截图、执行自动化操作。")
+
+    tools = _section(config, "tools")
+    br = _section(tools, "browser")
+
+    enabled = _ask_yn("  启用浏览器工具？", default=br.get("enabled", False))
+    br["enabled"] = enabled
+
+    if enabled:
+        if _check_chromium_installed():
+            print("  Chromium 已安装，无需重复安装。")
+        elif _ask_yn("  现在安装 Chromium 浏览器（Playwright）？", default=True):
+            print("  正在安装 Chromium...")
+            import subprocess
+            ret = subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                capture_output=False,
+            )
+            if ret.returncode == 0:
+                print("  Chromium 安装完成。")
+            else:
+                print("  Chromium 安装失败，请稍后手动运行: playwright install chromium")
+
+
 def _step_media_understanding(config: dict) -> None:
     print()
-    print("  [6/8] 媒体理解（可选）")
+    print("  [7/9] 媒体理解（可选）")
     print("  ────────────────────────────")
     print("  启用后，AI 可以识别图片内容、转录音频等。")
     print("  需要多模态模型 API（如 OpenAI GPT-4o 等）。")
@@ -482,7 +527,7 @@ def _step_media_understanding(config: dict) -> None:
 
 def _step_memory_store(config: dict) -> None:
     print()
-    print("  [7/8] 记忆存储（可选）")
+    print("  [8/9] 记忆存储（可选）")
     print("  ─────────────────────────")
     print("  启用后，AI 可以记住你的偏好、身份等信息。")
     print("  记忆数据保存在本地。配置模型判断更精准，但有额外开销；不配置则使用规则匹配。")
@@ -510,11 +555,12 @@ def _step_summary(config: dict) -> None:
     qq = config.get("channels", {}).get("qq", {})
     weixin = config.get("channels", {}).get("weixin", {})
     ws = config.get("tools", {}).get("web_search", {})
+    br = config.get("tools", {}).get("browser", {})
     mu = config.get("tools", {}).get("media_understanding", {})
     ms = config.get("memory_store", {})
 
     print()
-    print("  [8/8] 配置总览")
+    print("  [9/9] 配置总览")
     print("  ─────────────")
     print(f"  模型:       {model.get('provider', '?')}/{model.get('name', '?')}")
     if model.get("base_url"):
@@ -532,6 +578,7 @@ def _step_summary(config: dict) -> None:
     if weixin.get("enabled"):
         print(f"    account_id: {weixin.get('account_id', '')}")
     print(f"  网页搜索:   {'已启用' if ws.get('enabled') else '未启用'}")
+    print(f"  浏览器工具: {'已启用' if br.get('enabled') else '未启用'}")
     print(f"  媒体理解:   {'已启用' if mu.get('enabled') else '未启用'}")
     if mu.get("enabled") and mu.get("name"):
         print(f"    模型:     {mu['name']}")
@@ -564,6 +611,7 @@ def run_wizard():
     _step_qq(config)
     _step_weixin(config)
     _step_search(config)
+    _step_browser(config)
     _step_media_understanding(config)
     _step_memory_store(config)
     _step_summary(config)

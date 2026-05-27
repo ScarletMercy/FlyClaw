@@ -7,7 +7,7 @@ import logging
 import os
 import time
 from contextvars import ContextVar
-from typing import Optional
+from typing import Literal, Optional
 
 logger = logging.getLogger("flyclaw.browser.tools")
 
@@ -127,7 +127,7 @@ async def browser_type(ref: str, text: str, submit: bool = False) -> str:
     return f"Typed '{text}' into {ref}"
 
 
-async def browser_scroll(direction: str = "down", amount: int = 3) -> str:
+async def browser_scroll(direction: Literal["up", "down", "left", "right"] = "down", amount: int = 3) -> str:
     """Scroll the page in a direction.
 
     Args:

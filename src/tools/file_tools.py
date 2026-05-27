@@ -6,7 +6,7 @@ import os
 import threading
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 logger = logging.getLogger("flyclaw.file_tools")
 
@@ -210,7 +210,7 @@ def _path_not_found_hint(path: str, resolved: str) -> str:
 
 def grep(pattern: str, path: str = ".", file_pattern: str = "*",
          limit: int = 50, offset: int = 0,
-         output_mode: str = "content") -> str:
+         output_mode: Literal["content", "files_only"] = "content") -> str:
     """在文件内容中搜索匹配的文本行（正则表达式）。
 
     Args:
