@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -1115,6 +1116,31 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         return "\n".join(lines)
 
     dispatcher.register_builtin("voice", cmd_voice)
+
+    async def cmd_restart(args: str, ctx: dict) -> str:
+        zh = container.config.agents.language == "zh"
+        logger.info("Restart requested via /restart command")
+
+        chat_id = ctx.get("chat_id", "")
+        channel_prefix = ctx.get("channel_prefix", "")
+        ch = None
+        if channel_prefix == "qq" and container.qq:
+            ch = container.qq
+        elif channel_prefix == "weixin" and container.weixin:
+            ch = container.weixin
+        if ch and chat_id:
+            try:
+                await ch.send_text(chat_id, "🔄 正在重启..." if zh else "🔄 Restarting...")
+            except Exception:
+                pass
+
+        await asyncio.sleep(0.5)
+
+        import os
+        import sys
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    dispatcher.register_builtin("restart", cmd_restart)
 
     if container.config.auth.enabled and container.rbac:
         register_auth_commands(dispatcher, container)

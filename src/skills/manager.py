@@ -599,12 +599,24 @@ def get_tools() -> list:
     ) -> str:
         """Search, inspect, install, scan skills from remote hubs, or install/uninstall from URL or local path.
 
+        Actions:
+            search_hub: Search remote skill hubs by query.
+            inspect_hub: View skill details from search results.
+            install_hub: Download and install a skill from remote hub (with guard scan).
+            scan_hub: Run security scan on a locally installed skill.
+            install: Install a skill from a local path or URL. Supports:
+                - Local directory containing SKILL.md
+                - Local .zip file containing SKILL.md
+                - Remote URL pointing to a .zip file
+                When user sends a skill package (zip), save it first then use this action.
+            uninstall: Remove a locally installed skill.
+
         Args:
             action: Operation type (search_hub, inspect_hub, install_hub, scan_hub, install, uninstall)
             query: Search query (for search_hub)
             identifier: Skill identifier from search results (for inspect_hub, install_hub)
             name: Skill name (for scan_hub, uninstall)
-            source: Install source URL or local path (for install)
+            source: Source path or URL (for install). Accepts local directory, local .zip, or remote .zip URL.
             force: Force install despite blocked scan verdict (for install_hub)
         """
         from src._container import get_container

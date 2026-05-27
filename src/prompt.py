@@ -223,6 +223,7 @@ def _build_skills_section(skills_prompt: str) -> list[str]:
         "如果都不适用，不要调用任何技能工具（skills_list/skill_view/skill_manage/skill_hub）。不要用 read_file 读取技能文件。",
         "如果用户需要的功能在本地技能中找不到，用 skill_hub(action=\"search_hub\", query=\"...\") 搜索远程技能库。",
         "搜索到合适的技能后，用 skill_hub(action=\"inspect_hub\", identifier=\"...\") 查看详情，确认后用 skill_hub(action=\"install_hub\", identifier=\"...\") 安装。",
+        "当用户发送了 skill 压缩包文件时，先保存到本地，再用 skill_hub(action=\"install\", source=\"保存路径\") 安装。",
         "注意：如果 search_hub/inspect_hub/install_hub 返回 'Hub is disabled in configuration'，说明远程技能库已禁用，只能使用本地技能。",
         "限制：最多加载一个技能；仅在选定后加载。\n"
         "完成困难或迭代式任务后，主动提出保存为技能。",

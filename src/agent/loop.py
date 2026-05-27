@@ -12,7 +12,7 @@ import json
 import logging
 import random
 import re
-from typing import Any
+from typing import Any, ClassVar
 
 from src.agent.client import ChatClient, ChatResponse, FallbackChain
 from src.agent.guardrails import ToolLoopGuardrails
@@ -713,10 +713,28 @@ class AgentLoop:
         history = self._sanitize_surrogates(history)
         return [{"role": "system", "content": system_text}] + list(history)
 
+    _NO_TRUNCATE_TOOLS: ClassVar[frozenset[str]] = frozenset({"skill_view"})
+
     def _truncate_large_outputs(self, messages: list[dict], thread_id: str = "") -> None:
-        """Truncate large tool outputs in-place."""
+        """Truncate large tool outputs in-place, but preserve skill_view results."""
+        tc_id_to_name: dict[str, str] = {}
+        for m in messages:
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                for tc in m["tool_calls"]:
+                    if isinstance(tc, dict):
+                        tid = tc.get("id", "")
+                        fname = tc.get("function", {}).get("name", "")
+                    else:
+                        tid = getattr(tc, "id", "")
+                        fname = getattr(tc.function, "name", "")
+                    if tid:
+                        tc_id_to_name[tid] = fname
+
         for m in messages:
             if m.get("role") == "tool":
+                tc_id = m.get("tool_call_id", "")
+                if tc_id in tc_id_to_name and tc_id_to_name[tc_id] in self._NO_TRUNCATE_TOOLS:
+                    continue
                 content = m.get("content", "")
                 if isinstance(content, str) and len(content) > 8000 and not m.get("_truncated"):
                     m["content"] = content[:8000] + f"\n... [truncated, {len(content)} chars total]"
