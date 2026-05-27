@@ -164,15 +164,26 @@ class ApprovalManager:
         if pending is None:
             logger.warning("Unknown approval request: %s", request_id)
             return False
+        if pending.event.is_set():
+            logger.debug("Approval already resolved: %s, skipping", request_id)
+            return False
         pending.decision = decision
         pending.user_response = user_response
         pending.event.set()
         logger.info("Approval resolved: %s -> %s", request_id, decision)
         return True
 
+    def is_resolved(self, request_id: str) -> bool:
+        pending = self._pending.get(request_id)
+        return pending is not None and pending.event.is_set()
+
     def get_pending(self, request_id: str) -> Optional[ApprovalRequest]:
         pending = self._pending.get(request_id)
         return pending.request if pending else None
+
+    def cancel_pending(self, request_id: str) -> bool:
+        """Cancel an orphaned approval that nobody is awaiting."""
+        return self._pending.pop(request_id, None) is not None
 
     def list_pending(self) -> list[ApprovalRequest]:
         return [p.request for p in self._pending.values()]

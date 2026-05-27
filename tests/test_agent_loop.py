@@ -350,20 +350,6 @@ class TestToolLoopGuardrails:
         assert result.blocked is True
         assert "failure storm" in result.reason
 
-    def test_idempotent_stall_blocks(self):
-        from src.agent.guardrails import ToolLoopGuardrails, _IDEMPOTENT_TOOLS
-        assert "read_file" in _IDEMPOTENT_TOOLS
-        g = ToolLoopGuardrails(stall_block=3)
-        for i in range(2):
-            g.record("read_file", {"path": "test.txt"}, success=True, result="same content")
-        result = g.check("read_file", {"path": "test.txt"})
-        assert result is None
-        g.record("read_file", {"path": "test.txt"}, success=True, result="same content")
-        result = g.check("read_file", {"path": "test.txt"})
-        assert result is not None
-        assert result.blocked is True
-        assert "idempotent stall" in result.reason
-
     def test_reset_clears_history(self):
         from src.agent.guardrails import ToolLoopGuardrails
         g = ToolLoopGuardrails(repeat_fail_block=2)

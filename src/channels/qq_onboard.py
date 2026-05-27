@@ -174,8 +174,17 @@ def qr_register(timeout_seconds: int = 600) -> Optional[dict]:
         url = build_connect_url(task_id)
 
         print()
-        print(f"  请打开以下链接完成配置：")
+        print(f"  请扫描以下二维码完成配置：")
         print(f"  {url}")
+        try:
+            import qrcode
+
+            qr = qrcode.QRCode()
+            qr.add_data(url)
+            qr.make(fit=True)
+            qr.print_ascii(invert=True)
+        except Exception as exc:
+            print(f"  （终端二维码渲染失败: {exc}，请直接打开上面的链接）")
         print()
 
         while time.monotonic() < deadline:

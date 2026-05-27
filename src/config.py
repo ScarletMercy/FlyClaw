@@ -129,6 +129,8 @@ class WeixinConfig(BaseModel):
     group_allowed_users: list[str] = Field(default_factory=list)
     split_multiline_messages: bool = False
     home_channel: str = ""
+    send_retry_count: int = 4
+    send_chunk_delay: float = 2.0
 
 
 class ChannelsConfig(BaseModel):
@@ -260,7 +262,6 @@ class GuardrailConfig(BaseModel):
     enabled: bool = True
     repeat_fail_block: int = 5
     storm_block: int = 8
-    stall_block: int = 5
 
 
 class ToolsConfig(BaseModel):

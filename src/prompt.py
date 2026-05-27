@@ -56,7 +56,7 @@ PLATFORM_HINTS: dict[str, str] = {
         "你运行在 QQ 消息平台上。支持 markdown 格式和表情。"
         "发送媒体文件：在回复中用 <media>路径</media> 标签包裹本地文件路径，图片会作为原生图片发送，"
         "其他文件作为可下载文档发送。"
-        "也可以使用 qq_send_image 和 qq_send_file 工具直接发送。"
+        "也可以使用 send_image 和 send_file 工具直接发送。"
     ),
     "api": (
         "你通过 API 服务响应。渲染层未知，假设纯文本输出，不使用 markdown 格式。"

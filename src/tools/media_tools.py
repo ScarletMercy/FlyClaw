@@ -13,11 +13,11 @@ def set_current_channel(channel: str):
     _current_channel.set(channel)
 
 
-async def send_voice(audio_source: str) -> str:
+async def send_voice(file_path: str) -> str:
     """Send an audio file as a voice message to the current chat.
 
     Args:
-        audio_source: URL or local file path of the audio file to send.
+        file_path: URL or local file path of the audio file to send.
     """
     from src.tools.cron_tools import _current_chat_id
     from pathlib import Path
@@ -29,12 +29,12 @@ async def send_voice(audio_source: str) -> str:
 
     # Read audio from local file or URL
     audio = None
-    p = Path(audio_source)
+    p = Path(file_path)
     # Try workspace-relative path first
     if not p.is_absolute():
         try:
             from src.tools.file_tools import _resolve_path
-            resolved = _resolve_path(audio_source)
+            resolved = _resolve_path(file_path)
             rp = Path(resolved)
             if rp.exists() and rp.is_file():
                 audio = rp.read_bytes()
@@ -44,17 +44,17 @@ async def send_voice(audio_source: str) -> str:
     if audio is None:
         if p.exists() and p.is_file():
             audio = p.read_bytes()
-        elif audio_source.startswith(("http://", "https://")):
+        elif file_path.startswith(("http://", "https://")):
             import httpx
             try:
                 async with httpx.AsyncClient(timeout=30.0) as client:
-                    resp = await client.get(audio_source)
+                    resp = await client.get(file_path)
                     resp.raise_for_status()
                     audio = resp.content
             except Exception as e:
                 return f"[error] Failed to download audio: {e}"
         else:
-            return f"[error] Not a valid file path or URL: {audio_source}"
+            return f"[error] Not a valid file path or URL: {file_path}"
 
     if not audio:
         return "[error] Empty audio data"

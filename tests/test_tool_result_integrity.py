@@ -7,7 +7,6 @@ Ensures that tool_call / tool_result pairs are never split or lost during:
 - Simple truncation of large outputs
 """
 
-import asyncio
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -322,98 +321,7 @@ class TestParallelApprovalPending:
 
 
 # ======================================================================
-# D: Parallel interrupt
-# ======================================================================
-
-
-class TestParallelInterrupt:
-    @pytest.mark.asyncio
-    async def test_parallel_interrupt_returns_interrupted_state(self):
-        async def slow_fn(**kwargs):
-            await asyncio.sleep(10)
-            return "should not reach"
-
-        tool = _make_tool("read_file", fn=slow_fn)
-        client = AsyncMock()
-        config = _make_config()
-        store = MemoryStateStore()
-
-        loop = AgentLoop(
-            client=client,
-            tools=[tool],
-            state_store=store,
-            config=config,
-        )
-
-        call_count = 0
-
-        async def fake_chat(messages, tools=None, **kw):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return ChatResponse(content="", tool_calls=[
-                    _make_tc("read_file", {"path": "a.txt"}, tc_id="tc_a"),
-                    _make_tc("read_file", {"path": "b.txt"}, tc_id="tc_b"),
-                ])
-            return ChatResponse(content="done", tool_calls=[])
-
-        client.chat.side_effect = fake_chat
-
-        flag = store.get_interrupt_flag("par_int")
-        asyncio.get_event_loop().call_later(0.1, lambda: flag.interrupt("stop parallel"))
-
-        state = AgentState(messages=[{"role": "user", "content": "go"}])
-        result = await loop.run(state, "par_int")
-
-        # When interrupted, the loop returns early with the interrupt message
-        # Tool results may not be present - this is expected
-        assert any("stop parallel" in m.get("content", "") for m in result.messages)
-
-    @pytest.mark.asyncio
-    async def test_parallel_interrupt_cleared_adds_stubs(self):
-        """When interruptible returns None but interrupt flag is cleared, stubs are inserted."""
-        tool = _make_tool("read_file")
-        client = AsyncMock()
-        config = _make_config()
-        store = MemoryStateStore()
-
-        loop = AgentLoop(
-            client=client,
-            tools=[tool],
-            state_store=store,
-            config=config,
-        )
-
-        call_count = 0
-
-        async def fake_chat(messages, tools=None, **kw):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                return ChatResponse(content="", tool_calls=[
-                    _make_tc("read_file", {"path": "a.txt"}, tc_id="tc_a"),
-                    _make_tc("read_file", {"path": "b.txt"}, tc_id="tc_b"),
-                ])
-            return ChatResponse(content="done", tool_calls=[])
-
-        client.chat.side_effect = fake_chat
-
-        # We can't easily simulate "interruptible returns None but interrupt cleared"
-        # because that requires precise timing. Instead, verify the code path exists
-        # by checking that _run_inner handles the case correctly in a unit-level way.
-        # This is implicitly covered by the fix: stubs are inserted before continue.
-
-        # Verify the method accepts the right structure
-        state = AgentState(messages=[{"role": "user", "content": "go"}])
-        result = await loop.run(state, "stub_test")
-        tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
-        assert len(tool_msgs) == 2
-        assert tool_msgs[0]["tool_call_id"] == "tc_a"
-        assert tool_msgs[1]["tool_call_id"] == "tc_b"
-
-
-# ======================================================================
-# E: Truncation edge cases
+# D: Truncation edge cases (was E before parallel interrupt removal)
 # ======================================================================
 
 

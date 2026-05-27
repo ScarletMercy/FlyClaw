@@ -124,11 +124,10 @@ class ServiceContainer:
         tool_modules = [
             "src.tools.exec",
             "src.tools.file_tools",
-            "src.tools.qq_tools",
-            "src.tools.weixin_tools",
+            "src.tools.chat_tools",
             "src.tools.ai_tools",
             "src.tools.cron_tools",
-            "src.tools.media_tools",
+
             "src.tools.media_understanding_tools",
             "src.tools.session_search_tools",
             "src.tools.web_tools",
@@ -407,6 +406,9 @@ class ServiceContainer:
         self._setup_session_search()
         self._setup_channels_and_sessions(skills)
         self._setup_registries()
+        for t in tools:
+            self.tool_registry.register(t)
+        logger.info("ToolRegistry: %d tools registered", len(tools))
         self._setup_media_understanding()
         self._setup_browser()
 

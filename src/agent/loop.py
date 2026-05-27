@@ -126,7 +126,7 @@ _PARALLEL_SAFE_TOOLS = frozenset({
     "read_file", "list_dir", "grep", "glob",
     "web_search", "web_fetch", "session_search",
     "describe_media",
-    "memory", "cronjob", "task_manage", "skills_list", "skill_view", "skill_manage", "skill_hub",
+    "memory", "cron_list", "cron_create", "cron_delete", "cron_toggle", "cron_run", "task_manage", "skills_list", "skill_view", "skill_manage", "skill_hub",
     "exec_command",
 })
 
@@ -214,7 +214,6 @@ class AgentLoop:
             self._guardrails = ToolLoopGuardrails(
                 repeat_fail_block=getattr(gr_cfg, "repeat_fail_block", 5),
                 storm_block=getattr(gr_cfg, "storm_block", 8),
-                stall_block=getattr(gr_cfg, "stall_block", 5),
             )
         else:
             self._guardrails = ToolLoopGuardrails()
@@ -395,7 +394,7 @@ class AgentLoop:
             tool_round += 1
             if self._should_parallelize(response.tool_calls):
                 try:
-                    parallel_results = await interruptible(ie, self._execute_tools_parallel(response.tool_calls, state, thread_id))
+                    parallel_results = await self._execute_tools_parallel(response.tool_calls, state, thread_id)
                 except ApprovalPending as ap:
                     for tc_id, result in ap.partial_results:
                         state.append_message({
@@ -405,18 +404,6 @@ class AgentLoop:
                         })
                     await self._store.save(thread_id, state)
                     raise
-                if parallel_results is None:
-                    if await self._check_interrupt(state, thread_id, start_ts, tool_round):
-                        return state
-                    for tc in response.tool_calls:
-                        tc_id = tc.id if hasattr(tc, "id") else tc.get("id", "")
-                        state.append_message({
-                            "role": "tool",
-                            "tool_call_id": tc_id,
-                            "content": "[error] interrupted",
-                        })
-                    await self._store.save(thread_id, state)
-                    continue
                 for tc_id, result in parallel_results:
                     state.append_message({
                         "role": "tool",
@@ -431,16 +418,18 @@ class AgentLoop:
                     if await self._check_interrupt(state, thread_id, start_ts, tool_round):
                         return state
                     tool_result = await interruptible(ie, self._execute_tool(tc, state, thread_id))
-                    if tool_result is None:
-                        if await self._check_interrupt(state, thread_id, start_ts, tool_round):
-                            return state
-                        tool_result = "[error] interrupted"
+                    interrupted = tool_result is None
+                    if interrupted:
+                        tool_result = "[error] 工具执行被打断"
                     state.append_message({
                         "role": "tool",
                         "tool_call_id": tc.id,
                         "content": tool_result,
                     })
                     await self._store.save(thread_id, state)
+                    if interrupted:
+                        if await self._check_interrupt(state, thread_id, start_ts, tool_round):
+                            return state
 
             # Nudge counter: increment after every tool round
             if self._skill_nudge_interval > 0 and "skill_manage" in self._tool_map:
@@ -990,7 +979,13 @@ class AgentLoop:
 
         tool_def = self._tool_map.get(tool_name)
         if tool_def is None:
-            return f"[error] Unknown tool: {tool_name}"
+            available = sorted(self._tool_map.keys())
+            logger.warning(
+                "Unknown tool '%s'. Available (%d): %s",
+                tool_name, len(available), available,
+            )
+            hint = ", ".join(available[:10])
+            return f"[error] Unknown tool: {tool_name}. Available: {hint}{'...' if len(available) > 10 else ''}"
 
         guard = self._guardrails.check(tool_name, args)
         if guard is not None:
@@ -1043,6 +1038,7 @@ class AgentLoop:
         except Exception as e:
             duration_ms = (_time.monotonic() - start) * 1000
             from src.tools.exec import ApprovalNeededError
+            from src.tools.exceptions import ToolExecutionError
             from src.tools.memory_tools import MemoryDeleteNeedsApproval
             if isinstance(e, (ApprovalNeededError, MemoryDeleteNeedsApproval)):
                 await emit_async(
@@ -1068,7 +1064,10 @@ class AgentLoop:
                 sender_id=getattr(state, 'sender_id', ''),
                 channel=getattr(state, 'channel', ''),
             )
-            return f"[error] {type(e).__name__}: {e}"
+            if isinstance(e, ToolExecutionError):
+                return f"[error] {e}"
+            err_msg = str(e)[:200]
+            return f"[error] 工具 {tool_name} 执行失败: {err_msg}"
         finally:
             _current_agent_context.reset(_ctx_token)
 
@@ -1119,13 +1118,28 @@ class AgentLoop:
         for i, r in enumerate(results):
             tc_id = tool_calls[i].id if hasattr(tool_calls[i], "id") else tool_calls[i].get("id", "")
             if isinstance(r, ApprovalPending):
+                from src.tools.approval import get_approval_manager
+                mgr = get_approval_manager()
                 for j in range(i + 1, len(results)):
                     if results[j] is NotImplemented:
                         tc_j = tool_calls[j]
                         tc_j_id = tc_j.id if hasattr(tc_j, "id") else tc_j.get("id", "")
                         final.append((tc_j_id, "[已跳过] 等待审批中，执行已暂停。"))
+                    elif isinstance(results[j], ApprovalPending):
+                        tc_j = tool_calls[j]
+                        tc_j_id = tc_j.id if hasattr(tc_j, "id") else tc_j.get("id", "")
+                        final.append((tc_j_id, "[已跳过] 等待审批中，执行已暂停。"))
+                        mgr.cancel_pending(results[j].request_id)
                     elif not isinstance(results[j], BaseException):
                         final.append(results[j])
+                state.pending_approval = {
+                    "request_id": r.request_id,
+                    "tool_name": r.tool_name,
+                    "command_preview": r.command_preview[:200],
+                    "tool_call_id": tc_id,
+                }
+                if r.keys:
+                    state.pending_approval["memory_keys"] = r.keys
                 r.partial_results = list(final)
                 raise r
             if isinstance(r, BaseException):

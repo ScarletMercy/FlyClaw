@@ -61,9 +61,7 @@ def _format_display(text: str) -> str:
 
 
 _SILENT_TOOLS = frozenset({
-    "text_to_speech", "send_image_to_chat", "send_file_to_chat", "send_voice",
-    "qq_send_image", "qq_send_file",
-    "weixin_send_image", "weixin_send_file", "weixin_send_voice",
+    "text_to_speech", "send_image", "send_file", "send_voice",
     "skills_list", "skill_view", "skill_manage", "skill_hub",
 })
 
@@ -167,24 +165,27 @@ class MessageHandler:
                 from src.tools.approval import get_approval_manager
                 mgr = get_approval_manager()
                 pending_list = mgr.list_pending()
-                for req in pending_list:
-                    if req.chat_id == chat_id:
-                        is_y = text.strip().lower() == "/y"
-                        zh = self._container.config.agents.language == "zh"
-                        if is_y:
+                unresolved = [r for r in pending_list if r.chat_id == chat_id and not mgr.is_resolved(r.id)]
+                if unresolved:
+                    is_y = text.strip().lower() == "/y"
+                    zh = self._container.config.agents.language == "zh"
+                    if is_y:
+                        resumed_threads: set[str] = set()
+                        for req in unresolved:
                             mgr.resolve(req.id, "allow_once")
-                            if req.tool_name in ("memory_delete", "memory"):
-                                await reply_fn("✅ 已确认删除记忆")
-                            else:
-                                await reply_fn("✅ Approved." if not zh else "✅ 已批准执行。")
-                            if req.thread_id not in self._approval_handler_threads:
+                            if req.thread_id not in resumed_threads and req.thread_id not in self._approval_handler_threads:
+                                resumed_threads.add(req.thread_id)
                                 asyncio.create_task(self._resume_and_reply(req.thread_id, "allow_once", chat_id))
-                            return
+                        has_mem = any(r.tool_name in ("memory_delete", "memory") for r in unresolved)
+                        if has_mem:
+                            await reply_fn("✅ 已确认删除记忆")
                         else:
+                            await reply_fn("✅ Approved." if not zh else "✅ 已批准执行。")
+                        return
+                    else:
+                        for req in unresolved:
                             mgr.resolve(req.id, "deny")
-                            if req.thread_id not in self._approval_handler_threads:
-                                asyncio.create_task(self._resume_and_reply(req.thread_id, "deny", chat_id))
-                            break
+                        return
 
             cmd_match = self._container.dispatcher.match(text)
             if cmd_match is not None:
@@ -447,6 +448,7 @@ class MessageHandler:
             try:
                 result_state = await self._container.agent_loop.run(input_state, thread_id)
             except AP as exc:
+                self._approval_handler_threads.add(exc.thread_id)
                 asyncio.create_task(self._handle_approval_pending(exc, chat_id, channel_prefix))
                 return
 
@@ -746,7 +748,8 @@ class MessageHandler:
                             f"Send /y to confirm. Any other message will cancel. (request: {current_exc.request_id})"
                         )
 
-                await approval_ch.send_text(chat_id, msg_text)
+                if not mgr.is_resolved(current_exc.request_id):
+                    await approval_ch.send_text(chat_id, msg_text)
                 decision, user_response = await mgr.await_approval(current_exc.request_id, timeout=approval_timeout)
                 if decision == "timeout":
                     if tool_name in ("memory_delete", "memory") or auto_deny:

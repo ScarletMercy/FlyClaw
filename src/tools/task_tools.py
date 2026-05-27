@@ -141,11 +141,17 @@ async def _task_plan_impl(goal: str, plan_json: str) -> str:
     if not plan:
         return json.dumps({"error": "无法解析计划 JSON，请确保输出合法 JSON"}, ensure_ascii=False)
 
-    steps = plan.get("steps", [])
-    raw_cps = plan.get("checkpoints", [])
-
-    if not steps:
+    raw_steps = plan.get("steps", [])
+    if not raw_steps:
         return json.dumps({"error": "计划必须包含至少一个步骤"}, ensure_ascii=False)
+
+    steps = [
+        s.get("description") or s.get("name") or json.dumps(s, ensure_ascii=False)
+        if isinstance(s, dict) else str(s)
+        for s in raw_steps
+    ]
+
+    raw_cps = plan.get("checkpoints", [])
 
     container = get_container()
     chat_id = _current_chat_id.get("")
@@ -186,15 +192,26 @@ async def _task_plan_impl(goal: str, plan_json: str) -> str:
             prompt="检查任务进度并继续执行下一步",
         ))
 
-    run = TaskRun(
-        goal=goal,
-        steps=steps,
-        checkpoints=checkpoints,
-        status="running",
-        chat_id=chat_id,
-        thread_id=thread_id,
-        sender_id=sender_id,
-    )
+    try:
+        run = TaskRun(
+            goal=goal,
+            steps=steps,
+            checkpoints=checkpoints,
+            status="running",
+            chat_id=chat_id,
+            thread_id=thread_id,
+            sender_id=sender_id,
+        )
+    except Exception as e:
+        from pydantic import ValidationError
+        if isinstance(e, ValidationError):
+            bad = [str(err["loc"][-1]) for err in e.errors()]
+            return json.dumps({
+                "error": f"计划格式有误，steps 应为字符串数组，例如 [\"步骤1\", \"步骤2\"]。"
+                         f"当前 steps 中第 {', '.join(bad)} 项格式不对，请修正后重试",
+            }, ensure_ascii=False)
+        logger.error("TaskRun 构造失败: %s", e)
+        return json.dumps({"error": f"创建任务失败: {e}"}, ensure_ascii=False)
 
     await store.save(run)
 

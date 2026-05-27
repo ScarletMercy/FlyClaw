@@ -81,10 +81,20 @@ async def browser_click(ref: str) -> str:
     if not locator:
         return f"Error: element {ref} not found. Take a new snapshot with browser_snapshot."
 
+    url_before = page.url
     try:
         await locator.click(timeout=10000)
         await page.wait_for_load_state("networkidle", timeout=5000)
     except Exception as e:
+        url_after = page.url
+        if url_after != url_before:
+            snap = await get_snapshot(page)
+            return (f"Clicked {ref} — page navigated to {url_after}\n"
+                    f"{build_page_info(snap['url'], snap['title'], snap['snapshot'], snap['element_count'])}")
+        if "timeout" in str(e).lower():
+            return (f"Error clicking {ref}: timed out. "
+                    f"The element may have triggered a slow page load or no action occurred. "
+                    f"Take a new snapshot with browser_snapshot.")
         return f"Error clicking {ref}: {e}"
 
     snap = await get_snapshot(page)
@@ -112,6 +122,7 @@ async def browser_type(ref: str, text: str, submit: bool = False) -> str:
     if not locator:
         return f"Error: element {ref} not found. Take a new snapshot with browser_snapshot."
 
+    url_before = page.url
     try:
         await locator.click()
         await locator.fill(text)
@@ -119,6 +130,16 @@ async def browser_type(ref: str, text: str, submit: bool = False) -> str:
             await locator.press("Enter")
             await page.wait_for_load_state("networkidle", timeout=5000)
     except Exception as e:
+        if submit:
+            url_after = page.url
+            if url_after != url_before:
+                snap = await get_snapshot(page)
+                return (f"Typed '{text}' and submitted in {ref} — page navigated to {url_after}\n"
+                        f"{build_page_info(snap['url'], snap['title'], snap['snapshot'], snap['element_count'])}")
+            if "timeout" in str(e).lower():
+                return (f"Error typing into {ref}: timed out after submit. "
+                        f"The form may have triggered a slow page load. "
+                        f"Take a new snapshot with browser_snapshot.")
         return f"Error typing into {ref}: {e}"
 
     if submit:
@@ -189,9 +210,22 @@ async def browser_press(key: str) -> str:
     try:
         mgr = get_browser_manager()
         page = await mgr.get_page(_session_id())
+    except Exception as e:
+        return f"Error: no browser session. ({e})"
+
+    url_before = page.url
+    try:
         await page.keyboard.press(key)
         await page.wait_for_load_state("networkidle", timeout=3000)
     except Exception as e:
+        url_after = page.url
+        if url_after != url_before:
+            snap = await get_snapshot(page)
+            return (f"Pressed {key} — page navigated to {url_after}\n"
+                    f"{build_page_info(snap['url'], snap['title'], snap['snapshot'], snap['element_count'])}")
+        if "timeout" in str(e).lower():
+            return (f"Error pressing {key}: timed out. "
+                    f"Take a new snapshot with browser_snapshot.")
         return f"Error pressing {key}: {e}"
 
     snap = await get_snapshot(page)

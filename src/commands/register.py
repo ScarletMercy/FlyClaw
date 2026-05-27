@@ -301,6 +301,22 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         if not user_key:
             return "无法确定会话。" if zh else "Cannot determine session."
         reg_sessions = container.session_registry.list_sessions(user_key)
+
+        if not reg_sessions:
+            orphaned = container.session_registry.find_orphaned_threads(
+                user_key, container.state_store,
+            )
+            if not orphaned:
+                orphaned = container.session_registry.find_all_channel_threads(
+                    user_key, container.state_store,
+                )
+            if orphaned:
+                recovered = container.session_registry.recover_sessions(
+                    user_key, orphaned,
+                )
+                if recovered:
+                    reg_sessions = container.session_registry.list_sessions(user_key)
+
         current_override = container.session_registry.get_current(user_key)
 
         lines = []

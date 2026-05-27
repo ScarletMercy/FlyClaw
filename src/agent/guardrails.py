@@ -1,16 +1,14 @@
 """Tool Loop Guardrails — detect and break tool loops.
 
-Three anomaly patterns are tracked:
-1. **Repeat failure**  — same tool + same args fails repeatedly
-2. **Tool storm**      — same tool keeps failing with different args
-3. **Idempotent stall** — read-only tool returns identical results repeatedly
+Two anomaly patterns are tracked:
+1. **Repeat failure** — same tool + same args fails repeatedly
+2. **Tool storm**     — same tool keeps failing with different args
 
 Thresholds:
   Pattern              | Warn | Block
   ---------------------|------|------
   Repeat failure       |   2  |   5
   Tool storm           |   3  |   8
-  Idempotent stall     |   2  |   5
 """
 
 from __future__ import annotations
@@ -21,12 +19,6 @@ from collections import deque
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("flyclaw.agent.guardrails")
-
-_IDEMPOTENT_TOOLS: frozenset[str] = frozenset({
-    "read_file", "list_dir", "grep", "glob",
-    "web_search", "web_fetch", "session_search",
-    "cronjob", "task_manage",
-})
 
 
 @dataclass
@@ -62,8 +54,6 @@ class ToolLoopGuardrails:
     repeat_fail_block: int = 5
     storm_warn: int = 3
     storm_block: int = 8
-    stall_warn: int = 2
-    stall_block: int = 5
 
     _history: deque[_ToolAttempt] = field(default_factory=lambda: deque(maxlen=64), repr=False)
 
@@ -127,30 +117,6 @@ class ToolLoopGuardrails:
             )
         if storm_fails >= self.storm_warn:
             logger.warning("WARN: Tool '%s' storm (%dx failures)", tool_name, storm_fails)
-
-        # --- Pattern 3: Idempotent stall (read-only tool, same result) ---
-        if tool_name in _IDEMPOTENT_TOOLS:
-            identical = 0
-            for a in reversed(self._history):
-                if a.tool_name != tool_name:
-                    break
-                if a.success and a.result_sig and a.result_sig == _result_signature(""):
-                    break
-                if a.success and a.result_sig:
-                    identical += 1
-                else:
-                    break
-
-            if identical >= self.stall_block:
-                reason = f"Tool '{tool_name}' idempotent stall ({identical}x identical results)"
-                logger.warning("BLOCKED: %s", reason)
-                return GuardrailResult(
-                    blocked=True,
-                    reason=reason,
-                    synthetic_result=f"[blocked] {reason}. You already have this information. Stop repeating this query.",
-                )
-            if identical >= self.stall_warn:
-                logger.warning("WARN: Tool '%s' stall (%dx identical)", tool_name, identical)
 
         return None
 

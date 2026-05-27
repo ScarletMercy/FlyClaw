@@ -76,6 +76,9 @@ SESSION_EXPIRED_ERRCODE = -14
 RATE_LIMIT_ERRCODE = -2
 MESSAGE_DEDUP_TTL_SECONDS = 300
 
+# Fibonacci-like backoff schedule for rate-limit retries (seconds per attempt).
+_BACKOFF_SCHEDULE = [2.0, 3.0, 5.0, 8.0, 10.0]
+
 MEDIA_IMAGE = 1
 MEDIA_VIDEO = 2
 MEDIA_FILE = 3
@@ -980,8 +983,8 @@ class WeixinChannel(Channel):
         self._allow_from: list[str] = list(getattr(config, "allowed_users", []) or [])
         self._group_allow_from: list[str] = list(getattr(config, "group_allowed_users", []) or [])
         self._split_multiline_messages = bool(getattr(config, "split_multiline_messages", False))
-        self._send_chunk_delay_seconds = 1.5
-        self._send_chunk_retries = 4
+        self._send_chunk_delay_seconds = getattr(config, "send_chunk_delay", 2.0)
+        self._send_chunk_retries = getattr(config, "send_retry_count", 4)
         self._send_chunk_retry_delay_seconds = 1.0
 
         if self._account_id and not self._token:
@@ -1054,16 +1057,20 @@ class WeixinChannel(Channel):
     async def send_text(self, chat_id: str, text: str, reply_to: Optional[str] = None) -> Any:
         if not self._send_session or not self._token:
             return None
-        context_token = self._token_store.get(self._account_id, chat_id)
-        chunks = [c for c in _split_text_for_delivery(format_message(text), self.MAX_MESSAGE_LENGTH, self._split_multiline_messages) if c and c.strip()]
-        last_id = None
-        for idx, chunk in enumerate(chunks):
-            client_id = f"flyclaw-weixin-{uuid.uuid4().hex}"
-            await self._send_text_chunk(chat_id=chat_id, chunk=chunk, context_token=context_token, client_id=client_id)
-            last_id = client_id
-            if idx < len(chunks) - 1 and self._send_chunk_delay_seconds > 0:
-                await asyncio.sleep(self._send_chunk_delay_seconds)
-        return last_id
+        try:
+            context_token = self._token_store.get(self._account_id, chat_id)
+            chunks = [c for c in _split_text_for_delivery(format_message(text), self.MAX_MESSAGE_LENGTH, self._split_multiline_messages) if c and c.strip()]
+            last_id = None
+            for idx, chunk in enumerate(chunks):
+                client_id = f"flyclaw-weixin-{uuid.uuid4().hex}"
+                await self._send_text_chunk(chat_id=chat_id, chunk=chunk, context_token=context_token, client_id=client_id)
+                last_id = client_id
+                if idx < len(chunks) - 1 and self._send_chunk_delay_seconds > 0:
+                    await asyncio.sleep(self._send_chunk_delay_seconds)
+            return last_id
+        except Exception as exc:
+            logger.error("weixin send_text failed to=%s: %s", _safe_id(chat_id), exc)
+            return None
 
     async def send_image(self, chat_id: str, image_key: str) -> bool:
         if not image_key:
@@ -1308,12 +1315,12 @@ class WeixinChannel(Channel):
         reply_fn = lambda t: self.send_text(effective_chat_id, t, message_id)
         stream_fn = self._create_stream_sender(effective_chat_id, message_id)
 
-        # Inject chat_id for WeChat send tools (so they can default to current chat)
+        # Inject chat context for send tools
         try:
-            from src.tools.weixin_tools import set_current_weixin_chat_id
-            set_current_weixin_chat_id(effective_chat_id)
+            from src.tools.chat_tools import set_current_chat_context
+            set_current_chat_context("weixin", effective_chat_id)
         except ImportError:
-            pass  # weixin_tools not available, tools will handle missing chat_id
+            pass
 
         logger.info("weixin: inbound from=%s type=%s media=%d", _safe_id(sender_id), chat_type_str, len(media_paths))
         await self._on_message_callback(
@@ -1484,7 +1491,11 @@ class WeixinChannel(Channel):
                             last_error = RuntimeError(f"iLink rate limited: ret={ret} errcode={errcode}")
                             if attempt >= self._send_chunk_retries:
                                 break
-                            wait = self._send_chunk_retry_delay_seconds * 3
+                            wait = _BACKOFF_SCHEDULE[min(attempt, len(_BACKOFF_SCHEDULE) - 1)]
+                            logger.warning(
+                                "weixin: rate limited, backing off %.1fs (attempt %d/%d)",
+                                wait, attempt + 1, self._send_chunk_retries + 1,
+                            )
                             await asyncio.sleep(wait)
                             continue
                         errmsg = resp.get("errmsg") or resp.get("msg") or "unknown error"
@@ -1576,24 +1587,57 @@ class WeixinChannel(Channel):
                 )
 
             last_message_id = f"flyclaw-weixin-{uuid.uuid4().hex}"
-            await _api_post(
-                self._send_session,
-                base_url=self._base_url,
-                endpoint=EP_SEND_MESSAGE,
-                payload={
-                    "msg": {
-                        "from_user_id": "",
-                        "to_user_id": chat_id,
-                        "client_id": last_message_id,
-                        "message_type": MSG_TYPE_BOT,
-                        "message_state": MSG_STATE_FINISH,
-                        "item_list": [media_item],
-                        **({"context_token": context_token} if context_token else {}),
-                    }
-                },
-                token=self._token,
-                timeout_ms=API_TIMEOUT_MS,
-            )
+            last_send_error: Optional[Exception] = None
+            for attempt in range(self._send_chunk_retries + 1):
+                try:
+                    resp = await _api_post(
+                        self._send_session,
+                        base_url=self._base_url,
+                        endpoint=EP_SEND_MESSAGE,
+                        payload={
+                            "msg": {
+                                "from_user_id": "",
+                                "to_user_id": chat_id,
+                                "client_id": last_message_id,
+                                "message_type": MSG_TYPE_BOT,
+                                "message_state": MSG_STATE_FINISH,
+                                "item_list": [media_item],
+                                **({"context_token": context_token} if context_token else {}),
+                            }
+                        },
+                        token=self._token,
+                        timeout_ms=API_TIMEOUT_MS,
+                    )
+                    if isinstance(resp, dict):
+                        ret = resp.get("ret")
+                        errcode = resp.get("errcode")
+                        if (ret is not None and ret not in {0}) or (errcode is not None and errcode not in {0}):
+                            is_rate_limited = ret == RATE_LIMIT_ERRCODE or errcode == RATE_LIMIT_ERRCODE
+                            if is_rate_limited:
+                                last_send_error = RuntimeError(f"iLink rate limited: ret={ret} errcode={errcode}")
+                                if attempt >= self._send_chunk_retries:
+                                    break
+                                wait = _BACKOFF_SCHEDULE[min(attempt, len(_BACKOFF_SCHEDULE) - 1)]
+                                logger.warning(
+                                    "weixin: rate limited on media send, backing off %.1fs (attempt %d/%d)",
+                                    wait, attempt + 1, self._send_chunk_retries + 1,
+                                )
+                                await asyncio.sleep(wait)
+                                continue
+                            raise RuntimeError(f"iLink sendmessage error: ret={ret} errcode={errcode}")
+                    break
+                except Exception as exc:
+                    last_send_error = exc
+                    if attempt >= self._send_chunk_retries:
+                        break
+                    wait = _BACKOFF_SCHEDULE[min(attempt, len(_BACKOFF_SCHEDULE) - 1)]
+                    logger.warning(
+                        "weixin: media send failed, retrying in %.1fs (attempt %d/%d): %s",
+                        wait, attempt + 1, self._send_chunk_retries + 1, exc,
+                    )
+                    await asyncio.sleep(wait)
+            if last_send_error:
+                raise last_send_error
             return last_message_id
         finally:
             if cleanup_path and Path(cleanup_path).exists():

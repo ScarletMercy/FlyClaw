@@ -58,10 +58,12 @@ class ReloadExecutor:
         await self._app.cron_service.start()
 
     async def _do_reload_tools(self):
-        from src.tools.registry import get_tool_registry
         from src.tools.exec import reset_config_cache
         reset_config_cache()
-        tools = list(get_tool_registry().collect())
+        tools = self._app._collect_builtin_tools()
+        registry = self._app.tool_registry
+        if registry is not None:
+            registry._tools = list(tools)
         if self._app.agent_loop:
             self._app.agent_loop._tools = tools
             self._app.agent_loop._tool_map = {t.name: t for t in tools}

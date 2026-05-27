@@ -253,6 +253,81 @@ class SessionRegistry:
                 return s.thread_id
         return None
 
+    def find_orphaned_threads(self, user_key: str, store) -> list[str]:
+        """Scan state store for threads belonging to this user but not registered.
+
+        Matches on channel prefix + user hash to safely recover sessions
+        that may have been orphaned by channel switching or registry loss.
+        """
+        parts = user_key.split(":")
+        if len(parts) != 3:
+            return []
+        channel_prefix, _, user_hash = parts
+
+        threads = store.list_threads()
+        registered = set()
+        us = self._users.get(user_key)
+        if us:
+            for s in us.sessions:
+                registered.add(s.thread_id)
+
+        orphaned = []
+        for tid in threads:
+            if tid in registered:
+                continue
+            t_parts = tid.split(":")
+            if (
+                len(t_parts) == 3
+                and t_parts[0] == channel_prefix
+                and t_parts[-1] == user_hash
+            ):
+                orphaned.append(tid)
+        return orphaned
+
+    def find_all_channel_threads(self, user_key: str, store) -> list[str]:
+        """Fallback: find ALL unregistered threads from the same channel, ignoring hash.
+
+        Used when hash-based matching fails (e.g. sender_id changed after
+        bot reconfiguration).
+        """
+        parts = user_key.split(":")
+        if len(parts) < 2:
+            return []
+        channel_prefix = parts[0]
+
+        threads = store.list_threads()
+        registered = set()
+        us = self._users.get(user_key)
+        if us:
+            for s in us.sessions:
+                registered.add(s.thread_id)
+
+        orphaned = []
+        for tid in threads:
+            if tid == user_key or tid in registered:
+                continue
+            t_parts = tid.split(":")
+            if len(t_parts) >= 2 and t_parts[0] == channel_prefix:
+                orphaned.append(tid)
+        return orphaned
+
+    def recover_sessions(self, user_key: str, thread_ids: list[str]) -> int:
+        """Register orphaned threads as sessions. Returns count recovered."""
+        us = self._get_user(user_key)
+        count = 0
+        for tid in sorted(thread_ids):
+            sid = us._alloc_id()
+            us.sessions.append(SessionEntry(
+                session_id=sid,
+                thread_id=tid,
+                created_at=time.time(),
+                summary="(recovered)",
+            ))
+            count += 1
+        if count:
+            self._save()
+        return count
+
     def update_summary(self, user_key: str, thread_id: str, summary: str) -> None:
         """Update the summary for a session matching thread_id."""
         us = self._users.get(user_key)

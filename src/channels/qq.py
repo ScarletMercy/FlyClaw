@@ -777,12 +777,12 @@ class QQChannel(Channel):
             text,
         )
 
-        # Inject chat_id for QQ send tools (so they can default to current chat)
+        # Inject chat context for send tools
         try:
-            from src.tools.qq_tools import set_current_qq_chat_id
-            set_current_qq_chat_id(chat_id)
+            from src.tools.chat_tools import set_current_chat_context
+            set_current_chat_context("qq", chat_id)
         except ImportError:
-            pass  # qq_tools not available, tools will handle missing chat_id
+            pass
 
         # Start typing indicator for C2C
         typing_task = None
@@ -1070,7 +1070,7 @@ class QQChannel(Channel):
                 return await self._send_message(chat_id, f"![]({image_key})") is not None
             return False
 
-        # Try local file upload first
+        # Local file upload
         if not image_key.startswith(("http://", "https://", "data:")):
             p = Path(image_key)
             if p.exists():
@@ -1078,8 +1078,10 @@ class QQChannel(Channel):
                 if file_info:
                     result = await self._send_message(chat_id, "", msg_type=7, media={"file_info": file_info})
                     return result is not None
+                return False
+            return False
 
-        # URL-based upload
+        # URL-based upload (only for actual URLs)
         file_info = await self._upload_media(chat_id, file_type=1, url=image_key)
         if file_info:
             result = await self._send_message(chat_id, "", msg_type=7, media={"file_info": file_info})
@@ -1103,8 +1105,10 @@ class QQChannel(Channel):
                 if file_info:
                     result = await self._send_message(chat_id, "", msg_type=7, media={"file_info": file_info})
                     return result is not None
+                return False
+            return False
 
-        # URL-based
+        # URL-based (only for actual URLs)
         file_info = await self._upload_media(chat_id, file_type=4, url=file_key)
         if file_info:
             result = await self._send_message(chat_id, "", msg_type=7, media={"file_info": file_info})

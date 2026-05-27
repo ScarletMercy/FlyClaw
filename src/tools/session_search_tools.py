@@ -21,7 +21,7 @@ def _format_results(results: list[dict]) -> str:
     return "\n".join(lines)
 
 
-async def session_search(query: str, limit: int = 3) -> str:
+async def session_search(query: str = "", limit: int = 3) -> str:
     """Search historical conversation records by keyword (FTS5).
 
     Args:
