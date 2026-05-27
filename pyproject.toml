@@ -1,6 +1,6 @@
 [project]
 name = "flyclaw"
-version = "0.1.0"
+version = "2026.5.28"
 description = "Self-contained AI assistant with QQ channel"
 requires-python = ">=3.11"
 dependencies = [

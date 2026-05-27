@@ -1,6 +1,6 @@
 # FlyClaw
 
-轻量级多渠道 AI 助手框架。运行时仅 ~100MB 内存，47 个内置工具，支持 QQ/微信渠道接入。
+轻量级多渠道 AI 助手框架。运行时仅 ~100MB 内存，40+ 内置工具，支持 QQ/微信渠道接入。
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
@@ -13,11 +13,11 @@ FlyClaw 是一个自包含的 AI 助手框架，直接运行在你的设备上�
 
 ## 功能特性
 
-- **多渠道接入** — QQ Bot（官方 API，C2C/群聊/频道）、微信（iLink Bot API，私聊/群聊）
-- **47 个内置工具** — 命令执行、文件操作、Web 搜索、浏览器自动化、媒体理解、TTS、记忆、定时任务、Windows 桌面控制等
+- **多渠道接入** — QQ Bot（官方 API，C2C 私聊）、微信（iLink Bot API，私聊）
+- **40+ 内置工具** — 命令执行、文件操作、Web 搜索、浏览器自动化、媒体理解、TTS、记忆、定时任务、Windows 桌面控制等
 - **AgentLoop 引擎** — 工具并行执行、主动上下文压缩、中断/排队/steer 三种忙碌输入模式
 - **子代理委派** — research、coder、reviewer 三个内置角色，支持批量并行任务
-- **记忆系统** — KV 记忆（SQLite + FTS5 三元组搜索）+ 知识库（支持 sqlite-vec / LanceDB 向量后端）
+- **记忆系统** — KV 记忆（SQLite + FTS5 三元组搜索）
 - **Skill / Plugin 扩展** — SKILL.md 热加载 + plugin.json 插件系统
 - **Gateway** — OpenAI 兼容 API（`/v1/chat/completions`）、WebSocket、REST 管理接口、Web Dashboard
 - **安全体系** — 命令审批、工具策略、RBAC 角色控制、SSRF 防护、凭证脱敏、注入检测
@@ -26,28 +26,17 @@ FlyClaw 是一个自包含的 AI 助手框架，直接运行在你的设备上�
 ## 快速开始
 
 ```bash
-# 克隆并安装
-git clone https://github.com/ScarletMercy/FlyClaw.git
-cd FlyClaw
+# 推荐 uv
+uv tool install flyclaw
 
-# 创建虚拟环境（推荐 uv）
-uv venv
-uv sync
+# 或 pip
+pip install flyclaw
 
 # 交互式配置向导
 flyclaw-setup
 
 # 启动
 flyclaw
-```
-
-或使用 Makefile：
-
-```bash
-make install   # 安装依赖
-make run       # 启动
-make test      # 运行测试
-make lint      # 代码检查
 ```
 
 ## 支持的模型
@@ -93,7 +82,7 @@ model:
 
 基于 QQ 官方 Bot API（WebSocket + HTTP），支持：
 
-- C2C 私聊、群聊 @ 消息、频道消息、频道私信
+- C2C 私聊、私信
 - 文本/Markdown 消息、图片、文件、语音消息
 - 流式回复、自动 Token 刷新、WebSocket 断线重连（最多 100 次）
 
@@ -101,15 +90,15 @@ model:
 
 基于腾讯 iLink Bot API（长轮询 + HTTP），支持：
 
-- 私聊、群聊
+- 私聊
 - 文本、图片、视频、文件、语音收发
 - AES-128-ECB CDN 媒体传输
 
 ## 内置工具
 
-47 个工具，分核心（始终可用）和可选（按需启用）两类：
+40+ 个工具，分核心（始终可用）和可选（按需启用）两类：
 
-### 核心工具（32 个）
+### 核心工具（30 个）
 
 **命令与进程**
 
@@ -119,7 +108,7 @@ model:
 **文件操作**
 
 - `read_file` / `write_file` / `edit_file` — 文件读写编辑
-- `list_dir` / `search_files` — 目录列表、文件搜索
+- `list_dir` / `grep` / `glob` — 目录列表、内容搜索、模式匹配
 - 快照机制：每次写操作前自动创建 shadow git 快照，支持 `/rollback` 回滚
 
 **Web**
@@ -139,7 +128,7 @@ model:
 
 **定时任务**
 
-- `cronjob` — 定时任务管理（list/create/delete/toggle/run），支持 cron 表达式、间隔、一次性定时
+- `cron_list` / `cron_create` / `cron_delete` / `cron_toggle` / `cron_run` — 定时任务管理，支持 cron 表达式、间隔、一次性定时
 
 **任务管理**
 
@@ -157,16 +146,15 @@ model:
 
 - `skills_list` / `skill_view` / `skill_manage` / `skill_hub` — 技能浏览、查看、编辑、市场搜索/安装
 
-**渠道专用**
+**渠道通用**
 
-- `qq_send_image` / `qq_send_file` — QQ 图片/文件发送
-- `weixin_send_image` / `weixin_send_file` / `weixin_send_voice` — 微信图片/文件/语音发送
+- `send_image` / `send_file` / `send_voice` — 图片/文件/语音发送（自动适配 QQ、微信）
 
 **AI**
 
 - `subagent_status` — 查看子代理运行状态
 
-### 可选工具（15 个）
+### 可选工具（16 个）
 
 **浏览器自动化**（`browser.enabled`，基于 Playwright）
 
