@@ -400,3 +400,72 @@ class TestEndToEndSanitize:
 
         errors = _verify_no_orphan_pairs(result)
         assert errors == [], "Large tail_count: " + "; ".join(errors)
+
+    @pytest.mark.asyncio
+    async def test_compact_summary_is_assistant_role(self):
+        from src.compressor.compressor import ContextCompressor
+
+        cfg = CompressionConfig(enabled=False, tail_messages=4)
+        compressor = ContextCompressor(cfg)
+
+        messages = _build_messages_with_groups(10, extra_middle=2)
+        result = compressor._compact(messages, context_window_tokens=200)
+
+        non_system = [m for m in result if m.get("role") != "system"]
+        assert non_system[0]["role"] == "assistant"
+        assert "tool_calls" not in non_system[0] or not non_system[0].get("tool_calls")
+
+    @pytest.mark.asyncio
+    async def test_no_consecutive_assistant_messages(self):
+        from src.compressor.compressor import ContextCompressor
+
+        cfg = CompressionConfig(enabled=False, tail_messages=4)
+        compressor = ContextCompressor(cfg)
+
+        messages = []
+        for i in range(12):
+            role = "user" if i % 2 == 0 else "assistant"
+            messages.append({"role": role, "content": f"msg {i} " * 50})
+
+        result = compressor._compact(messages, context_window_tokens=200)
+
+        non_system = [m for m in result if m.get("role") != "system"]
+        for i in range(1, len(non_system)):
+            if non_system[i - 1]["role"] == "assistant" and non_system[i]["role"] == "assistant":
+                pytest.fail(
+                    f"Consecutive assistant messages at indices {i-1} and {i}: "
+                    f"{non_system[i-1].get('content', '')[:60]} / {non_system[i].get('content', '')[:60]}"
+                )
+
+    @pytest.mark.asyncio
+    async def test_summary_merged_when_tail_starts_with_assistant(self):
+        from src.compressor.compressor import ContextCompressor
+
+        cfg = CompressionConfig(enabled=False, tail_messages=4)
+        compressor = ContextCompressor(cfg)
+
+        messages = []
+        for i in range(12):
+            role = "user" if i % 2 == 0 else "assistant"
+            messages.append({"role": role, "content": f"msg {i} " * 50})
+
+        result = compressor._compact(messages, context_window_tokens=200)
+
+        non_system = [m for m in result if m.get("role") != "system"]
+        if non_system[0]["role"] == "assistant" and non_system[1]["role"] == "assistant":
+            pytest.fail("Summary assistant message not merged into tail assistant")
+
+    @pytest.mark.asyncio
+    async def test_compress_enabled_summary_is_assistant_role(self):
+        from src.compressor.compressor import ContextCompressor
+
+        cfg = CompressionConfig(enabled=True, tail_messages=4, threshold_percent=0.01)
+        client = AsyncMock()
+        client.chat.return_value = ChatResponse(content="Summary of conversation.", tool_calls=[])
+        compressor = ContextCompressor(cfg, client=client)
+
+        messages = _build_messages_with_groups(10, extra_middle=3)
+        result = await compressor.compress(messages, context_window_tokens=200)
+
+        non_system = [m for m in result if m.get("role") != "system"]
+        assert non_system[0]["role"] == "assistant"

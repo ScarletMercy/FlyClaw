@@ -176,34 +176,6 @@ class ContextCompressor:
         tail = non_system[cut:]
         middle = non_system[:cut]
 
-        # 确保tail中的tool_call都有对应的tool result
-        tail_tc_ids: set[str] = set()
-        for m in tail:
-            if m.get("role") == "assistant" and m.get("tool_calls"):
-                for tc in m["tool_calls"]:
-                    if tc.get("id"):
-                        tail_tc_ids.add(tc["id"])
-
-        if tail_tc_ids:
-            tail_result_ids: set[str] = set()
-            for m in tail:
-                if m.get("role") == "tool" and m.get("tool_call_id"):
-                    tail_result_ids.add(m["tool_call_id"])
-
-            missing_ids = tail_tc_ids - tail_result_ids
-            if missing_ids:
-                # 从middle中找到缺失的tool result，移到tail
-                additional: list[dict] = []
-                remaining_middle: list[dict] = []
-                for m in middle:
-                    if m.get("role") == "tool" and m.get("tool_call_id") in missing_ids:
-                        additional.append(m)
-                        missing_ids.discard(m["tool_call_id"])
-                    else:
-                        remaining_middle.append(m)
-                tail = additional + tail
-                middle = remaining_middle
-
         if not middle:
             return messages
 
@@ -218,11 +190,14 @@ class ContextCompressor:
         if summary:
             self._previous_summary = summary
             self._compression_count += 1
-            summary_msg = {
-                "role": "system",
-                "content": f"[对话历史摘要 — 仅供参考]\n{summary}",
-            }
-            result = system_msgs + [summary_msg] + tail
+            if tail and tail[0].get("role") == "assistant":
+                existing = tail[0].get("content", "")
+                merged = summary if not existing else f"{summary}\n\n{existing}"
+                tail[0] = {**tail[0], "content": merged}
+                result = system_msgs + tail
+            else:
+                summary_msg = {"role": "assistant", "content": summary}
+                result = system_msgs + [summary_msg] + tail
             new_estimated = _estimate_tokens(result)
             logger.info(
                 "Context compressed: %d → %d messages (%d → %d tokens, compression #%d)",
@@ -350,36 +325,6 @@ class ContextCompressor:
         if not pruned:
             return messages
 
-        # 确保kept中的tool_call都有对应的tool result
-        kept_tc_ids: set[str] = set()
-        for m in kept:
-            if m.get("role") == "assistant" and m.get("tool_calls"):
-                for tc in m["tool_calls"]:
-                    if tc.get("id"):
-                        kept_tc_ids.add(tc["id"])
-
-        if kept_tc_ids:
-            kept_result_ids: set[str] = set()
-            for m in kept:
-                if m.get("role") == "tool" and m.get("tool_call_id"):
-                    kept_result_ids.add(m["tool_call_id"])
-
-            missing_ids = kept_tc_ids - kept_result_ids
-            if missing_ids:
-                # 从pruned中找到缺失的tool result，移到kept
-                additional: list[dict] = []
-                remaining_pruned: list[dict] = []
-                for m in pruned:
-                    if m.get("role") == "tool" and m.get("tool_call_id") in missing_ids:
-                        additional.append(m)
-                        missing_ids.discard(m["tool_call_id"])
-                    else:
-                        remaining_pruned.append(m)
-                kept = additional + kept
-                pruned = remaining_pruned
-                if not pruned:
-                    return messages
-
         summaries = []
         for m in pruned:
             role = m.get("role", "")
@@ -407,12 +352,16 @@ class ContextCompressor:
                 text = content if isinstance(content, str) else str(content)[:200]
                 summaries.append(f"Assistant: {text[:200]}")
 
-        summary_text = (
-            "[Earlier conversation summarized]\n" + "\n".join(summaries[-20:])
-        )
-        summary_msg = {"role": "system", "content": summary_text}
+        summary_text = "\n".join(summaries[-20:])
 
-        result = system_msgs + [summary_msg] + kept
+        if kept and kept[0].get("role") == "assistant":
+            existing = kept[0].get("content", "")
+            merged = summary_text if not existing else f"{summary_text}\n\n{existing}"
+            kept[0] = {**kept[0], "content": merged}
+            result = system_msgs + kept
+        else:
+            summary_msg = {"role": "assistant", "content": summary_text}
+            result = system_msgs + [summary_msg] + kept
         logger.info(
             "Static compact: %d → %d messages (%d → %d tokens)",
             len(messages),

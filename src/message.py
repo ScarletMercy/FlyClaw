@@ -98,6 +98,7 @@ class MessageHandler:
         self._approval_handler_threads: set[str] = set()
         self._pending_queue: dict[str, list[str]] = {}
         self._interrupted_threads: dict[str, str] = {}
+        self._approval_saved_ctx: dict[str, tuple] = {}
 
     def _get_channel(self, channel_prefix: str):
         if channel_prefix == "qq":
@@ -757,6 +758,8 @@ class MessageHandler:
 
         thread_id = exc.thread_id
         self._approval_handler_threads.add(thread_id)
+        if drain_ctx is not None or saved_interrupt is not None or saved_queue:
+            self._approval_saved_ctx[thread_id] = (saved_interrupt, saved_queue, drain_ctx)
         try:
             mgr = get_approval_manager()
             zh = self._container.config.agents.language == "zh"
@@ -840,6 +843,7 @@ class MessageHandler:
                 pass
         finally:
             self._approval_handler_threads.discard(thread_id)
+            self._approval_saved_ctx.pop(thread_id, None)
             if drain_ctx is not None:
                 if saved_interrupt is not None:
                     self._interrupted_threads.setdefault(drain_ctx.thread_id, saved_interrupt)
@@ -882,7 +886,14 @@ class MessageHandler:
                 await ch.send_text(chat_id, assistant_text)
         except ApprovalPending as exc:
             _rp = "weixin" if not chat_id.startswith(("c2c:", "group:", "channel:", "dm:")) else "qq"
-            asyncio.create_task(self._handle_approval_pending(exc, chat_id, _rp))
+            saved = self._approval_saved_ctx.pop(exc.thread_id, None)
+            _si, _sq, _dc = saved if saved else (None, None, None)
+            asyncio.create_task(self._handle_approval_pending(
+                exc, chat_id, _rp,
+                saved_interrupt=_si,
+                saved_queue=_sq,
+                drain_ctx=_dc,
+            ))
         except RuntimeError as e:
             if "busy" in str(e).lower() or "lock" in str(e).lower():
                 logger.debug("_resume_and_reply: thread %s is busy, _handle_approval_pending is still running", thread_id)
