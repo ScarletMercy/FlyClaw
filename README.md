@@ -193,7 +193,7 @@ plugins/my-plugin/
 
 ## 部署
 
-三种方式，详见 [DEPLOY.md](DEPLOY.md)：
+三种方式，详见 [DEPLOY.md](https://github.com/ScarletMercy/FlyClaw/blob/main/DEPLOY.md)：
 
 **直接运行**
 
@@ -236,4 +236,4 @@ make test-cov   # 测试覆盖率
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/ScarletMercy/FlyClaw/blob/main/LICENSE)
