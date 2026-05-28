@@ -487,7 +487,7 @@ def _check_chromium_installed() -> bool:
         )
         for line in ret.stdout.splitlines():
             stripped = line.strip().lower()
-            if ("chromium-" in stripped or stripped.endswith("chromium")) and "headless shell" not in stripped:
+            if "chromium-" in stripped or stripped.endswith("chromium"):
                 return True
     except Exception:
         pass
@@ -516,7 +516,7 @@ def _step_browser(config: dict) -> None:
             env = os.environ.copy()
             env["PLAYWRIGHT_DOWNLOAD_HOST"] = "https://registry.npmmirror.com/-/binary/playwright"
             ret = subprocess.run(
-                [sys.executable, "-m", "playwright", "install", "chromium", "--only-shell"],
+                [sys.executable, "-m", "playwright", "install", "chromium"],
                 capture_output=False,
                 env=env,
             )

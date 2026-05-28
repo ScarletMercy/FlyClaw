@@ -237,8 +237,8 @@ def grep(pattern: str, path: str = ".", glob_pattern: str = "*",
 
     Args:
         pattern: 正则表达式搜索模式
-        path: 搜索目录（相对于工作区）
-        glob_pattern: 文件名过滤 (glob 模式)，如 "*.py"、"*.md"
+        path: 搜索目标，可以是文件或目录路径（相对于工作区）
+        glob_pattern: 目录搜索时的文件名过滤 (glob 模式)，如 "*.py"、"*.md"；path 为文件时忽略
         head_limit: 最大返回条数（默认 50）
         offset: 跳过前 N 条结果（默认 0）
         output_mode: "content" 显示匹配行，"files_with_matches" 仅列出匹配的文件路径
@@ -268,8 +268,6 @@ def _grep_impl(pattern: str, path: str = ".", glob_pattern: str = "*",
         return f"Error: {e}"
     if not os.path.exists(resolved):
         return _path_not_found_hint(path, resolved)
-    if not os.path.isdir(resolved):
-        return f"Error: not a directory: {path}"
 
     import re
 
@@ -277,6 +275,43 @@ def _grep_impl(pattern: str, path: str = ".", glob_pattern: str = "*",
         regex = re.compile(pattern)
     except re.error as e:
         return f"Error: invalid regex pattern: {e}"
+
+    # Single file path — search directly
+    if os.path.isfile(resolved):
+        if _is_binary(resolved):
+            return f"Error: binary file: {path}"
+        basename = os.path.basename(resolved)
+        if output_mode == "files_with_matches":
+            try:
+                with open(resolved, "r", encoding="utf-8", errors="ignore") as f:
+                    if any(regex.search(line) for line in f):
+                        return f"Found 1 of 1 file(s) matching pattern in {path}:\n  {basename}"
+            except (PermissionError, OSError):
+                return f"Error: permission denied: {path}"
+            return f"No files matching '{pattern}'"
+
+        results = []
+        try:
+            with open(resolved, "r", encoding="utf-8", errors="ignore") as f:
+                for i, line in enumerate(f, 1):
+                    if regex.search(line):
+                        results.append(f"{basename}:{i}: {line.rstrip()[:200]}")
+                        if len(results) >= _GREP_HARD_LIMIT:
+                            break
+        except (PermissionError, OSError):
+            return f"Error: permission denied: {path}"
+        if not results:
+            return f"No matches found for '{pattern}' in {path}"
+        total = len(results)
+        page = results[offset:offset + head_limit]
+        header = f"Found {len(page)} of {total} match(es) for '{pattern}':\n"
+        suffix = ""
+        if offset + head_limit < total:
+            suffix = f"\n... (截断，共 {total} 条，可用 offset={offset + head_limit} 查看更多)"
+        return header + "\n".join(page) + suffix
+
+    if not os.path.isdir(resolved):
+        return f"Error: not a file or directory: {path}"
 
     if output_mode == "files_with_matches":
         return _grep_files_with_matches(regex, resolved, path, glob_pattern, head_limit, offset, pattern=pattern)

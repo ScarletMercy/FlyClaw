@@ -1161,6 +1161,7 @@ class AgentLoop:
             chat_id=state.chat_id,
             message_id=state.message_id,
             thread_id=thread_id,
+            timeout_seconds=getattr(error, "timeout", None) or 120,
         )
 
         pending_data = {
