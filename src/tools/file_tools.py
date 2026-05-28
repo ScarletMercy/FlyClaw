@@ -41,13 +41,13 @@ def _resolve_path(path: str) -> str:
     return str(real)
 
 
-def read_file(path: str, offset: int = 0, limit: int = 500) -> str:
+def read_file(path: str, offset: int = 0, head_limit: int = 500) -> str:
     """Read file contents. Returns specified line range.
 
     Args:
         path: File path (relative to workspace)
         offset: Starting line number (0-based)
-        limit: Max number of lines to read
+        head_limit: Max number of lines to read
     """
     try:
         resolved = _resolve_path(path)
@@ -58,14 +58,14 @@ def read_file(path: str, offset: int = 0, limit: int = 500) -> str:
         with open(resolved, "r", encoding="utf-8") as f:
             lines = f.readlines()
         total = len(lines)
-        end = offset + limit
+        end = offset + head_limit
         selected = lines[offset:end]
         result = []
         for i, line in enumerate(selected):
             result.append(f"{offset + i + 1}\t{line.rstrip()}")
         header = f"File: {path} (lines {offset + 1}-{min(end, total)} of {total})\n"
         if end < total:
-            header += f"(showing {limit} of {total - offset} remaining lines)\n"
+            header += f"(showing {head_limit} of {total - offset} remaining lines)\n"
         return header + "\n".join(result)
     except FileNotFoundError:
         return f"Error: file not found: {path} (resolved to: {resolved}, workspace: {_BASE_DIR})"
@@ -190,6 +190,28 @@ def list_dir(path: str = ".") -> str:
 _EXCLUDED_DIRS = frozenset((".git", "__pycache__", "node_modules"))
 _GREP_HARD_LIMIT = 10000
 _GLOB_HARD_LIMIT = 10000
+_BINARY_EXTS = frozenset((
+    ".pyc", ".pyo", ".exe", ".dll", ".so", ".dylib", ".bin", ".dat",
+    ".db", ".sqlite", ".sqlite3", ".class", ".o", ".a", ".lib",
+    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
+    ".mp3", ".mp4", ".avi", ".mkv", ".mov", ".wav", ".flac", ".ogg",
+    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
+    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".woff", ".woff2", ".ttf", ".eot", ".otf",
+))
+
+
+def _is_binary(filepath: str) -> bool:
+    """Quick binary check: extension match or null bytes in first 8KB."""
+    ext = os.path.splitext(filepath)[1].lower()
+    if ext in _BINARY_EXTS:
+        return True
+    try:
+        with open(filepath, "rb") as f:
+            chunk = f.read(8192)
+        return b"\x00" in chunk
+    except (PermissionError, OSError):
+        return True
 
 
 def _path_not_found_hint(path: str, resolved: str) -> str:
@@ -208,37 +230,37 @@ def _path_not_found_hint(path: str, resolved: str) -> str:
     return f"Error: 路径不存在: {path}{hint}"
 
 
-def grep(pattern: str, path: str = ".", file_pattern: str = "*",
-         limit: int = 50, offset: int = 0,
-         output_mode: Literal["content", "files_only"] = "content") -> str:
+def grep(pattern: str, path: str = ".", glob_pattern: str = "*",
+         head_limit: int = 50, offset: int = 0,
+         output_mode: Literal["content", "files_with_matches"] = "content") -> str:
     """在文件内容中搜索匹配的文本行（正则表达式）。
 
     Args:
         pattern: 正则表达式搜索模式
         path: 搜索目录（相对于工作区）
-        file_pattern: 文件名过滤，如 "*.py"、"*.md"
-        limit: 最大返回条数（默认 50）
+        glob_pattern: 文件名过滤 (glob 模式)，如 "*.py"、"*.md"
+        head_limit: 最大返回条数（默认 50）
         offset: 跳过前 N 条结果（默认 0）
-        output_mode: "content" 显示匹配行，"files_only" 仅列出匹配的文件路径
+        output_mode: "content" 显示匹配行，"files_with_matches" 仅列出匹配的文件路径
     """
-    return _grep_impl(pattern, path, file_pattern, limit, offset, output_mode)
+    return _grep_impl(pattern, path, glob_pattern, head_limit, offset, output_mode)
 
 
 def glob(pattern: str = "*", path: str = ".",
-         limit: int = 50, offset: int = 0) -> str:
+         head_limit: int = 50, offset: int = 0) -> str:
     """按文件名模式递归搜索文件（glob 模式，按修改时间倒序）。
 
     Args:
         pattern: glob 模式，如 "*.py"、"*config*"
         path: 搜索目录（相对于工作区）
-        limit: 最大返回条数（默认 50）
+        head_limit: 最大返回条数（默认 50）
         offset: 跳过前 N 条结果（默认 0）
     """
-    return _glob_impl(pattern, path, limit, offset)
+    return _glob_impl(pattern, path, head_limit, offset)
 
 
-def _grep_impl(pattern: str, path: str = ".", file_pattern: str = "*",
-               limit: int = 50, offset: int = 0,
+def _grep_impl(pattern: str, path: str = ".", glob_pattern: str = "*",
+               head_limit: int = 50, offset: int = 0,
                output_mode: str = "content") -> str:
     try:
         resolved = _resolve_path(path)
@@ -256,8 +278,8 @@ def _grep_impl(pattern: str, path: str = ".", file_pattern: str = "*",
     except re.error as e:
         return f"Error: invalid regex pattern: {e}"
 
-    if output_mode == "files_only":
-        return _grep_files_only(regex, resolved, path, file_pattern, limit, offset, pattern=pattern)
+    if output_mode == "files_with_matches":
+        return _grep_files_with_matches(regex, resolved, path, glob_pattern, head_limit, offset, pattern=pattern)
 
     results = []
     truncated = False
@@ -269,9 +291,11 @@ def _grep_impl(pattern: str, path: str = ".", file_pattern: str = "*",
             for fname in files:
                 if truncated:
                     break
-                if not fnmatch.fnmatch(fname, file_pattern):
+                if not fnmatch.fnmatch(fname, glob_pattern):
                     continue
                 filepath = os.path.join(root, fname)
+                if _is_binary(filepath):
+                    continue
                 rel = os.path.relpath(filepath, resolved)
                 try:
                     with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
@@ -289,27 +313,29 @@ def _grep_impl(pattern: str, path: str = ".", file_pattern: str = "*",
     total = len(results)
     if not total:
         return f"No matches found for '{pattern}' in {path}"
-    page = results[offset:offset + limit]
+    page = results[offset:offset + head_limit]
     header = f"Found {len(page)} of {total} match(es) for '{pattern}':\n"
     suffix = ""
     if truncated:
-        suffix = f"\n... (结果过多，仅收集前 {total} 条，可用更精确的 pattern 或 file_pattern 缩小范围)"
-    elif offset + limit < total:
-        suffix = f"\n... (截断，共 {total} 条，可用 offset={offset + limit} 查看更多)"
+        suffix = f"\n... (结果过多，仅收集前 {total} 条，可用更精确的 pattern 或 glob_pattern 缩小范围)"
+    elif offset + head_limit < total:
+        suffix = f"\n... (截断，共 {total} 条，可用 offset={offset + head_limit} 查看更多)"
     return header + "\n".join(page) + suffix
 
 
-def _grep_files_only(regex, resolved: str, path: str,
-                     file_pattern: str, limit: int, offset: int,
+def _grep_files_with_matches(regex, resolved: str, path: str,
+                     glob_pattern: str, head_limit: int, offset: int,
                      pattern: str = "") -> str:
     files = []
     try:
         for root, dirs, fnames in os.walk(resolved):
             dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _EXCLUDED_DIRS]
             for fname in fnames:
-                if not fnmatch.fnmatch(fname, file_pattern):
+                if not fnmatch.fnmatch(fname, glob_pattern):
                     continue
                 filepath = os.path.join(root, fname)
+                if _is_binary(filepath):
+                    continue
                 try:
                     with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
                         for line in f:
@@ -329,17 +355,17 @@ def _grep_files_only(regex, resolved: str, path: str,
     total = len(files)
     if not total:
         return f"No files matching '{pattern}'"
-    page = files[offset:offset + limit]
+    page = files[offset:offset + head_limit]
     header = f"Found {len(page)} of {total} file(s) matching pattern in {path}:\n"
     suffix = ""
     if total >= _GREP_HARD_LIMIT:
-        suffix = f"\n... (结果过多，仅收集前 {total} 个文件，可用更精确的 pattern 或 file_pattern 缩小范围)"
-    elif offset + limit < total:
-        suffix = f"\n... (截断，共 {total} 个文件，可用 offset={offset + limit} 查看更多)"
+        suffix = f"\n... (结果过多，仅收集前 {total} 个文件，可用更精确的 pattern 或 glob_pattern 缩小范围)"
+    elif offset + head_limit < total:
+        suffix = f"\n... (截断，共 {total} 个文件，可用 offset={offset + head_limit} 查看更多)"
     return header + "\n".join(f"  {f}" for f in page) + suffix
 
 
-def _glob_impl(pattern: str, path: str = ".", limit: int = 50, offset: int = 0) -> str:
+def _glob_impl(pattern: str, path: str = ".", head_limit: int = 50, offset: int = 0) -> str:
     try:
         resolved = _resolve_path(path)
     except ValueError as e:
@@ -365,7 +391,7 @@ def _glob_impl(pattern: str, path: str = ".", limit: int = 50, offset: int = 0) 
             return f"No files matched '{pattern}' in {path}"
         all_matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         total = len(all_matches)
-        page = all_matches[offset:offset + limit]
+        page = all_matches[offset:offset + head_limit]
         lines = []
         for m in page:
             rel = str(m.relative_to(resolved))
@@ -378,8 +404,8 @@ def _glob_impl(pattern: str, path: str = ".", limit: int = 50, offset: int = 0) 
         suffix = ""
         if truncated:
             suffix = f"\n... (结果过多，仅收集前 {total} 条，可用更精确的 pattern 缩小范围)"
-        elif offset + limit < total:
-            suffix = f"\n... (截断，共 {total} 条，可用 offset={offset + limit} 查看更多)"
+        elif offset + head_limit < total:
+            suffix = f"\n... (截断，共 {total} 条，可用 offset={offset + head_limit} 查看更多)"
         return header + "\n".join(lines) + suffix
     except Exception as e:
         return f"Error: {e}"

@@ -468,11 +468,11 @@ def get_tools() -> list[ToolDef]:
                 "properties": {
                     "agent_name": {
                         "type": "string",
-                        "description": "子代理名称（单个任务时使用）",
+                        "description": "子代理名称，如 research、coder、reviewer（单个任务时必填）",
                     },
                     "task": {
                         "type": "string",
-                        "description": "任务描述（单个任务时使用）",
+                        "description": "任务描述（单个任务时必填）",
                     },
                     "context": {
                         "type": "string",
@@ -480,11 +480,11 @@ def get_tools() -> list[ToolDef]:
                     },
                     "tasks": {
                         "type": "string",
-                        "description": "批量任务的 JSON 数组（批量模式）",
+                        "description": "批量任务的 JSON 数组，每个元素: {\"agent_name\": \"...\", \"task\": \"...\", \"context\": \"...\"}（批量模式时必填）",
                     },
                     "timeout": {
                         "type": "integer",
-                        "description": "超时时间（秒），不传则使用全局默认值（当前600秒）。复杂任务可适当增大。环境变量 FLYCLAW_CHILD_TIMEOUT_SECONDS 可覆盖默认值。",
+                        "description": "超时时间（秒），可选。不传则使用全局默认值。复杂任务可适当增大。环境变量 FLYCLAW_CHILD_TIMEOUT_SECONDS 可覆盖默认值。",
                     },
                 },
                 "required": [],

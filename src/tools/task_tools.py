@@ -376,6 +376,7 @@ def get_tools() -> list[ToolDef]:
                     },
                     "step_index": {
                         "type": "integer",
+                        "default": -1,
                         "description": "完成的步骤索引，0-based（advance 必填）",
                     },
                     "result_summary": {

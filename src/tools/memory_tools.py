@@ -537,6 +537,7 @@ def get_tools() -> list[ToolDef]:
                     "category": {
                         "type": "string",
                         "enum": ["preference", "identity", "contact", "project", "fact"],
+                        "default": "fact",
                         "description": "记忆分类（默认 fact）",
                     },
                     "query": {
@@ -545,6 +546,7 @@ def get_tools() -> list[ToolDef]:
                     },
                     "verbose": {
                         "type": "boolean",
+                        "default": False,
                         "description": "list 时是否同时返回完整内容。默认只返回键名",
                     },
                     "keys": {

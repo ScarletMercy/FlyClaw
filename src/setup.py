@@ -282,12 +282,18 @@ def _step_model(config: dict) -> None:
                 success, msg = _verify_api_key(model.get("provider", ""), model.get("name", ""), model.get("base_url", ""), model["api_key"])
                 if success:
                     print("  [通过] API Key 验证成功")
+                    ctx_default = str(model.get("context_window", 1000000))
+                    model["context_window"] = int(_ask("  上下文窗口大小 (tokens)", default=ctx_default))
+                    print(f"  上下文窗口: {model['context_window']} tokens")
                 else:
                     print(f"  [警告] API Key 验证失败: {msg}")
                     if not _ask_yn("  是否仍然使用此 API Key？", default=True):
                         model["api_key"] = _ask_required(f"  重新输入 API 密钥 ({env_name})", default="")
         else:
             model.pop("api_key", None)
+            ctx_default = str(model.get("context_window", 1000000))
+            model["context_window"] = int(_ask("  上下文窗口大小 (tokens)", default=ctx_default))
+            print(f"  上下文窗口: {model['context_window']} tokens")
     else:
         model["provider"] = "openai"
         model["name"] = _ask("  模型名称", default=model.get("name", ""))
@@ -299,6 +305,9 @@ def _step_model(config: dict) -> None:
             success, msg = _verify_api_key(model.get("provider", ""), model.get("name", ""), model.get("base_url", ""), model["api_key"])
             if success:
                 print("  [通过] API Key 验证成功")
+                ctx_default = str(model.get("context_window", 1000000))
+                model["context_window"] = int(_ask("  上下文窗口大小 (tokens)", default=ctx_default))
+                print(f"  上下文窗口: {model['context_window']} tokens")
             else:
                 print(f"  [警告] API Key 验证失败: {msg}")
                 if not _ask_yn("  是否仍然使用此 API Key？", default=True):
@@ -574,6 +583,7 @@ def _step_summary(config: dict) -> None:
     print("  [8/8] 配置总览")
     print("  ─────────────")
     print(f"  模型:       {model.get('provider', '?')}/{model.get('name', '?')}")
+    print(f"  上下文窗口: {model.get('context_window', 1000000)} tokens")
     if model.get("base_url"):
         print(f"  接口地址:   {model['base_url']}")
     fallbacks = model.get("fallbacks", [])

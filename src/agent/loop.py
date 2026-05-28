@@ -668,8 +668,7 @@ class AgentLoop:
         """
         self._truncate_large_outputs(state.messages, thread_id)
 
-        # Clean orphan tool_call/result pairs BEFORE compression
-        history = self._sanitize_api_messages(state.messages)
+        history = list(state.messages)
 
         # Proactive compression check
         if self._compressor.should_compress(history, self._ctx_window_tokens):
@@ -677,7 +676,6 @@ class AgentLoop:
 
         memory_summary = await self._fetch_memory_summary()
         system_text = self._build_system_prompt(state, self._get_active_tool_defs(state), memory_summary)
-        history = self._sanitize_api_messages(history)
         history = self._sanitize_surrogates(history)
         return [{"role": "system", "content": system_text}] + list(history)
 
@@ -713,58 +711,6 @@ class AgentLoop:
     # Sanitization helpers
     # ------------------------------------------------------------------
 
-    def _sanitize_api_messages(self, messages: list[dict]) -> list[dict]:
-        """Fix orphan tool_call/result pairs after compression.
-
-        1. If a tool_call has no matching tool result → insert stub inline
-        2. If a tool result has no matching tool_call → skip it
-
-        Single-pass rebuild avoids index-shift bugs from insert/pop.
-        """
-        # Collect all known tool_call_ids
-        tc_ids: set[str] = set()
-        for m in messages:
-            if m.get("role") == "assistant" and m.get("tool_calls"):
-                for tc in m["tool_calls"]:
-                    tid = tc.get("id", "")
-                    if tid:
-                        tc_ids.add(tid)
-
-        # Collect result IDs to determine which are missing
-        result_ids: set[str] = set()
-        for m in messages:
-            if m.get("role") == "tool":
-                tid = m.get("tool_call_id", "")
-                if tid:
-                    result_ids.add(tid)
-
-        missing = tc_ids - result_ids
-
-        # Single-pass rebuild: insert stubs inline, skip orphans
-        sanitized: list[dict] = []
-        for m in messages:
-            # Skip orphan tool results (no matching tool_call)
-            if m.get("role") == "tool" and m.get("tool_call_id", "") not in tc_ids:
-                continue
-
-            cleaned = {k: v for k, v in m.items() if k != "_truncated"}
-            sanitized.append(cleaned)
-
-            # After each assistant with tool_calls, insert missing stubs inline
-            if m.get("role") == "assistant" and m.get("tool_calls"):
-                for tc in m["tool_calls"]:
-                    tid = tc.get("id", "")
-                    if tid and tid in missing:
-                        logger.warning("Missing tool result for tool_call_id=%s", tid)
-                        sanitized.append({
-                            "role": "tool",
-                            "tool_call_id": tid,
-                            "content": "[tool result unavailable]",
-                        })
-                        missing.discard(tid)
-
-        return sanitized
-
     def _repair_orphan_tool_results(self, state: AgentState) -> None:
         tc_ids: set[str] = set()
         for m in state.messages:
@@ -782,6 +728,13 @@ class AgentLoop:
                     result_ids.add(tid)
 
         missing_ids = tc_ids - result_ids
+
+        # Don't repair tool_calls that are waiting for user approval
+        pending = state.pending_approval or {}
+        pending_tc_id = pending.get("tool_call_id", "")
+        if pending_tc_id:
+            missing_ids.discard(pending_tc_id)
+
         orphan_result_indices = [
             i for i, m in enumerate(state.messages)
             if m.get("role") == "tool" and m.get("tool_call_id", "") not in tc_ids
@@ -807,7 +760,7 @@ class AgentLoop:
                 tids = missing_by_assistant[assistant_idx]
                 insert_pos = assistant_idx + 1 + offset
                 for tid in reversed(tids):
-                    stub = {"role": "tool", "tool_call_id": tid, "content": "[tool result unavailable]"}
+                    stub = {"role": "tool", "tool_call_id": tid, "content": "[工具被用户打断]"}
                     state.messages.insert(insert_pos, stub)
                     logger.warning("Repaired orphan tool_call: inserted stub for %s", tid)
                 offset += len(tids)

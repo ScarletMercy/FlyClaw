@@ -348,50 +348,6 @@ class TestToolLoopGuardrails:
         assert result is None
 
 
-class TestSanitizeApiMessages:
-    def test_inserts_stub_for_missing_result(self):
-        from src.agent.loop import AgentLoop
-        loop = AgentLoop.__new__(AgentLoop)
-        messages = [
-            {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
-            ]},
-        ]
-        sanitized = loop._sanitize_api_messages(messages)
-        tool_msgs = [m for m in sanitized if m.get("role") == "tool"]
-        assert len(tool_msgs) == 1
-        assert tool_msgs[0]["tool_call_id"] == "tc1"
-        assert "tool result unavailable" in tool_msgs[0]["content"]
-
-    def test_removes_orphan_result(self):
-        from src.agent.loop import AgentLoop
-        loop = AgentLoop.__new__(AgentLoop)
-        messages = [
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
-            ]},
-            {"role": "tool", "tool_call_id": "tc1", "content": "ok"},
-            {"role": "tool", "tool_call_id": "tc2", "content": "orphan"},
-        ]
-        sanitized = loop._sanitize_api_messages(messages)
-        tool_msgs = [m for m in sanitized if m.get("role") == "tool"]
-        assert len(tool_msgs) == 1
-        assert tool_msgs[0]["tool_call_id"] == "tc1"
-
-    def test_no_change_when_balanced(self):
-        from src.agent.loop import AgentLoop
-        loop = AgentLoop.__new__(AgentLoop)
-        messages = [
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
-            ]},
-            {"role": "tool", "tool_call_id": "tc1", "content": "ok"},
-        ]
-        sanitized = loop._sanitize_api_messages(messages)
-        assert len(sanitized) == len(messages)
-
-
 class TestSanitizeSurrogates:
     def test_replaces_lone_surrogates(self):
         from src.agent.loop import AgentLoop
@@ -639,20 +595,6 @@ class TestToolCache:
         messages = [{"role": "user", "content": content}]
         loop._truncate_large_outputs(messages, "test_thread")
         assert messages[0]["content"] == content
-
-    def test_sanitize_strips_truncated_flag(self):
-        from src.agent.loop import AgentLoop
-        loop = AgentLoop.__new__(AgentLoop)
-        messages = [
-            {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
-            ]},
-            {"role": "tool", "tool_call_id": "tc1", "content": "ok", "_truncated": True},
-        ]
-        sanitized = loop._sanitize_api_messages(messages)
-        tool_msg = [m for m in sanitized if m.get("role") == "tool"][0]
-        assert "_truncated" not in tool_msg
 
 
 class TestFindSafeCut:

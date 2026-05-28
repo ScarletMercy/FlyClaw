@@ -141,28 +141,6 @@ class TestCompressToolGroupIntegrity:
         errors = _verify_no_orphan_pairs(result)
         assert errors == [], "Compress (enabled) produced orphan pairs: " + "; ".join(errors)
 
-    @pytest.mark.asyncio
-    async def test_compress_then_sanitize_no_stubs(self):
-        from src.compressor.compressor import ContextCompressor
-
-        cfg = CompressionConfig(enabled=False, tail_messages=4)
-        compressor = ContextCompressor(cfg)
-        loop = AgentLoop.__new__(AgentLoop)
-
-        messages = _build_messages_with_groups(10, extra_middle=2)
-
-        result = compressor._compact(messages, context_window_tokens=200)
-        sanitized = loop._sanitize_api_messages(result)
-
-        stub_msgs = [
-            m for m in sanitized
-            if m.get("role") == "tool" and "tool result unavailable" in m.get("content", "")
-        ]
-        assert stub_msgs == [], f"Sanitize inserted stubs for: {[m['tool_call_id'] for m in stub_msgs]}"
-
-        errors = _verify_no_orphan_pairs(sanitized)
-        assert errors == [], "After sanitize: " + "; ".join(errors)
-
 
 # ======================================================================
 # C: Parallel tool + ApprovalPending
@@ -367,27 +345,6 @@ class TestTruncateEdgeCases:
 
 
 class TestEndToEndSanitize:
-    @pytest.mark.asyncio
-    async def test_compress_sanitize_no_stubs_e2e(self):
-        from src.compressor.compressor import ContextCompressor
-
-        cfg = CompressionConfig(enabled=False, tail_messages=3)
-        compressor = ContextCompressor(cfg)
-        loop = AgentLoop.__new__(AgentLoop)
-
-        msgs: list[dict] = []
-        for g in range(8):
-            msgs.append({"role": "assistant", "content": "", "tool_calls": [
-                {"id": f"tc_{g}", "type": "function", "function": {"name": "x", "arguments": "{}"}},
-            ]})
-            msgs.append({"role": "tool", "tool_call_id": f"tc_{g}", "content": "r" * 500})
-
-        compacted = compressor._compact(msgs, context_window_tokens=200)
-        sanitized = loop._sanitize_api_messages(compacted)
-
-        errors = _verify_no_orphan_pairs(sanitized)
-        assert errors == [], "E2E compress+sanitize: " + "; ".join(errors)
-
     @pytest.mark.asyncio
     async def test_compress_with_large_tail_count(self):
         from src.compressor.compressor import ContextCompressor

@@ -788,13 +788,13 @@ class MessageHandler:
                         warn = "危险" if current_exc.denylisted else "需要审批"
                         msg_text = (
                             f"**需要审批** ({warn})\n```\n{current_exc.command_preview}\n```\n"
-                            f"发送 /y 确认，其它任何消息自动取消。(请求: {current_exc.request_id})"
+                            f"发送 /y 确认，其它任何消息自动取消（{approval_timeout}秒超时）。"
                         )
                     else:
                         warn = "DANGEROUS" if current_exc.denylisted else "requires approval"
                         msg_text = (
                             f"**Approval Required** ({warn})\n```\n{current_exc.command_preview}\n```\n"
-                            f"Send /y to confirm. Any other message will cancel. (request: {current_exc.request_id})"
+                            f"Send /y to confirm. Any other message will cancel ({approval_timeout}s timeout)."
                         )
 
                 if not mgr.is_resolved(current_exc.request_id):
