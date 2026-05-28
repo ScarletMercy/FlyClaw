@@ -50,6 +50,9 @@ def _find_safe_cut(non_system: list[dict], desired_tail_count: int) -> int:
     A group is: an assistant message with tool_calls + all its tool_results.
     If the desired cut falls inside a group, the cut is moved to the group's
     start so the group stays entirely in the tail.
+
+    After group adjustment, the cut is moved forward to the nearest user
+    message so that the tail always starts with a user turn.
     """
     n = len(non_system)
     cut = n - desired_tail_count
@@ -84,6 +87,14 @@ def _find_safe_cut(non_system: list[dict], desired_tail_count: int) -> int:
                 break
         if cut == prev_cut:
             break
+
+    # Ensure cut lands on a user message.
+    # This guarantees the tail starts with a user turn.
+    if cut < len(non_system) and non_system[cut].get("role") != "user":
+        for i in range(cut, len(non_system)):
+            if non_system[i].get("role") == "user":
+                cut = i
+                break
 
     return max(0, cut)
 

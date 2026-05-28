@@ -285,31 +285,6 @@ class TestAgentLoopApproval:
         assert any("denied" in m.get("content", "").lower() for m in tool_msgs)
 
 
-class TestAgentLoopMaxRounds:
-    @pytest.mark.asyncio
-    async def test_max_tool_rounds_disables_tools(self, store):
-        config = _make_config()
-        config.agents.max_tool_rounds = 1
-
-        tool = _make_tool("always_call")
-        client = AsyncMock()
-
-        async def fake_chat(messages, tools=None, **kw):
-            has_tools = tools is not None and len(tools) > 0
-            if has_tools:
-                return ChatResponse(content="", tool_calls=[_make_tc("always_call")])
-            return ChatResponse(content="No more tools.", tool_calls=[])
-
-        client.chat.side_effect = fake_chat
-        loop = _make_loop(store, config, tools=[tool], client=client)
-
-        state = AgentState(messages=[{"role": "user", "content": "go"}])
-        result = await loop.run(state, "t8")
-
-        last = result.messages[-1]
-        assert last["role"] == "assistant"
-
-
 class TestAgentLoopStatePersistence:
     @pytest.mark.asyncio
     async def test_state_saved_after_completion(self, store, config):
@@ -441,35 +416,6 @@ class TestSanitizeSurrogates:
         messages = [{"role": "user", "content": "normal text"}]
         sanitized = loop._sanitize_surrogates(messages)
         assert sanitized[0]["content"] == "normal text"
-
-
-class TestGracePeriod:
-    @pytest.mark.asyncio
-    async def test_grace_period_on_max_rounds(self, store, config):
-        config.agents.max_tool_rounds = 1
-        tool = _make_tool("always_call")
-        client = AsyncMock()
-
-        call_count = 0
-
-        async def fake_chat(messages, tools=None, **kw):
-            nonlocal call_count
-            call_count += 1
-            has_tools = tools is not None and len(tools) > 0
-            if has_tools:
-                return ChatResponse(content="", tool_calls=[_make_tc("always_call")])
-            return ChatResponse(content="Summary: budget exhausted.", tool_calls=[])
-
-        client.chat.side_effect = fake_chat
-        loop = _make_loop(store, config, tools=[tool], client=client)
-
-        state = AgentState(messages=[{"role": "user", "content": "go"}])
-        result = await loop.run(state, "grace_test")
-
-        last = result.messages[-1]
-        assert last["role"] == "assistant"
-        assert "Summary" in last["content"]
-        assert call_count >= 2
 
 
 class TestInterruptFlag:
@@ -730,7 +676,7 @@ class TestFindSafeCut:
             {"role": "tool", "tool_call_id": "tc1", "content": "result"},
             {"role": "assistant", "content": "done"},
         ]
-        # tail_count=2 would cut at idx=2 (inside tc1 group), should adjust to idx=1
+        # tail_count=2 → cut=2 → group adjust to 1 → forward: no user after 1, stays at 1
         assert _find_safe_cut(msgs, 2) == 1
 
     def test_preserves_parallel_tool_group(self):
@@ -745,7 +691,7 @@ class TestFindSafeCut:
             {"role": "tool", "tool_call_id": "tc2", "content": "r2"},
             {"role": "assistant", "content": "done"},
         ]
-        # tail_count=3 would cut at idx=2 (inside tc1+tc2 group), adjust to idx=1
+        # tail_count=3 → cut=2 → group adjust to 1 → forward: no user after 1, stays at 1
         assert _find_safe_cut(msgs, 3) == 1
 
     def test_cut_before_group(self):
@@ -771,8 +717,8 @@ class TestFindSafeCut:
             {"role": "assistant", "content": "done"},
             {"role": "user", "content": "next"},
         ]
-        # tail_count=2 would cut at idx=3, which is after tc1 group (1-2) → no adjustment
-        assert _find_safe_cut(msgs, 2) == 3
+        # tail_count=2 → cut=3 (assistant) → forward to idx=4 (user "next")
+        assert _find_safe_cut(msgs, 2) == 4
 
 
 class TestApprovalPendingPartialResults:
@@ -805,7 +751,7 @@ class TestFindSafeCutEdgeCases:
             ]},
             {"role": "tool", "tool_call_id": "tc2", "content": "r2"},
         ]
-        # tail_count=2 → cut=3. Group B is at idx 3-4. asst_idx=3 < cut=3 is False → no adjustment
+        # tail_count=2 → cut=3 (assistant+tc2) → forward: no user after 3, stays at 3
         assert _find_safe_cut(msgs, 2) == 3
 
     def test_orphan_tool_result_ignored(self):
@@ -816,8 +762,8 @@ class TestFindSafeCutEdgeCases:
             {"role": "assistant", "content": "hello"},
             {"role": "user", "content": "bye"},
         ]
-        # No groups at all → cut unchanged
-        assert _find_safe_cut(msgs, 2) == 2
+        # tail_count=2 → cut=2 (assistant) → forward to idx=3 (user "bye")
+        assert _find_safe_cut(msgs, 2) == 3
 
     def test_tool_call_without_result_no_group(self):
         from src.compressor.compressor import _find_safe_cut
@@ -829,8 +775,8 @@ class TestFindSafeCutEdgeCases:
             {"role": "assistant", "content": "follow-up"},
             {"role": "user", "content": "next"},
         ]
-        # tc_no_result has no matching tool_result → no group → cut unchanged
-        assert _find_safe_cut(msgs, 2) == 2
+        # tail_count=2 → cut=2 (assistant) → forward to idx=3 (user "next")
+        assert _find_safe_cut(msgs, 2) == 3
 
     def test_empty_tool_call_id(self):
         from src.compressor.compressor import _find_safe_cut
@@ -842,7 +788,7 @@ class TestFindSafeCutEdgeCases:
             {"role": "tool", "tool_call_id": "", "content": "r"},
             {"role": "assistant", "content": "done"},
         ]
-        # Empty id is ignored → no group → cut unchanged
+        # tail_count=2 → cut=2 (tool) → forward: no user after 2, stays at 2
         assert _find_safe_cut(msgs, 2) == 2
 
     def test_single_element_list(self):
@@ -874,12 +820,88 @@ class TestFindSafeCutEdgeCases:
             ]},
             {"role": "tool", "tool_call_id": "tc2", "content": "r2"},
         ]
-        # tail_count=2 → cut=4. Group B is idx 4-5. asst_idx=4 < cut=4 is False → no adjustment.
+        # tail_count=2 → cut=4 (assistant+tc2) → forward: no user after 4, stays at 4
         assert _find_safe_cut(msgs, 2) == 4
 
-        # tail_count=3 → cut=3. Falls inside group B (4-5)? No, cut=3 < asst_idx=4.
-        # Falls inside group A (1-2)? No, max_result=2 < cut=3.
+        # tail_count=3 → cut=3 (u2) → already on user, no change
         assert _find_safe_cut(msgs, 3) == 3
 
-        # tail_count=4 → cut=2. Group A is idx 1-2. asst_idx=1 < cut=2 <= max_result=2 → adjust to 1
-        assert _find_safe_cut(msgs, 4) == 1
+        # tail_count=4 → cut=2 → group adjust to 1 → forward to idx=3 (u2)
+        assert _find_safe_cut(msgs, 4) == 3
+
+
+class TestFindSafeCutUserTurnAlignment:
+    def test_tail_starts_from_user_message(self):
+        from src.compressor.compressor import _find_safe_cut
+        msgs = [
+            {"role": "user", "content": "u1"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "u2"},
+            {"role": "assistant", "content": "a2"},
+            {"role": "user", "content": "u3"},
+            {"role": "assistant", "content": "a3"},
+        ]
+        # tail_count=2 → cut=4 (u3) → already on user, no change
+        assert _find_safe_cut(msgs, 2) == 4
+        # tail_count=3 → cut=3 (a2) → forward to idx=4 (u3)
+        assert _find_safe_cut(msgs, 3) == 4
+
+    def test_tail_starts_from_user_with_tool_calls(self):
+        from src.compressor.compressor import _find_safe_cut
+        msgs = [
+            {"role": "user", "content": "u1"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+            ]},
+            {"role": "tool", "tool_call_id": "tc1", "content": "r1"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "u2"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "tc2", "type": "function", "function": {"name": "y", "arguments": "{}"}},
+            ]},
+            {"role": "tool", "tool_call_id": "tc2", "content": "r2"},
+        ]
+        # tail_count=3 → cut=4 (u2) → already on user, no change
+        assert _find_safe_cut(msgs, 3) == 4
+        # tail_count=4 → cut=3 (a1) → forward to idx=4 (u2)
+        assert _find_safe_cut(msgs, 4) == 4
+
+    def test_cut_already_on_user_message(self):
+        from src.compressor.compressor import _find_safe_cut
+        msgs = [
+            {"role": "user", "content": "u1"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "u2"},
+            {"role": "assistant", "content": "a2"},
+        ]
+        # tail_count=2 → cut=2 (user u2) → already on user → no change
+        assert _find_safe_cut(msgs, 2) == 2
+
+    def test_multiple_user_messages_between_groups(self):
+        from src.compressor.compressor import _find_safe_cut
+        msgs = [
+            {"role": "user", "content": "u1"},
+            {"role": "assistant", "content": "a1"},
+            {"role": "user", "content": "u2"},
+            {"role": "assistant", "content": "a2"},
+            {"role": "user", "content": "u3"},
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+            ]},
+            {"role": "tool", "tool_call_id": "tc1", "content": "r1"},
+            {"role": "assistant", "content": "a3"},
+            {"role": "user", "content": "u4"},
+            {"role": "assistant", "content": "a4"},
+        ]
+        # tail_count=3 → cut=7 (a3) → forward to idx=8 (u4)
+        assert _find_safe_cut(msgs, 3) == 8
+
+    def test_no_user_message_before_cut(self):
+        from src.compressor.compressor import _find_safe_cut
+        msgs = [
+            {"role": "assistant", "content": "a1"},
+            {"role": "tool", "tool_call_id": "tc1", "content": "r1"},
+            {"role": "assistant", "content": "a2"},
+        ]
+        # No user messages at all → cut stays at computed value
+        assert _find_safe_cut(msgs, 2) == 1

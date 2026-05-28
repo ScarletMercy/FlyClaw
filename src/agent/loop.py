@@ -304,7 +304,7 @@ class AgentLoop:
         self._maybe_trigger_skill_review(state, thread_id)
         return True
 
-    async def _run_inner(self, state: AgentState, thread_id: str, max_rounds: int) -> AgentState:
+    async def _run_inner(self, state: AgentState, thread_id: str, max_rounds: int = 50) -> AgentState:
         """Internal run logic, called with thread lock held.
 
         Uses proactive compression (hermes-style): check token budget BEFORE
@@ -314,7 +314,6 @@ class AgentLoop:
         from src.events import emit_async
 
         start_ts = _time.monotonic()
-        max_tool_rounds = self._get_max_tool_rounds()
         tool_round = 0
         ie = self._store.get_interrupt_flag(thread_id).get_event()
 
@@ -587,27 +586,7 @@ class AgentLoop:
         state.pending_approval = None
         await self._store.save(thread_id, state)
 
-        turn_msgs = state.messages
-        for i in range(len(state.messages) - 1, -1, -1):
-            if state.messages[i].get("role") == "user":
-                turn_msgs = state.messages[i:]
-                break
-
-        used_rounds = sum(
-            1 for m in turn_msgs
-            if m.get("role") == "tool"
-            and not m.get("content", "").startswith(("[error]", "[denied]", "[已跳过]"))
-        )
-        remaining = max(self._get_max_tool_rounds() - used_rounds, 5)
-        return await self._run_inner(state, thread_id, max_rounds=remaining)
-
-    def _get_max_tool_rounds(self) -> int:
-        if not self._config:
-            return 50
-        agents_cfg = getattr(self._config, "agents", None)
-        if agents_cfg is None:
-            return 50
-        return getattr(agents_cfg, "max_tool_rounds", 0) or 50
+        return await self._run_inner(state, thread_id)
 
     async def _call_model_with_retry(
         self,
@@ -870,18 +849,6 @@ class AgentLoop:
             tools = [t for t in tools if not t.name.startswith("weixin_")]
         elif channel == "weixin":
             tools = [t for t in tools if not t.name.startswith("qq_")]
-
-        max_rounds = self._get_max_tool_rounds()
-        if max_rounds > 0:
-            turn_msgs = state.messages
-            for i in range(len(state.messages) - 1, -1, -1):
-                if state.messages[i].get("role") == "user":
-                    turn_msgs = state.messages[i:]
-                    break
-            tool_count = sum(1 for m in turn_msgs if m.get("role") == "tool")
-            if tool_count >= max_rounds:
-                logger.info("Max tool rounds (%d) reached, disabling tools", max_rounds)
-                return []
 
         return tools
 
