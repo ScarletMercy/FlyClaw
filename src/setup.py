@@ -503,9 +503,13 @@ def _step_browser(config: dict) -> None:
         elif _ask_yn("  现在安装 Chromium 浏览器（Playwright）？", default=True):
             print("  正在安装 Chromium...")
             import subprocess
+            # 设置国内镜像源加速下载
+            env = os.environ.copy()
+            env["PLAYWRIGHT_DOWNLOAD_HOST"] = "https://registry.npmmirror.com/-/binary/playwright"
             ret = subprocess.run(
-                [sys.executable, "-m", "playwright", "install", "chromium"],
+                [sys.executable, "-m", "playwright", "install", "chromium", "--only-shell"],
                 capture_output=False,
+                env=env,
             )
             if ret.returncode == 0:
                 print("  Chromium 安装完成。")

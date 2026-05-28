@@ -332,6 +332,8 @@ class AgentLoop:
         self._guardrails.reset()
 
         for _ in range(max_rounds):
+            self._repair_orphan_tool_results(state)
+
             # 0. Check interrupt
             if await self._check_interrupt(state, thread_id, start_ts, tool_round):
                 return state
@@ -418,8 +420,15 @@ class AgentLoop:
                 if await self._check_interrupt(state, thread_id, start_ts, tool_round):
                     return state
             else:
-                for tc in response.tool_calls:
+                for idx, tc in enumerate(response.tool_calls):
                     if await self._check_interrupt(state, thread_id, start_ts, tool_round):
+                        for rem in response.tool_calls[idx:]:
+                            state.append_message({
+                                "role": "tool",
+                                "tool_call_id": rem.id,
+                                "content": "[error] 工具执行被打断（用户中断）",
+                            })
+                        await self._store.save(thread_id, state)
                         return state
                     tool_result = await interruptible(ie, self._execute_tool(tc, state, thread_id))
                     interrupted = tool_result is None
@@ -433,6 +442,13 @@ class AgentLoop:
                     await self._store.save(thread_id, state)
                     if interrupted:
                         if await self._check_interrupt(state, thread_id, start_ts, tool_round):
+                            for rem in response.tool_calls[idx + 1:]:
+                                state.append_message({
+                                    "role": "tool",
+                                    "tool_call_id": rem.id,
+                                    "content": "[error] 工具执行被打断（用户中断）",
+                                })
+                            await self._store.save(thread_id, state)
                             return state
 
             # Nudge counter: increment after every tool round
@@ -610,7 +626,13 @@ class AgentLoop:
         state.pending_approval = None
         await self._store.save(thread_id, state)
 
-        return await self._run_inner(state, thread_id, max_rounds=self._get_max_tool_rounds())
+        used_rounds = sum(
+            1 for m in state.messages
+            if m.get("role") == "tool"
+            and not m.get("content", "").startswith(("[error]", "[denied]", "[已跳过]"))
+        )
+        remaining = max(self._get_max_tool_rounds() - used_rounds, 5)
+        return await self._run_inner(state, thread_id, max_rounds=remaining)
 
     def _get_max_tool_rounds(self) -> int:
         if not self._config:
@@ -782,6 +804,53 @@ class AgentLoop:
                 sanitized.pop(i)
 
         return sanitized
+
+    def _repair_orphan_tool_results(self, state: AgentState) -> None:
+        tc_ids: set[str] = set()
+        for m in state.messages:
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                for tc in m["tool_calls"]:
+                    tid = tc.get("id", "")
+                    if tid:
+                        tc_ids.add(tid)
+
+        result_ids: set[str] = set()
+        for m in state.messages:
+            if m.get("role") == "tool":
+                tid = m.get("tool_call_id", "")
+                if tid:
+                    result_ids.add(tid)
+
+        missing_ids = tc_ids - result_ids
+        orphan_result_indices = [
+            i for i, m in enumerate(state.messages)
+            if m.get("role") == "tool" and m.get("tool_call_id", "") not in tc_ids
+        ]
+
+        if not missing_ids and not orphan_result_indices:
+            return
+
+        for i in reversed(orphan_result_indices):
+            removed = state.messages.pop(i)
+            logger.warning("Repaired orphan tool result: removed %s", removed.get("tool_call_id", ""))
+
+        if missing_ids:
+            missing_by_assistant: dict[int, list[str]] = {}
+            for tid in missing_ids:
+                for i, m in enumerate(state.messages):
+                    if m.get("role") == "assistant" and m.get("tool_calls"):
+                        if any(tc.get("id") == tid for tc in m["tool_calls"]):
+                            missing_by_assistant.setdefault(i, []).append(tid)
+                            break
+            offset = 0
+            for assistant_idx in sorted(missing_by_assistant):
+                tids = missing_by_assistant[assistant_idx]
+                insert_pos = assistant_idx + 1 + offset
+                for tid in reversed(tids):
+                    stub = {"role": "tool", "tool_call_id": tid, "content": "[tool result unavailable]"}
+                    state.messages.insert(insert_pos, stub)
+                    logger.warning("Repaired orphan tool_call: inserted stub for %s", tid)
+                offset += len(tids)
 
     def _sanitize_surrogates(self, messages: list[dict]) -> list[dict]:
         """Remove lone surrogate characters (U+D800-U+DFFF) that crash json.dumps.
@@ -1145,7 +1214,7 @@ class AgentLoop:
                 await asyncio.gather(*tasks, return_exceptions=True)
                 for i, r in enumerate(results):
                     tc_id = tool_calls[i].id if hasattr(tool_calls[i], "id") else tool_calls[i].get("id", "")
-                    if r is NotImplemented:
+                    if r is NotImplemented or isinstance(r, asyncio.CancelledError):
                         results[i] = (tc_id, "[error] 工具执行被打断")
                     elif isinstance(r, ApprovalPending):
                         from src.tools.approval import get_approval_manager
