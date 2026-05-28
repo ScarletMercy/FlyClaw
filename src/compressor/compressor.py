@@ -72,10 +72,17 @@ def _find_safe_cut(non_system: list[dict], desired_tail_count: int) -> int:
                 prev = asst_to_max_result.get(asst_idx, asst_idx)
                 asst_to_max_result[asst_idx] = max(prev, i)
 
-    for asst_idx in sorted(asst_to_max_result):
-        max_result = asst_to_max_result[asst_idx]
-        if asst_idx < cut <= max_result:
-            cut = asst_idx
+    # Iterate until cut stabilizes — adjusting for one group may expose
+    # another group that now spans across the new cut boundary.
+    # Guaranteed to converge: cut strictly decreases and is bounded by 0.
+    for _ in range(len(asst_to_max_result) + 1):
+        prev_cut = cut
+        for asst_idx in sorted(asst_to_max_result):
+            max_result = asst_to_max_result[asst_idx]
+            if asst_idx < cut <= max_result:
+                cut = asst_idx
+                break
+        if cut == prev_cut:
             break
 
     return max(0, cut)

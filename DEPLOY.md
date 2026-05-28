@@ -147,7 +147,6 @@ checkpointer:
 
 cron:
   enabled: true
-  max_concurrent_runs: 1
   store_path: "data/cron.db"
 
 skills:

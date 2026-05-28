@@ -323,8 +323,7 @@ class ServiceContainer:
 
         if getattr(self.config, "memory_store", None) and self.config.memory_store.enabled:
             from src.tools.memory_tools import get_memory_store
-            store = get_memory_store(self.config.memory_store.db_path)
-            await store.initialize()
+            await get_memory_store(self.config.memory_store.db_path)
 
         if getattr(self.config, "task", None) and self.config.task.enabled:
             from src.task.store import get_task_store
@@ -626,7 +625,7 @@ class ServiceContainer:
             if getattr(self.config, "memory_store", None) and self.config.memory_store.enabled:
                 try:
                     from src.tools.memory_tools import get_memory_store
-                    mem_store = get_memory_store()
+                    mem_store = await get_memory_store()
                     await mem_store.close()
                 except Exception:
                     pass

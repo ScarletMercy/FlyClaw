@@ -66,6 +66,7 @@ _MEMORY_PATTERNS: list[tuple[str, re.Pattern]] = [
 _CATEGORY_PREFIX_RE = re.compile(r"^\[(\w+)\]\s*")
 
 store: MemoryStore | None = None
+_store_initialized: bool = False
 
 
 class MemoryStore:
@@ -149,9 +150,11 @@ class MemoryStore:
             logger.info("Migrated %d memories: stripped [category] prefix from content", migrated)
 
     async def close(self) -> None:
+        global _store_initialized
         if self._conn:
             await self._conn.close()
             self._conn = None
+        _store_initialized = False
 
     @staticmethod
     def _auto_key(content: str) -> str:
@@ -238,10 +241,13 @@ class MemoryStore:
         return json.dumps({"ok": True, "key": key}, ensure_ascii=False)
 
 
-def get_memory_store(db_path: str = "~/.flyclaw/data/memories.db") -> MemoryStore:
-    global store
+async def get_memory_store(db_path: str = "~/.flyclaw/data/memories.db") -> MemoryStore:
+    global store, _store_initialized
     if store is None:
         store = MemoryStore(db_path)
+    if not _store_initialized:
+        await store.initialize()
+        _store_initialized = True
     return store
 
 
@@ -424,7 +430,7 @@ async def extract_session_end_memories(
 # ---------------------------------------------------------------------------
 
 async def save_memory(content: str, key: str = "", category: str = "fact") -> str:
-    s = get_memory_store()
+    s = await get_memory_store()
     return await s.remember(content, key, category)
 
 
@@ -471,11 +477,11 @@ async def memory(action: str, content: str = "", key: str = "", category: str = 
     if normalized == "get":
         if not key:
             return json.dumps({"error": "key is required for get action"}, ensure_ascii=False)
-        s = get_memory_store()
+        s = await get_memory_store()
         return await s.recall(key)
 
     if normalized == "list":
-        s = get_memory_store()
+        s = await get_memory_store()
         items = await s.list_all(query)
         if verbose:
             return json.dumps(items, ensure_ascii=False)
@@ -487,7 +493,7 @@ async def memory(action: str, content: str = "", key: str = "", category: str = 
         unique_keys = list(dict.fromkeys(k for k in keys if k))
         if not unique_keys:
             return json.dumps({"error": "No valid keys specified"}, ensure_ascii=False)
-        s = get_memory_store()
+        s = await get_memory_store()
         found_keys = []
         previews = []
         for k in unique_keys:

@@ -156,7 +156,6 @@ class ExecToolConfig(BaseModel):
     approval_mode: Literal["off", "ask", "on_denylist_miss", "always"] = "off"
     deny_patterns: list[str] = []
     max_output_bytes: int = 102400
-    max_concurrent: int = 5
     audit_log: bool = True
     sandbox_enabled: bool = True
     sandbox_allowed_dirs: list[str] = Field(
@@ -310,7 +309,6 @@ class CheckpointerConfig(BaseModel):
 
 class CronConfig(BaseModel):
     enabled: bool = True
-    max_concurrent_runs: int = 1
     store_path: str = "~/.flyclaw/data/cron.db"
     failure_alert_after: int = 2
     max_transient_retries: int = 3

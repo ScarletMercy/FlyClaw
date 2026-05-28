@@ -216,7 +216,10 @@ class TestAgentLoopApproval:
         )
         loop = _make_loop(store, config, tools=[tool], client=client)
 
-        with patch("src.agent.loop.AgentLoop._handle_approval") as mock_handle:
+        mock_mgr = MagicMock()
+        mock_mgr.cancel_pending = MagicMock()
+        with patch("src.agent.loop.AgentLoop._handle_approval") as mock_handle, \
+             patch("src.tools.approval.get_approval_manager", return_value=mock_mgr):
             mock_handle.side_effect = ApprovalPending(
                 thread_id="t5", request_id="r1", tool_name="exec_command",
                 command_preview="rm -rf /",

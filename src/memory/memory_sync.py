@@ -93,7 +93,7 @@ async def sync_memories_to_curated_files(workspace: Path) -> dict[str, str]:
     """
     from src.tools.memory_tools import get_memory_store
 
-    s = get_memory_store()
+    s = await get_memory_store()
     memories = await s.list_all()
 
     grouped = _format_memories_by_category(memories)

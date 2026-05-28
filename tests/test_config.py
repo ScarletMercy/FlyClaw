@@ -104,4 +104,3 @@ class TestConfigModels:
         assert cfg.enabled is True
         assert cfg.timeout_seconds == 30
         assert cfg.sandbox_enabled is True
-        assert cfg.max_concurrent == 5

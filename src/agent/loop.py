@@ -124,17 +124,6 @@ def _repair_tool_args(args_str: str) -> str:
 
     return "{}"
 
-_PARALLEL_SAFE_TOOLS = frozenset({
-    "read_file", "list_dir", "grep", "glob",
-    "web_search", "web_fetch", "session_search",
-    "describe_media",
-    "memory", "cron_list", "cron_create", "cron_delete", "cron_toggle", "cron_run", "task_manage", "skills_list", "skill_view", "skill_manage", "skill_hub",
-    "exec_command",
-})
-
-_PATH_SCOPED_TOOLS = frozenset({
-    "read_file", "write_file", "edit_file", "grep", "glob", "exec_command",
-})
 
 
 def _estimate_tokens_simple(messages: list[dict]) -> int:
@@ -396,60 +385,28 @@ class AgentLoop:
             # Checkpoint: save assistant message (with tool_calls) before execution
             await self._store.save(thread_id, state)
 
-            # 6. Execute tool calls (parallel when safe)
+            # 6. Execute tool calls (always parallel)
             tool_round += 1
-            if self._should_parallelize(response.tool_calls):
-                try:
-                    parallel_results = await self._execute_tools_parallel(response.tool_calls, state, thread_id, interrupt_event=ie)
-                except ApprovalPending as ap:
-                    for tc_id, result in ap.partial_results:
-                        state.append_message({
-                            "role": "tool",
-                            "tool_call_id": tc_id,
-                            "content": result,
-                        })
-                    await self._store.save(thread_id, state)
-                    raise
-                for tc_id, result in parallel_results:
+            try:
+                parallel_results = await self._execute_tools_parallel(response.tool_calls, state, thread_id, interrupt_event=ie)
+            except ApprovalPending as ap:
+                for tc_id, result in ap.partial_results:
                     state.append_message({
                         "role": "tool",
                         "tool_call_id": tc_id,
                         "content": result,
                     })
                 await self._store.save(thread_id, state)
-                if await self._check_interrupt(state, thread_id, start_ts, tool_round):
-                    return state
-            else:
-                for idx, tc in enumerate(response.tool_calls):
-                    if await self._check_interrupt(state, thread_id, start_ts, tool_round):
-                        for rem in response.tool_calls[idx:]:
-                            state.append_message({
-                                "role": "tool",
-                                "tool_call_id": rem.id,
-                                "content": "[error] 工具执行被打断（用户中断）",
-                            })
-                        await self._store.save(thread_id, state)
-                        return state
-                    tool_result = await interruptible(ie, self._execute_tool(tc, state, thread_id))
-                    interrupted = tool_result is None
-                    if interrupted:
-                        tool_result = "[error] 工具执行被打断"
-                    state.append_message({
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": tool_result,
-                    })
-                    await self._store.save(thread_id, state)
-                    if interrupted:
-                        if await self._check_interrupt(state, thread_id, start_ts, tool_round):
-                            for rem in response.tool_calls[idx + 1:]:
-                                state.append_message({
-                                    "role": "tool",
-                                    "tool_call_id": rem.id,
-                                    "content": "[error] 工具执行被打断（用户中断）",
-                                })
-                            await self._store.save(thread_id, state)
-                            return state
+                raise
+            for tc_id, result in parallel_results:
+                state.append_message({
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "content": result,
+                })
+            await self._store.save(thread_id, state)
+            if await self._check_interrupt(state, thread_id, start_ts, tool_round):
+                return state
 
             # Nudge counter: increment after every tool round
             if self._skill_nudge_interval > 0 and "skill_manage" in self._tool_map:
@@ -543,7 +500,7 @@ class AgentLoop:
                     deleted = []
                     try:
                         from src.tools.memory_tools import get_memory_store
-                        mem_store = get_memory_store()
+                        mem_store = await get_memory_store()
                         for k in memory_keys:
                             await mem_store.forget(k)
                             deleted.append(k)
@@ -565,6 +522,8 @@ class AgentLoop:
                     for tc in assistant_msg["tool_calls"]:
                         if tc.get("id") == pending_tc_id:
                             result = await self._execute_tool(tc, state, thread_id)
+                            if not result:
+                                result = "[interrupted] 工具执行被打断"
                             state.append_message({
                                 "role": "tool",
                                 "tool_call_id": tc["id"],
@@ -591,6 +550,8 @@ class AgentLoop:
                                         existing_results.add(tid)
                                 await self._store.save(thread_id, state)
                                 raise
+                            if not result:
+                                result = "[interrupted] 工具执行被打断"
                             state.append_message({
                                 "role": "tool",
                                 "tool_call_id": tc_id,
@@ -626,8 +587,14 @@ class AgentLoop:
         state.pending_approval = None
         await self._store.save(thread_id, state)
 
+        turn_msgs = state.messages
+        for i in range(len(state.messages) - 1, -1, -1):
+            if state.messages[i].get("role") == "user":
+                turn_msgs = state.messages[i:]
+                break
+
         used_rounds = sum(
-            1 for m in state.messages
+            1 for m in turn_msgs
             if m.get("role") == "tool"
             and not m.get("content", "").startswith(("[error]", "[denied]", "[已跳过]"))
         )
@@ -770,38 +737,52 @@ class AgentLoop:
     def _sanitize_api_messages(self, messages: list[dict]) -> list[dict]:
         """Fix orphan tool_call/result pairs after compression.
 
-        1. If a tool_call has no matching tool result → insert stub result
-        2. If a tool result has no matching tool_call → remove it
+        1. If a tool_call has no matching tool result → insert stub inline
+        2. If a tool result has no matching tool_call → skip it
+
+        Single-pass rebuild avoids index-shift bugs from insert/pop.
         """
-        tc_ids: list[str] = []
+        # Collect all known tool_call_ids
+        tc_ids: set[str] = set()
         for m in messages:
             if m.get("role") == "assistant" and m.get("tool_calls"):
                 for tc in m["tool_calls"]:
                     tid = tc.get("id", "")
                     if tid:
-                        tc_ids.append(tid)
+                        tc_ids.add(tid)
 
+        # Collect result IDs to determine which are missing
         result_ids: set[str] = set()
-        result_indices: list[int] = []
-        for i, m in enumerate(messages):
+        for m in messages:
             if m.get("role") == "tool":
                 tid = m.get("tool_call_id", "")
-                result_ids.add(tid)
-                result_indices.append(i)
+                if tid:
+                    result_ids.add(tid)
 
-        sanitized = [{k: v for k, v in m.items() if k != "_truncated"} for m in messages]
+        missing = tc_ids - result_ids
 
-        for tid in tc_ids:
-            if tid not in result_ids:
-                # 正常情况下不应该走到这里，因为压缩时已确保tool result不丢失
-                logger.warning("Missing tool result for tool_call_id=%s", tid)
-                stub = {"role": "tool", "tool_call_id": tid, "content": "[tool result unavailable]"}
-                sanitized.append(stub)
+        # Single-pass rebuild: insert stubs inline, skip orphans
+        sanitized: list[dict] = []
+        for m in messages:
+            # Skip orphan tool results (no matching tool_call)
+            if m.get("role") == "tool" and m.get("tool_call_id", "") not in tc_ids:
+                continue
 
-        for i in reversed(result_indices):
-            tid = messages[i].get("tool_call_id", "")
-            if tid not in tc_ids:
-                sanitized.pop(i)
+            cleaned = {k: v for k, v in m.items() if k != "_truncated"}
+            sanitized.append(cleaned)
+
+            # After each assistant with tool_calls, insert missing stubs inline
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                for tc in m["tool_calls"]:
+                    tid = tc.get("id", "")
+                    if tid and tid in missing:
+                        logger.warning("Missing tool result for tool_call_id=%s", tid)
+                        sanitized.append({
+                            "role": "tool",
+                            "tool_call_id": tid,
+                            "content": "[tool result unavailable]",
+                        })
+                        missing.discard(tid)
 
         return sanitized
 
@@ -955,7 +936,7 @@ class AgentLoop:
             return self._memory_summary_cache
         try:
             from src.tools.memory_tools import get_memory_store
-            store = get_memory_store()
+            store = await get_memory_store()
             items = await store.list_all(limit=20)
             if not items:
                 self._memory_summary_ts = now
@@ -1125,6 +1106,8 @@ class AgentLoop:
                 sender_id=getattr(state, 'sender_id', ''),
                 channel=getattr(state, 'channel', ''),
             )
+            if not result:
+                result = "[interrupted] 工具执行被打断"
             return result
         except Exception as e:
             duration_ms = (_time.monotonic() - start) * 1000
@@ -1162,35 +1145,6 @@ class AgentLoop:
         finally:
             _current_agent_context.reset(_ctx_token)
 
-    def _should_parallelize(self, tool_calls: list[Any]) -> bool:
-        if len(tool_calls) <= 1:
-            return False
-        for tc in tool_calls:
-            name = tc.function.name if hasattr(tc, "function") else tc.get("function", {}).get("name", "")
-            if name not in _PARALLEL_SAFE_TOOLS:
-                return False
-        paths: list[str] = []
-        for tc in tool_calls:
-            name = tc.function.name if hasattr(tc, "function") else tc.get("function", {}).get("name", "")
-            if name not in _PATH_SCOPED_TOOLS:
-                continue
-            try:
-                args_str = tc.function.arguments if hasattr(tc, "function") else tc.get("function", {}).get("arguments", "")
-                args = json.loads(args_str) if args_str else {}
-                p = args.get("path", args.get("file_path", args.get("directory", args.get("workdir", ""))))
-                if p:
-                    paths.append(str(p).lower().rstrip("/\\"))
-            except (json.JSONDecodeError, TypeError):
-                return False
-        if paths and len(paths) > 1:
-            seen: set[str] = set()
-            for p in paths:
-                for s in seen:
-                    if p.startswith(s) or s.startswith(p):
-                        return False
-                seen.add(p)
-        return True
-
     async def _execute_tools_parallel(self, tool_calls: list[Any], state: AgentState, thread_id: str, interrupt_event: asyncio.Event | None = None) -> list[tuple[str, str]]:
         results: list[tuple[str, str] | BaseException] = [NotImplemented] * len(tool_calls)
 
@@ -1198,6 +1152,8 @@ class AgentLoop:
             tc_id = tc.id if hasattr(tc, "id") else tc.get("id", "")
             try:
                 result = await self._execute_tool(tc, state, thread_id)
+                if not result:
+                    result = "[interrupted] 工具执行被打断"
                 results[idx] = (tc_id, result)
             except BaseException as exc:
                 results[idx] = exc
@@ -1215,11 +1171,11 @@ class AgentLoop:
                 for i, r in enumerate(results):
                     tc_id = tool_calls[i].id if hasattr(tool_calls[i], "id") else tool_calls[i].get("id", "")
                     if r is NotImplemented or isinstance(r, asyncio.CancelledError):
-                        results[i] = (tc_id, "[error] 工具执行被打断")
+                        results[i] = (tc_id, "[interrupted] 工具执行被打断")
                     elif isinstance(r, ApprovalPending):
                         from src.tools.approval import get_approval_manager
                         get_approval_manager().cancel_pending(r.request_id)
-                        results[i] = (tc_id, "[error] 工具执行被打断（审批已取消）")
+                        results[i] = (tc_id, "[interrupted] 工具执行被打断（审批已取消）")
                 if state.pending_approval is not None:
                     state.pending_approval = None
         else:

@@ -4,7 +4,6 @@ import asyncio
 import fnmatch
 import json
 import logging
-import threading
 import time
 from contextvars import ContextVar
 from typing import Literal, Optional
@@ -50,10 +49,8 @@ def _resolve_default_workdir() -> str:
 
 
 def reset_config_cache():
-    global _cached_config, _exec_semaphore
+    global _cached_config
     _cached_config = None
-    with _semaphore_lock:
-        _exec_semaphore = None
 
 
 def set_sandbox_enabled(enabled: bool) -> None:
@@ -203,9 +200,6 @@ _SHELL_EXECUTOR_PATTERNS = [
 # e.g. "git rm", "docker rm" — these operate on their own scope, not the filesystem.
 _COMMAND_PREFIX_WHITELIST = frozenset({"git", "docker", "kubectl", "podman", "npm", "yarn", "pnpm"})
 
-_exec_semaphore: Optional[asyncio.Semaphore] = None
-_semaphore_lock = threading.Lock()
-
 
 async def _exec_streaming(
     proc: asyncio.subprocess.Process,
@@ -353,14 +347,6 @@ async def _exec_streaming(
     return output
 
 
-def _get_semaphore(max_concurrent: int) -> asyncio.Semaphore:
-    global _exec_semaphore
-    with _semaphore_lock:
-        if _exec_semaphore is None:
-            _exec_semaphore = asyncio.Semaphore(max_concurrent)
-        return _exec_semaphore
-
-
 def _get_first_token(command: str) -> str:
     """Extract the first token of a command for prefix whitelisting."""
     stripped = command.strip().lower()
@@ -438,7 +424,6 @@ async def exec_command(
 
     deny_patterns = (cfg.tools.exec.deny_patterns if cfg else None) or _DEFAULT_DENY_PATTERNS
     max_output = (cfg.tools.exec.max_output_bytes if cfg else None) or 102400
-    max_concurrent = (cfg.tools.exec.max_concurrent if cfg else None) or 3
     approval_mode = (cfg.tools.exec.approval_mode if cfg else None) or "off"
     no_output_timeout_val = (cfg.tools.exec.no_output_timeout_seconds if cfg else None) or 0
     sandbox_enabled = cfg.tools.exec.sandbox_enabled if cfg else True
@@ -546,79 +531,74 @@ async def exec_command(
             if not mgr.has_session_approval(_current_thread_id.get(""), "exec_command", command):
                 raise ApprovalNeededError(command, blocked)
 
-    sem = _get_semaphore(max_concurrent)
-    if sem.locked():
-        logger.info("[exec-audit] QUEUED (semaphore full): %.200s", command)
+    start = time.monotonic()
+    exit_code = -1
+    no_output_timeout = no_output_timeout_val  # captured from config above
 
-    async with sem:
-        start = time.monotonic()
-        exit_code = -1
-        no_output_timeout = no_output_timeout_val  # captured from config above
+    try:
+        # Sandbox: sanitize environment
+        env = None
+        if sandbox_enabled:
+            import os
 
-        try:
-            # Sandbox: sanitize environment
-            env = None
-            if sandbox_enabled:
-                import os
+            env = {k: os.environ[k] for k in sandbox_env_whitelist if k in os.environ}
 
-                env = {k: os.environ[k] for k in sandbox_env_whitelist if k in os.environ}
+        proc = await asyncio.create_subprocess_shell(
+            command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=workdir,
+            env=env,
+        )
 
-            proc = await asyncio.create_subprocess_shell(
-                command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=workdir,
-                env=env,
-            )
+        if no_output_timeout > 0:
+            # Streaming mode: detect no-output timeout
+            return await _exec_streaming(proc, command, timeout, no_output_timeout, max_output, start)
+        else:
+            # Original buffered mode (backward compatible)
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            exit_code = proc.returncode or 0
 
-            if no_output_timeout > 0:
-                # Streaming mode: detect no-output timeout
-                return await _exec_streaming(proc, command, timeout, no_output_timeout, max_output, start)
-            else:
-                # Original buffered mode (backward compatible)
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-                exit_code = proc.returncode or 0
+            output_parts = []
+            if stdout:
+                output_parts.append(stdout.decode("utf-8", errors="replace"))
+            if stderr:
+                output_parts.append(f"[stderr]\n{stderr.decode('utf-8', errors='replace')}")
+            output = "\n".join(output_parts) or "(no output)"
 
-                output_parts = []
-                if stdout:
-                    output_parts.append(stdout.decode("utf-8", errors="replace"))
-                if stderr:
-                    output_parts.append(f"[stderr]\n{stderr.decode('utf-8', errors='replace')}")
-                output = "\n".join(output_parts) or "(no output)"
-
-                if len(output.encode("utf-8", errors="replace")) > max_output:
-                    encoded = output.encode("utf-8", errors="replace")[:max_output]
-                    output = (
-                        encoded.decode("utf-8", errors="replace") + f"\n... [truncated at {max_output} bytes] ...\n"
-                    )
-
-                if exit_code != 0:
-                    output += f"\n[exit code: {exit_code}]"
-
-                duration = time.monotonic() - start
-                logger.info(
-                    "[exec-audit] exit=%d dur=%.1fs cmd=%.200s",
-                    exit_code,
-                    duration,
-                    command,
+            if len(output.encode("utf-8", errors="replace")) > max_output:
+                encoded = output.encode("utf-8", errors="replace")[:max_output]
+                output = (
+                    encoded.decode("utf-8", errors="replace") + f"\n... [truncated at {max_output} bytes] ...\n"
                 )
-                return output
 
-        except asyncio.TimeoutError:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                pass
-            await proc.wait()
+            if exit_code != 0:
+                output += f"\n[exit code: {exit_code}]"
+
             duration = time.monotonic() - start
-            logger.warning("[exec-audit] TIMEOUT dur=%.1fs cmd=%.200s", duration, command)
-            raise ToolExecutionError(f"Command timed out after {timeout}s")
-        except ToolExecutionError:
-            raise
-        except Exception as e:
-            duration = time.monotonic() - start
-            logger.error("[exec-audit] ERROR dur=%.1fs cmd=%.200s: %s", duration, command, e)
-            raise ToolExecutionError(f"{type(e).__name__}: {e}")
+            logger.info(
+                "[exec-audit] exit=%d dur=%.1fs cmd=%.200s",
+                exit_code,
+                duration,
+                command,
+            )
+            return output
+
+    except asyncio.TimeoutError:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        await proc.wait()
+        duration = time.monotonic() - start
+        logger.warning("[exec-audit] TIMEOUT dur=%.1fs cmd=%.200s", duration, command)
+        raise ToolExecutionError(f"Command timed out after {timeout}s")
+    except ToolExecutionError:
+        raise
+    except Exception as e:
+        duration = time.monotonic() - start
+        logger.error("[exec-audit] ERROR dur=%.1fs cmd=%.200s: %s", duration, command, e)
+        raise ToolExecutionError(f"{type(e).__name__}: {e}")
 
 
 async def process_status(action: Literal["list", "poll", "wait", "kill", "log"], session_id: str = "", timeout: int = 300, offset: int = 0, limit: int = 200) -> str:

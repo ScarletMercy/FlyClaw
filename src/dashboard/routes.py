@@ -273,7 +273,6 @@ def register_dashboard(app: FastAPI, application):
             },
             "cron": {
                 "enabled": cfg.cron.enabled,
-                "max_concurrent": cfg.cron.max_concurrent_runs,
             },
             "memory_store": {
                 "enabled": getattr(cfg.memory_store, "enabled", False),
@@ -481,7 +480,7 @@ def register_dashboard(app: FastAPI, application):
         # Beads
         try:
             from src.tools.memory_tools import get_memory_store
-            store = get_memory_store()
+            store = await get_memory_store()
             snapshot["memories"] = await store.list_all()
         except Exception:
             snapshot["memories"] = {}
@@ -654,7 +653,7 @@ def register_dashboard(app: FastAPI, application):
         _check_auth(request, app)
         try:
             from src.tools.memory_tools import get_memory_store
-            store = get_memory_store()
+            store = await get_memory_store()
             items = await store.list_all()
             grouped = {}
             for m in items:
@@ -670,7 +669,7 @@ def register_dashboard(app: FastAPI, application):
         try:
             from src.tools.memory_tools import get_memory_store
             import json
-            store = get_memory_store()
+            store = await get_memory_store()
             return json.loads(await store.recall(key))
         except Exception as e:
             return {"error": str(e)}
@@ -681,7 +680,7 @@ def register_dashboard(app: FastAPI, application):
         try:
             from src.tools.memory_tools import get_memory_store
             import json
-            store = get_memory_store()
+            store = await get_memory_store()
             return json.loads(await store.forget(key))
         except Exception as e:
             return {"ok": False, "error": str(e)}
