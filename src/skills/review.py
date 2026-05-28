@@ -31,7 +31,7 @@ SKILL_REVIEW_PROMPT = (
     "  1. 更新已加载的技能。回看对话中通过 /skill-name 加载或 "
     "skill_view(name=\"...\") 查看的技能。如果其中某个覆盖了"
     "新学习的领域，优先修补它。\n"
-    "  2. 更新现有伞形技能（通过 skills_list() + "
+    "  2. 更新现有伞形技能（通过 "
     "skill_view(name=\"...\")）。如果没有已加载的技能适合，"
     "但存在一个类级技能匹配，修补它。添加子节、陷阱或扩展触发条件。\n"
     "  3. 在现有伞形下添加支撑文件。技能可以包含三种支撑文件"
@@ -101,7 +101,7 @@ async def spawn_background_review(
 ) -> str:
     """Spawn a background skill-review agent loop.
 
-    Creates a lightweight AgentLoop with restricted tools (skills_list, skill_view, skill_manage + memory),
+    Creates a lightweight AgentLoop with restricted tools (skill_view, skill_manage + memory),
     inherits the parent's LLM client and config, and runs a self-improvement
     review over the conversation snapshot.
 
@@ -143,7 +143,7 @@ async def _run_review_loop(
     from src.agent.loop import AgentLoop
     from src.agent.state import AgentState, MemoryStateStore
 
-    allowed = {"skills_list", "skill_view", "skill_manage", "memory"}
+    allowed = {"skill_view", "skill_manage", "memory"}
     review_tools = [t for t in tools if t.name in allowed]
     if not review_tools:
         logger.debug("No review-capable tools available, skipping background review")

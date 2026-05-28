@@ -62,7 +62,7 @@ def _format_display(text: str) -> str:
 
 _SILENT_TOOLS = frozenset({
     "text_to_speech", "send_image", "send_file", "send_voice",
-    "skills_list", "skill_view", "skill_manage", "skill_hub",
+    "skill_view", "skill_manage", "skill_hub",
 })
 
 

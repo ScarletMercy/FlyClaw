@@ -13,15 +13,11 @@ _DEFAULT_BUDGET = 15000
 def format_skills_full(skills: list[Skill]) -> str:
     if not skills:
         return ""
-    parts = ["<skills>"]
+    parts: list[str] = []
     for s in skills:
         if s.metadata.disable_model_invocation:
             continue
-        parts.append(f"  <skill>")
-        parts.append(f"    <name>{_esc(s.name)}</name>")
-        parts.append(f"    <description>{_esc(s.description)}</description>")
-        parts.append(f"  </skill>")
-    parts.append("</skills>")
+        parts.append(f"- **{_esc(s.name)}**: {_esc(s.description)}")
     return "\n".join(parts)
 
 

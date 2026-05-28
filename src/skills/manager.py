@@ -376,49 +376,14 @@ class SkillManager:
         }
 
 
-_SKILL_TOOL_NAMES = frozenset({"skills_list", "skill_view", "skill_manage", "skill_hub"})
+_SKILL_TOOL_NAMES = frozenset({"skill_view", "skill_manage", "skill_hub"})
 
 
 def get_tools() -> list:
-    """返回技能管理工具集（4 个独立工具）。"""
+    """返回技能管理工具集（3 个独立工具）。"""
     from src.agent.tooldef import ToolDef
 
     manager = SkillManager()
-
-    async def skills_list(
-        name: str = "",
-    ) -> str:
-        """List all available skills with metadata, or get usage statistics for a specific skill.
-
-        Args:
-            name: Optional skill name. If provided, returns usage statistics for that skill instead of listing all skills.
-        """
-        from src._container import get_container
-        container = get_container()
-
-        if name:
-            usage = manager.get_usage(name)
-            return json.dumps({"skill": name, "usage": usage}, ensure_ascii=False)
-
-        skills = container.skills_cache or []
-        config = container.config
-        result = []
-        for s in skills:
-            is_disabled = s.name in config.skills.disabled
-            channel_disabled = {}
-            for ch, chans in config.skills.channel_disabled.items():
-                if s.name in chans:
-                    channel_disabled[ch] = True
-            result.append({
-                "name": s.name,
-                "description": s.description,
-                "source": s.source,
-                "user_invocable": s.metadata.user_invocable,
-                "disable_model_invocation": s.metadata.disable_model_invocation,
-                "disabled": is_disabled,
-                "channel_disabled": channel_disabled,
-            })
-        return json.dumps({"skills": result}, ensure_ascii=False, indent=2)
 
     async def skill_view(
         name: str,
@@ -438,12 +403,18 @@ def get_tools() -> list:
         for s in skills:
             if s.name == name:
                 manager.bump_view(name)
+                usage = manager.get_usage(name) or {}
+                body_with_paths = s.body + f"\n\n## Skill Path Info\n- **Skill Directory**: {s.base_dir}"
                 return json.dumps({
                     "name": s.name,
                     "description": s.description,
                     "source": s.source,
                     "file_path": str(s.file_path),
-                    "body": s.body,
+                    "body": body_with_paths,
+                    "view_count": usage.get("view_count", 0),
+                    "use_count": usage.get("use_count", 0),
+                    "last_viewed_at": usage.get("last_viewed_at"),
+                    "last_used_at": usage.get("last_used_at"),
                 }, ensure_ascii=False, indent=2)
         return json.dumps({"error": f"Skill not found: {name}"})
 
@@ -845,7 +816,6 @@ def get_tools() -> list:
             return json.dumps({"error": f"Unknown action: {action}. Valid actions: search_hub, inspect_hub, install_hub, scan_hub, install, uninstall"})
 
     return [
-        ToolDef.from_function(skills_list),
         ToolDef.from_function(skill_view),
         ToolDef.from_function(skill_manage),
         ToolDef.from_function(skill_hub),

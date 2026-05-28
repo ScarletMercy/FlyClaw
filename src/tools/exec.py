@@ -53,6 +53,25 @@ def reset_config_cache():
     _cached_config = None
 
 
+def _collect_skill_dirs(cfg) -> list:
+    from pathlib import Path
+
+    dirs: list[Path] = []
+    workspace = Path(cfg.agents.workspace).expanduser().resolve()
+    dirs.append((Path.home() / ".flyclaw" / "skills").resolve())
+    ws_skills = workspace / "skills"
+    if ws_skills.exists():
+        dirs.append(ws_skills)
+    ap_skills = workspace / ".agents" / "skills"
+    if ap_skills.exists():
+        dirs.append(ap_skills)
+    for extra in cfg.skills.extra_dirs or []:
+        p = Path(extra).expanduser().resolve()
+        if p.exists():
+            dirs.append(p)
+    return dirs
+
+
 def set_sandbox_enabled(enabled: bool) -> None:
     """Toggle sandbox at runtime — updates in-memory config and persists to YAML."""
     cfg = _get_config()
@@ -447,7 +466,7 @@ async def exec_command(
         else:
             wd = workspace
 
-        allowed = [workspace.resolve()] + [Path(d).expanduser().resolve() for d in sandbox_allowed_dirs]
+        allowed = [workspace.resolve()] + [Path(d).expanduser().resolve() for d in sandbox_allowed_dirs] + _collect_skill_dirs(cfg)
         if not any(str(wd).startswith(str(a)) for a in allowed):
             raise ToolExecutionError(f"当前为沙盒模式，无法访问工作目录之外的路径：{wd}（允许范围：{workspace}）")
 

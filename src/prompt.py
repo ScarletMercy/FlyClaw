@@ -216,18 +216,21 @@ def _build_skills_section(skills_prompt: str) -> list[str]:
     if not trimmed:
         return []
     return [
-        "## 技能",
-        "回复前先扫描以下技能描述。如果某个技能明显适用或部分相关，"
-        "用 skill_view(name=\"...\") 加载并遵循其指令。"
-        "如果技能有问题，用 skill_manage(action=\"patch\") 修补。\n"
-        "如果都不适用，不要调用任何技能工具（skills_list/skill_view/skill_manage/skill_hub）。不要用 read_file 读取技能文件。",
-        "如果用户需要的功能在本地技能中找不到，用 skill_hub(action=\"search_hub\", query=\"...\") 搜索远程技能库。",
+        "## 可用技能",
+        "以下是可用的专业技能：\n",
+        trimmed,
+        "",
+        "### 使用方式",
+        "1. **发现**：浏览上方技能列表，根据描述判断是否有匹配用户需求的技能。",
+        "2. **加载**：当用户请求匹配某个技能时，用 skill_view(name=\"技能名\") 加载完整指令。如果技能有问题，用 skill_manage(action=\"patch\") 修补。",
+        "3. **执行**：遵循技能指令完成任务。技能可能包含 scripts 目录下的脚本，可用 exec_command 执行。",
+        "",
+        "如果没有匹配的技能，不要调用任何技能工具（skill_view/skill_manage/skill_hub）。不要用 read_file 读取技能文件。",
+        "如果本地技能都不适用，用 skill_hub(action=\"search_hub\", query=\"...\") 搜索远程技能库。",
         "搜索到合适的技能后，用 skill_hub(action=\"inspect_hub\", identifier=\"...\") 查看详情，确认后用 skill_hub(action=\"install_hub\", identifier=\"...\") 安装。",
         "当用户发送了 skill 压缩包文件时，先保存到本地，再用 skill_hub(action=\"install\", source=\"保存路径\") 安装。",
         "注意：如果 search_hub/inspect_hub/install_hub 返回 'Hub is disabled in configuration'，说明远程技能库已禁用，只能使用本地技能。",
-        "限制：最多加载一个技能；仅在选定后加载。\n"
-        "完成困难或迭代式任务后，主动提出保存为技能。",
-        trimmed,
+        "限制：最多加载一个技能；仅在选定后加载。完成困难任务后，主动提出保存为技能。",
         "",
     ]
 
