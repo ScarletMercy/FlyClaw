@@ -533,7 +533,10 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         app = _get_app(request)
         if not app or not app._config_watcher:
             raise HTTPException(503, "Config watcher not active")
-        await app._config_watcher._apply_reload()
+        try:
+            await app._config_watcher._apply_reload()
+        except Exception as e:
+            raise HTTPException(500, f"Config reload failed: {e}")
         return {"status": "ok"}
 
     @app.patch("/api/config")
@@ -544,26 +547,31 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             raise HTTPException(503, "Application not ready")
         if not app._config_watcher:
             raise HTTPException(503, "Config watcher not active")
-        patch_data = await request.json()
-        config_path = Path(app._config_path or str(Path.home() / ".flyclaw" / "config.yaml"))
-        if config_path.exists():
-            current = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        else:
-            current = {}
+        try:
+            patch_data = await request.json()
+            config_path = Path(app._config_path or str(Path.home() / ".flyclaw" / "config.yaml"))
+            if config_path.exists():
+                current = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            else:
+                current = {}
 
-        def _deep_merge(base, override):
-            for k, v in override.items():
-                if k in base and isinstance(base[k], dict) and isinstance(v, dict):
-                    _deep_merge(base[k], v)
-                else:
-                    base[k] = v
+            def _deep_merge(base, override):
+                for k, v in override.items():
+                    if k in base and isinstance(base[k], dict) and isinstance(v, dict):
+                        _deep_merge(base[k], v)
+                    else:
+                        base[k] = v
 
-        _deep_merge(current, patch_data)
-        config_path.write_text(
-            _yaml.dump(current, allow_unicode=True, default_flow_style=False),
-            encoding="utf-8",
-        )
-        await app._config_watcher._apply_reload()
+            _deep_merge(current, patch_data)
+            config_path.write_text(
+                _yaml.dump(current, allow_unicode=True, default_flow_style=False),
+                encoding="utf-8",
+            )
+            await app._config_watcher._apply_reload()
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"Config patch failed: {e}")
         return {"status": "ok"}
 
     return app
