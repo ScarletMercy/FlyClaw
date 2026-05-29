@@ -224,9 +224,20 @@ def prune_sessions(
             conn.close()
             return stats
         
-        # Actually delete from checkpoints.db
+        # Collect thread IDs to remove
         thread_ids_to_remove = [r[0] for r in to_prune]
         placeholders = ",".join("?" for _ in thread_ids_to_remove)
+
+        # Sync cleanup session_index.db first (dependent DB; failure here is tolerable)
+        if session_index_path:
+            try:
+                stats["index_sessions_removed"] = prune_session_index(
+                    session_index_path, thread_ids_to_remove
+                )
+            except Exception as e:
+                logger.warning("session_index cleanup failed (non-fatal): %s", e)
+
+        # Then delete from checkpoints.db (source of truth)
         conn.execute(
             f"DELETE FROM sessions WHERE thread_id IN ({placeholders})",
             thread_ids_to_remove,
@@ -234,18 +245,12 @@ def prune_sessions(
         stats["sessions_removed"] = conn.execute("SELECT changes()").fetchone()[0]
         conn.commit()
         conn.close()
-        
+
         logger.info(
             "Pruned %d sessions older than %d days",
             stats["sessions_removed"], older_than_days,
         )
-        
-        # Sync cleanup session_index.db
-        if session_index_path:
-            stats["index_sessions_removed"] = prune_session_index(
-                session_index_path, thread_ids_to_remove
-            )
-        
+
         # Record prune event
         record_prune(checkpoints_path, stats["sessions_removed"], older_than_days)
         

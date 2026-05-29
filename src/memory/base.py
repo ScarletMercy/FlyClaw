@@ -243,16 +243,15 @@ class BaseMemoryStore(ABC):
         except ValueError:
             parts = query.split()
 
-        if not parts:
-            return query
-
         fts_terms = []
         for part in parts:
             cleaned = part.replace('"', "").replace("*", "").replace("(", "").replace(")", "")
             if cleaned:
                 fts_terms.append(cleaned)
 
-        return " OR ".join(fts_terms) if fts_terms else query
+        if not fts_terms:
+            return '""'
+        return " OR ".join(fts_terms)
 
     @staticmethod
     def _normalize_fts_scores(results: list[dict], min_score: float = 0.35) -> list[dict]:

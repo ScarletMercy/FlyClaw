@@ -75,6 +75,18 @@ class TestMemoryStore:
         assert '"' not in q
         assert "*" not in q
 
+    def test_fts_query_only_special_chars_returns_empty(self):
+        from src.memory.store import MemoryStore
+
+        assert MemoryStore._format_fts_query('*"') == '""'
+        assert MemoryStore._format_fts_query("(") == '""'
+        assert MemoryStore._format_fts_query('()""**') == '""'
+
+    def test_fts_query_whitespace_only(self):
+        from src.memory.store import MemoryStore
+
+        assert MemoryStore._format_fts_query("   ") == '""'
+
     def test_overwrite_document(self, store):
         _run(store.add_document("doc1", "Original content about algorithms."))
         _run(store.add_document("doc1", "Updated content about data structures."))

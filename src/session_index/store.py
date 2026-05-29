@@ -51,6 +51,13 @@ CREATE TRIGGER IF NOT EXISTS messages_fts_delete
         VALUES('delete', old.id, old.content);
 END;
 
+CREATE TRIGGER IF NOT EXISTS messages_fts_update
+    AFTER UPDATE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, content)
+        VALUES('delete', old.id, old.content);
+    INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+END;
+
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
 CREATE INDEX IF NOT EXISTS idx_sessions_channel ON sessions(channel);
@@ -88,8 +95,7 @@ def _sanitize_fts5_query(query: str) -> str:
     query = query.strip()
     if not query:
         return '""'
-    if '"' in query:
-        return query
+    query = query.replace('"', ' ')
     tokens = re.findall(r'[一-鿿]+|[a-zA-Z0-9_]+', query)
     if not tokens:
         return '""'
