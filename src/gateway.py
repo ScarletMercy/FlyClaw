@@ -22,6 +22,22 @@ logger = logging.getLogger("flyclaw.gateway")
 
 router = APIRouter()
 
+_SENSITIVE_KEYS = frozenset({
+    "api_key", "app_secret", "client_secret", "auth_token",
+    "token", "password", "secret", "memory_judge_api_key",
+})
+
+
+def _redact_sensitive(obj):
+    if isinstance(obj, dict):
+        return {
+            k: "***" if k in _SENSITIVE_KEYS else _redact_sensitive(v)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [_redact_sensitive(item) for item in obj]
+    return obj
+
 
 _acp_sessions = None
 _acp_runtime = None
@@ -207,16 +223,23 @@ def create_gateway(app_config, agent_loop, cron_service=None):
                 break
         return {"id": f"chatcmpl-{uuid.uuid4().hex[:12]}", "object": "chat.completion", "created": int(time.time()), "model": model_name, "choices": [{"index": 0, "message": {"role": "assistant", "content": assistant_text}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
 
+    _STREAM_CHUNK_SIZE = 16
+
     async def _stream_response(loop, input_state, thread_id):
         chat_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
         created = int(time.time())
         yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'flyclaw', 'choices': [{'index': 0, 'delta': {'role': 'assistant'}, 'finish_reason': None}]})}\n\n"
         try:
             result_state = await loop.run(input_state, thread_id)
+            assistant_text = ""
             for msg in reversed(result_state.messages):
                 if msg.get("role") == "assistant" and msg.get("content"):
-                    yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'flyclaw', 'choices': [{'index': 0, 'delta': {'content': msg['content']}, 'finish_reason': None}]})}\n\n"
+                    assistant_text = msg["content"]
                     break
+            for i in range(0, len(assistant_text), _STREAM_CHUNK_SIZE):
+                chunk = assistant_text[i:i + _STREAM_CHUNK_SIZE]
+                yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'flyclaw', 'choices': [{'index': 0, 'delta': {'content': chunk}, 'finish_reason': None}]})}\n\n"
+                await asyncio.sleep(0.01)
         except Exception as e:
             yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'flyclaw', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop', 'error': str(e)}]})}\n\n"
             yield "data: [DONE]\n\n"
@@ -286,21 +309,30 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         if method == "ping":
             await ws.send_json({"type": "res", "id": frame_id, "ok": True, "payload": "pong"})
         elif method == "chat.send":
-            from src.agent.state import AgentState
-            text = params.get("text", "")
-            thread_id = params.get("thread_id", "ws-default")
-            input_state = AgentState(messages=[{"role": "user", "content": text}], system_prompt=app_config.agents.system_prompt, sender_id="ws", chat_id="ws", chat_type="p2p", message_id=str(uuid.uuid4()), channel="ws")
-            store = loop.get_store()
-            existing = await store.aload(thread_id)
-            if existing:
-                input_state.messages = existing.messages + input_state.messages
-            result_state = await loop.run(input_state, thread_id)
-            assistant_text = ""
-            for msg in reversed(result_state.messages):
-                if msg.get("role") == "assistant" and msg.get("content"):
-                    assistant_text = msg["content"]
-                    break
-            await ws.send_json({"type": "res", "id": frame_id, "ok": True, "payload": {"text": assistant_text}})
+            try:
+                from src.agent.state import AgentState
+                text = params.get("text", "")
+                thread_id = params.get("thread_id", "ws-default")
+                input_state = AgentState(messages=[{"role": "user", "content": text}], system_prompt=app_config.agents.system_prompt, sender_id="ws", chat_id="ws", chat_type="p2p", message_id=str(uuid.uuid4()), channel="ws")
+                store = loop.get_store()
+                existing = await store.aload(thread_id)
+                if existing:
+                    input_state.messages = existing.messages + input_state.messages
+                result_state = await loop.run(input_state, thread_id)
+                assistant_text = ""
+                for msg in reversed(result_state.messages):
+                    if msg.get("role") == "assistant" and msg.get("content"):
+                        assistant_text = msg["content"]
+                        break
+                await ws.send_json({"type": "res", "id": frame_id, "ok": True, "payload": {"text": assistant_text}})
+            except WebSocketDisconnect:
+                raise
+            except Exception as e:
+                logger.warning("WS chat.send error: %s", e, exc_info=True)
+                try:
+                    await ws.send_json({"type": "res", "id": frame_id, "ok": False, "error": {"code": "CHAT_ERROR", "message": str(e)}})
+                except Exception:
+                    pass
         elif method == "sessions.list":
             await ws.send_json({"type": "res", "id": frame_id, "ok": True, "payload": []})
         elif method == "health":
@@ -494,11 +526,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         if not app:
             raise HTTPException(503, "Application not ready")
         raw = app.config.model_dump()
-        for sensitive_key in ("api_key", "app_secret", "client_secret", "auth_token"):
-            for section in raw.values():
-                if isinstance(section, dict) and sensitive_key in section:
-                    section[sensitive_key] = "***"
-        return raw
+        return _redact_sensitive(raw)
 
     @app.post("/api/config/reload")
     async def reload_config(request: Request):
@@ -514,6 +542,8 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         app = _get_app(request)
         if not app:
             raise HTTPException(503, "Application not ready")
+        if not app._config_watcher:
+            raise HTTPException(503, "Config watcher not active")
         patch_data = await request.json()
         config_path = Path(app._config_path or str(Path.home() / ".flyclaw" / "config.yaml"))
         if config_path.exists():
@@ -533,6 +563,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             _yaml.dump(current, allow_unicode=True, default_flow_style=False),
             encoding="utf-8",
         )
-        return {"status": "written"}
+        await app._config_watcher._apply_reload()
+        return {"status": "ok"}
 
     return app
