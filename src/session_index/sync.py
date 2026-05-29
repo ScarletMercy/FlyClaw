@@ -7,7 +7,6 @@ import json
 import logging
 import time
 import uuid
-from pathlib import Path
 from typing import Optional
 
 from .store import SessionIndexStore, parse_thread_id
@@ -60,7 +59,7 @@ def _extract_tool_calls(msg: dict) -> Optional[str]:
         return None
 
 
-def sync_messages(
+async def sync_messages(
     store: SessionIndexStore,
     thread_id: str,
     messages: list[dict],
@@ -73,7 +72,7 @@ def sync_messages(
     if not messages:
         return
 
-    store.upsert_session(thread_id, channel, sender_id, chat_id, chat_type)
+    await store.upsert_session(thread_id, channel, sender_id, chat_id, chat_type)
 
     records = []
     for msg in messages:
@@ -96,7 +95,7 @@ def sync_messages(
         )
 
     if records:
-        store.add_messages(thread_id, records)
+        await store.add_messages(thread_id, records)
 
 
 def _infer_channel_from_thread_id(thread_id: str) -> str:
@@ -122,8 +121,7 @@ async def startup_sync(
 
     already_indexed = set()
     try:
-        rows = store._db.execute("SELECT DISTINCT thread_id FROM messages").fetchall()
-        already_indexed = {r[0] for r in rows}
+        already_indexed = await store.get_indexed_thread_ids()
     except Exception:
         pass
 
@@ -149,7 +147,7 @@ async def startup_sync(
             if state.channel:
                 channel = state.channel
 
-            sync_messages(
+            await sync_messages(
                 store,
                 thread_id=tid,
                 messages=state.messages,

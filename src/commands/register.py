@@ -275,7 +275,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
 
         limit = container.config.session_search.max_results
 
-        results = store.search(args, limit=limit)
+        results = await store.search(args, limit=limit)
         if results:
             return _format_results(results)
         return "暂无会话" if zh else "No sessions" if not args.strip() else ("未找到结果" if zh else "No results found")

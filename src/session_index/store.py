@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import aiosqlite
 import logging
 import re
-import sqlite3
 from pathlib import Path
 from typing import Optional
 
@@ -90,7 +90,6 @@ def _sanitize_fts5_query(query: str) -> str:
         return '""'
     if '"' in query:
         return query
-    # Split into segments: Chinese char sequences and English words
     tokens = re.findall(r'[一-鿿]+|[a-zA-Z0-9_]+', query)
     if not tokens:
         return '""'
@@ -99,17 +98,24 @@ def _sanitize_fts5_query(query: str) -> str:
 
 class SessionIndexStore:
     def __init__(self, db_path: str):
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(db_path)
-        self._db.row_factory = sqlite3.Row
-        self._db.executescript(_SCHEMA)
+        self._db_path = db_path
+        self._db: Optional[aiosqlite.Connection] = None
 
-    def close(self):
+    @classmethod
+    async def create(cls, db_path: str) -> SessionIndexStore:
+        obj = cls(db_path)
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        obj._db = await aiosqlite.connect(db_path)
+        obj._db.row_factory = aiosqlite.Row
+        await obj._db.executescript(_SCHEMA)
+        return obj
+
+    async def close(self):
         if self._db:
-            self._db.close()
+            await self._db.close()
             self._db = None
 
-    def upsert_session(
+    async def upsert_session(
         self,
         thread_id: str,
         channel: str,
@@ -117,29 +123,31 @@ class SessionIndexStore:
         chat_id: str,
         chat_type: str,
     ) -> None:
-        existing = self._db.execute(
+        cursor = await self._db.execute(
             "SELECT thread_id FROM sessions WHERE thread_id = ?", (thread_id,)
-        ).fetchone()
+        )
+        existing = await cursor.fetchone()
         if existing:
             return
         import time
-        self._db.execute(
+        await self._db.execute(
             "INSERT INTO sessions (thread_id, channel, sender_id, chat_id, chat_type, first_message_at) "
             "VALUES (?, ?, ?, ?, ?, ?)",
             (thread_id, channel, sender_id, chat_id, chat_type, time.time()),
         )
-        self._db.commit()
+        await self._db.commit()
 
-    def get_session(self, thread_id: str) -> Optional[dict]:
-        row = self._db.execute(
+    async def get_session(self, thread_id: str) -> Optional[dict]:
+        cursor = await self._db.execute(
             "SELECT * FROM sessions WHERE thread_id = ?", (thread_id,)
-        ).fetchone()
+        )
+        row = await cursor.fetchone()
         return dict(row) if row else None
 
-    def add_messages(self, thread_id: str, messages: list[dict]) -> None:
+    async def add_messages(self, thread_id: str, messages: list[dict]) -> None:
         import time
         for msg in messages:
-            self._db.execute(
+            await self._db.execute(
                 "INSERT OR IGNORE INTO messages "
                 "(thread_id, message_id, role, content, tool_name, tool_calls, timestamp) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -154,22 +162,23 @@ class SessionIndexStore:
                 ),
             )
         now = time.time()
-        count = self._db.execute(
+        cursor = await self._db.execute(
             "SELECT COUNT(*) FROM messages WHERE thread_id = ?", (thread_id,)
-        ).fetchone()[0]
-        self._db.execute(
+        )
+        count = (await cursor.fetchone())[0]
+        await self._db.execute(
             "UPDATE sessions SET message_count = ?, last_message_at = ? WHERE thread_id = ?",
             (count, now, thread_id),
         )
-        self._db.commit()
+        await self._db.commit()
 
-    def mark_inactive(self, thread_id: str) -> None:
-        self._db.execute(
+    async def mark_inactive(self, thread_id: str) -> None:
+        await self._db.execute(
             "UPDATE sessions SET is_active = 0 WHERE thread_id = ?", (thread_id,)
         )
-        self._db.commit()
+        await self._db.commit()
 
-    def search(
+    async def search(
         self,
         query: str,
         channel: Optional[str] = None,
@@ -177,7 +186,7 @@ class SessionIndexStore:
         offset: int = 0,
     ) -> list[dict]:
         if not query.strip():
-            return self._list_recent(limit)
+            return await self._list_recent(limit)
 
         fts_query = _sanitize_fts5_query(query)
         sql = """
@@ -198,7 +207,8 @@ class SessionIndexStore:
             ORDER BY MAX(m.timestamp) DESC
             LIMIT ? OFFSET ?
         """
-        rows = self._db.execute(sql, (fts_query, limit, offset)).fetchall()
+        cursor = await self._db.execute(sql, (fts_query, limit, offset))
+        rows = await cursor.fetchall()
         results = []
         for row in rows:
             snippet = row["snippets"] or ""
@@ -214,20 +224,22 @@ class SessionIndexStore:
             })
         return results
 
-    def _list_recent(self, limit: int) -> list[dict]:
-        rows = self._db.execute(
+    async def _list_recent(self, limit: int) -> list[dict]:
+        cursor = await self._db.execute(
             "SELECT thread_id, channel, chat_type, sender_id, is_active, "
             "last_message_at, message_count FROM sessions "
             "WHERE is_active = 1 ORDER BY last_message_at DESC LIMIT ?",
             (limit,),
-        ).fetchall()
+        )
+        rows = await cursor.fetchall()
         results = []
         for row in rows:
-            preview_row = self._db.execute(
+            preview_cursor = await self._db.execute(
                 "SELECT content FROM messages WHERE thread_id = ? AND role = 'human' "
                 "ORDER BY timestamp ASC LIMIT 1",
                 (row["thread_id"],),
-            ).fetchone()
+            )
+            preview_row = await preview_cursor.fetchone()
             preview = (preview_row["content"] or "")[:80] if preview_row else ""
             results.append({
                 "thread_id": row["thread_id"],
@@ -239,3 +251,17 @@ class SessionIndexStore:
                 "snippet": preview,
             })
         return results
+
+    async def get_indexed_thread_ids(self) -> set[str]:
+        cursor = await self._db.execute("SELECT DISTINCT thread_id FROM messages")
+        rows = await cursor.fetchall()
+        return {r[0] for r in rows}
+
+    async def get_thread_messages(self, thread_id: str, limit: int = 100) -> list[dict]:
+        cursor = await self._db.execute(
+            "SELECT message_id, role, content, tool_name, timestamp "
+            "FROM messages WHERE thread_id = ? ORDER BY timestamp ASC LIMIT ?",
+            (thread_id, limit),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]

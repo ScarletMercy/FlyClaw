@@ -19,6 +19,8 @@ jobs:
         uses: astral-sh/setup-uv@v4
       - name: Install dependencies
         run: uv sync --extra dev
+        env:
+          UV_INDEX_URL: https://pypi.org/simple/
       - name: Ruff check
         run: uv run ruff check src/ tests/
       - name: Ruff format check
@@ -38,6 +40,8 @@ jobs:
         uses: astral-sh/setup-uv@v4
       - name: Install dependencies
         run: uv sync --extra dev
+        env:
+          UV_INDEX_URL: https://pypi.org/simple/
       - name: Run tests
         run: uv run pytest tests/ -v --tb=short -x
 

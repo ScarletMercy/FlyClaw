@@ -13,6 +13,22 @@ _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n([\s\S]*?)\n\s*```", re.IGNORECAS
 _MAX_FORMAT_LEN = 8000
 
 
+def _is_connection_error(e: Exception) -> bool:
+    try:
+        from openai import APIConnectionError, APITimeoutError
+        if isinstance(e, (APIConnectionError, APITimeoutError)):
+            return True
+    except ImportError:
+        pass
+    try:
+        import httpx
+        if isinstance(e, (httpx.ConnectError, httpx.ReadError, httpx.TimeoutException)):
+            return True
+    except ImportError:
+        pass
+    return False
+
+
 def _format_json_value(val, indent=0):
     prefix = "  " * indent
     if isinstance(val, dict):
@@ -500,7 +516,7 @@ class MessageHandler:
 
                     idx = get_session_index()
                     if idx:
-                        sync_messages(
+                        await sync_messages(
                             store=idx,
                             thread_id=thread_id,
                             messages=messages,
@@ -528,7 +544,12 @@ class MessageHandler:
                 break
         except Exception as e:
             logger.error("Agent error: %s", e, exc_info=True)
-            assistant_text = f"[error] {type(e).__name__}: {e}"
+            if _is_connection_error(e):
+                zh = self._container.config.agents.language == "zh"
+                assistant_text = ("模型服务连接失败，请稍后重试。" if zh
+                                  else "Model service connection failed, please try again later.")
+            else:
+                assistant_text = f"[error] {type(e).__name__}: {e}"
 
             from src.events import emit_async
             await emit_async(

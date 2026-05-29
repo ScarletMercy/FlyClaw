@@ -83,7 +83,7 @@ class SessionTracker:
 
                                 idx = get_session_index()
                                 if idx:
-                                    idx.mark_inactive(tid)
+                                    await idx.mark_inactive(tid)
                             except Exception:
                                 pass
 

@@ -254,11 +254,11 @@ class ServiceContainer:
             self.config.auth.pairing_enabled,
         )
 
-    def _setup_session_search(self):
+    async def _setup_session_search(self):
         if not self.config.session_search.enabled:
             return
         from src.session_index.store import SessionIndexStore
-        store = SessionIndexStore(self.config.session_search.index_path)
+        store = await SessionIndexStore.create(self.config.session_search.index_path)
         self.session_index = store
         logger.info("会话搜索索引已初始化: %s", self.config.session_search.index_path)
         self._startup_sync_task = asyncio.create_task(self._run_startup_sync(store))
@@ -402,7 +402,7 @@ class ServiceContainer:
         logger.info("AgentLoop 已创建: %d 个工具, %d 个技能", len(tools), len(skills))
 
         # Phase 4: remaining subsystems
-        self._setup_session_search()
+        await self._setup_session_search()
         self._setup_channels_and_sessions(skills)
         self._setup_registries()
         for t in tools:
@@ -651,7 +651,7 @@ class ServiceContainer:
             if self.state_store:
                 self.state_store.close()
             if self.session_index:
-                self.session_index.close()
+                await self.session_index.close()
                 self.session_index = None
             if self.browser_manager:
                 await self.browser_manager.close_all()

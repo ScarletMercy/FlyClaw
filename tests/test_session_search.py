@@ -75,42 +75,43 @@ session_search:
 
 
 class TestSessionIndexStore:
-    def test_init_creates_tables(self, tmp_path):
+    async def test_init_creates_tables(self, tmp_path):
         from src.session_index.store import SessionIndexStore
 
         db_path = str(tmp_path / "index.db")
-        store = SessionIndexStore(db_path)
-        tables = store._db.execute(
+        store = await SessionIndexStore.create(db_path)
+        cursor = await store._db.execute(
             "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
+        )
+        tables = await cursor.fetchall()
         table_names = {t[0] for t in tables}
         assert "sessions" in table_names
         assert "messages" in table_names
         assert "messages_fts" in table_names
-        store.close()
+        await store.close()
 
-    def test_upsert_and_get_session(self, tmp_path):
+    async def test_upsert_and_get_session(self, tmp_path):
         from src.session_index.store import SessionIndexStore
 
-        store = SessionIndexStore(str(tmp_path / "index.db"))
-        store.upsert_session(
+        store = await SessionIndexStore.create(str(tmp_path / "index.db"))
+        await store.upsert_session(
             thread_id="qq:user:ou_abc",
             channel="qq",
             sender_id="ou_abc",
             chat_id="c2c:ou_abc",
             chat_type="p2p",
         )
-        session = store.get_session("qq:user:ou_abc")
+        session = await store.get_session("qq:user:ou_abc")
         assert session["channel"] == "qq"
         assert session["sender_id"] == "ou_abc"
         assert session["is_active"] == 1
-        store.close()
+        await store.close()
 
-    def test_add_messages_idempotent(self, tmp_path):
+    async def test_add_messages_idempotent(self, tmp_path):
         from src.session_index.store import SessionIndexStore
 
-        store = SessionIndexStore(str(tmp_path / "index.db"))
-        store.upsert_session("t1", "qq", "s1", "c1", "p2p")
+        store = await SessionIndexStore.create(str(tmp_path / "index.db"))
+        await store.upsert_session("t1", "qq", "s1", "c1", "p2p")
         msgs = [
             {
                 "message_id": "msg-001",
@@ -129,28 +130,29 @@ class TestSessionIndexStore:
                 "timestamp": 1001.0,
             },
         ]
-        store.add_messages("t1", msgs)
-        store.add_messages("t1", msgs)  # duplicate insert
-        count = store._db.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        await store.add_messages("t1", msgs)
+        await store.add_messages("t1", msgs)  # duplicate insert
+        cursor = await store._db.execute("SELECT COUNT(*) FROM messages")
+        count = (await cursor.fetchone())[0]
         assert count == 2
-        store.close()
+        await store.close()
 
-    def test_mark_inactive(self, tmp_path):
+    async def test_mark_inactive(self, tmp_path):
         from src.session_index.store import SessionIndexStore
 
-        store = SessionIndexStore(str(tmp_path / "index.db"))
-        store.upsert_session("t1", "qq", "s1", "c1", "p2p")
-        store.mark_inactive("t1")
-        session = store.get_session("t1")
+        store = await SessionIndexStore.create(str(tmp_path / "index.db"))
+        await store.upsert_session("t1", "qq", "s1", "c1", "p2p")
+        await store.mark_inactive("t1")
+        session = await store.get_session("t1")
         assert session["is_active"] == 0
-        store.close()
+        await store.close()
 
-    def test_search_basic(self, tmp_path):
+    async def test_search_basic(self, tmp_path):
         from src.session_index.store import SessionIndexStore
 
-        store = SessionIndexStore(str(tmp_path / "index.db"))
-        store.upsert_session("t1", "qq", "s1", "c1", "p2p")
-        store.add_messages(
+        store = await SessionIndexStore.create(str(tmp_path / "index.db"))
+        await store.upsert_session("t1", "qq", "s1", "c1", "p2p")
+        await store.add_messages(
             "t1",
             [
                 {
@@ -171,62 +173,66 @@ class TestSessionIndexStore:
                 },
             ],
         )
-        results = store.search("docker")
+        results = await store.search("docker")
         assert len(results) >= 1
         assert results[0]["thread_id"] == "t1"
         assert "docker" in results[0]["snippet"].lower()
-        store.close()
+        await store.close()
 
-    def test_search_empty_returns_recent(self, tmp_path):
+    async def test_search_empty_returns_recent(self, tmp_path):
         from src.session_index.store import SessionIndexStore
 
-        store = SessionIndexStore(str(tmp_path / "index.db"))
-        store.upsert_session("t1", "qq", "s1", "c1", "p2p")
-        results = store.search("")
+        store = await SessionIndexStore.create(str(tmp_path / "index.db"))
+        await store.upsert_session("t1", "qq", "s1", "c1", "p2p")
+        results = await store.search("")
         assert len(results) == 1
         assert results[0]["thread_id"] == "t1"
-        store.close()
+        await store.close()
 
-    def test_search_filters_inactive(self, tmp_path):
+    async def test_search_filters_inactive(self, tmp_path):
         from src.session_index.store import SessionIndexStore
 
-        store = SessionIndexStore(str(tmp_path / "index.db"))
-        store.upsert_session("t1", "qq", "s1", "c1", "p2p")
-        store.mark_inactive("t1")
-        results = store.search("")
+        store = await SessionIndexStore.create(str(tmp_path / "index.db"))
+        await store.upsert_session("t1", "qq", "s1", "c1", "p2p")
+        await store.mark_inactive("t1")
+        results = await store.search("")
         assert all(r["is_active"] for r in results) if results else True
-        store.close()
+        await store.close()
 
 
 class TestSyncMessages:
-    def test_sync_extracts_messages(self, tmp_path):
+    async def test_sync_extracts_messages(self, tmp_path):
         from src.session_index.store import SessionIndexStore
         from src.session_index.sync import sync_messages
-        store = SessionIndexStore(str(tmp_path / "index.db"))
+        store = await SessionIndexStore.create(str(tmp_path / "index.db"))
         msgs = [
             {"role": "user", "content": "hello world", "id": "h1"},
             {"role": "assistant", "content": "hi there", "id": "a1"},
             {"role": "tool", "content": "/bin/ls output...", "tool_call_id": "tc1", "id": "t1", "name": "exec_command"},
         ]
-        sync_messages(store, thread_id="t1", messages=msgs, channel="qq", sender_id="ou_abc", chat_id="c1", chat_type="p2p", tool_max_chars=500)
-        assert store._db.execute("SELECT COUNT(*) FROM messages WHERE thread_id='t1'").fetchone()[0] == 3
-        store.close()
+        await sync_messages(store, thread_id="t1", messages=msgs, channel="qq", sender_id="ou_abc", chat_id="c1", chat_type="p2p", tool_max_chars=500)
+        cursor = await store._db.execute("SELECT COUNT(*) FROM messages WHERE thread_id='t1'")
+        assert (await cursor.fetchone())[0] == 3
+        await store.close()
 
-    def test_sync_truncates_tool_content(self, tmp_path):
+    async def test_sync_truncates_tool_content(self, tmp_path):
         from src.session_index.store import SessionIndexStore
         from src.session_index.sync import sync_messages
-        store = SessionIndexStore(str(tmp_path / "index.db"))
+        store = await SessionIndexStore.create(str(tmp_path / "index.db"))
         msgs = [{"role": "tool", "content": "x" * 2000, "tool_call_id": "tc1", "id": "t1", "name": "exec_command"}]
-        sync_messages(store, "t1", msgs, channel="qq", sender_id="s", chat_id="c", chat_type="p2p", tool_max_chars=500)
-        assert len(store._db.execute("SELECT content FROM messages WHERE thread_id='t1'").fetchone()["content"]) == 500
-        store.close()
+        await sync_messages(store, "t1", msgs, channel="qq", sender_id="s", chat_id="c", chat_type="p2p", tool_max_chars=500)
+        cursor = await store._db.execute("SELECT content FROM messages WHERE thread_id='t1'")
+        row = await cursor.fetchone()
+        assert len(row["content"]) == 500
+        await store.close()
 
-    def test_sync_idempotent(self, tmp_path):
+    async def test_sync_idempotent(self, tmp_path):
         from src.session_index.store import SessionIndexStore
         from src.session_index.sync import sync_messages
-        store = SessionIndexStore(str(tmp_path / "index.db"))
+        store = await SessionIndexStore.create(str(tmp_path / "index.db"))
         msgs = [{"role": "user", "content": "hello", "id": "h1"}]
-        sync_messages(store, "t1", msgs, "qq", "s", "c", "p2p", 500)
-        sync_messages(store, "t1", msgs, "qq", "s", "c", "p2p", 500)
-        assert store._db.execute("SELECT COUNT(*) FROM messages WHERE thread_id='t1'").fetchone()[0] == 1
-        store.close()
+        await sync_messages(store, "t1", msgs, "qq", "s", "c", "p2p", 500)
+        await sync_messages(store, "t1", msgs, "qq", "s", "c", "p2p", 500)
+        cursor = await store._db.execute("SELECT COUNT(*) FROM messages WHERE thread_id='t1'")
+        assert (await cursor.fetchone())[0] == 1
+        await store.close()

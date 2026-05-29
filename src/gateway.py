@@ -469,7 +469,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         store = get_session_index()
         if not store:
             return JSONResponse({"error": "session search not enabled"}, status_code=503)
-        return JSONResponse(store.search(request.query_params.get("q", ""), limit=int(request.query_params.get("limit", "10"))))
+        return JSONResponse(await store.search(request.query_params.get("q", ""), limit=int(request.query_params.get("limit", "10"))))
 
     @app.get("/api/sessions")
     async def session_list_api(request: Request, _auth=Depends(require_auth)):
@@ -477,7 +477,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         store = get_session_index()
         if not store:
             return JSONResponse({"error": "session search not enabled"}, status_code=503)
-        return JSONResponse(store.search("", limit=int(request.query_params.get("limit", "50"))))
+        return JSONResponse(await store.search("", limit=int(request.query_params.get("limit", "50"))))
 
     @app.get("/api/sessions/{thread_id}/messages")
     async def session_messages_api(thread_id: str, request: Request, _auth=Depends(require_auth)):
@@ -485,8 +485,8 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         store = get_session_index()
         if not store:
             return JSONResponse({"error": "session search not enabled"}, status_code=503)
-        rows = store._db.execute("SELECT message_id, role, content, tool_name, timestamp FROM messages WHERE thread_id = ? ORDER BY timestamp ASC LIMIT ?", (thread_id, int(request.query_params.get("limit", "100")))).fetchall()
-        return JSONResponse({"thread_id": thread_id, "messages": [dict(r) for r in rows]})
+        messages = await store.get_thread_messages(thread_id, limit=int(request.query_params.get("limit", "100")))
+        return JSONResponse({"thread_id": thread_id, "messages": messages})
 
     @app.get("/api/config")
     async def get_config(request: Request):

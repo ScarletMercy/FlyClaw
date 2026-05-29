@@ -732,7 +732,7 @@ def register_dashboard(app: FastAPI, application):
             idx = get_session_index()
             if not idx:
                 return {"results": [], "error": "Session index not initialized"}
-            results = idx.search(q, limit=20)
+            results = await idx.search(q, limit=20)
             return {"results": results, "query": q}
         except Exception as e:
             return {"results": [], "error": str(e)}

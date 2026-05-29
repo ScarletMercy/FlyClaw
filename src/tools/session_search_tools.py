@@ -34,7 +34,7 @@ async def session_search(query: str = "", limit: int = 3) -> str:
     if not store:
         return "Search not enabled"
 
-    results = store.search(query, limit=limit)
+    results = await store.search(query, limit=limit)
     if not results:
         return "No sessions" if not query.strip() else "No results found"
     return _format_results(results)
