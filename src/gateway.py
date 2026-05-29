@@ -393,6 +393,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
     @app.get("/api/plugins")
     async def list_plugins(request: Request, _auth=Depends(require_auth)):
         try:
+            from src.plugins.registry import get_plugin_registry
             return get_plugin_registry().list_plugins()
         except Exception:
             return []
@@ -400,6 +401,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
     @app.get("/api/commands")
     async def list_commands(request: Request, _auth=Depends(require_auth)):
         try:
+            from src.commands.dispatcher import get_dispatcher
             d = get_dispatcher()
             return {"commands": d.list_commands()} if d else {"commands": []}
         except Exception:

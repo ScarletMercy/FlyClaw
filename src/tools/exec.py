@@ -467,7 +467,14 @@ async def exec_command(
             wd = workspace
 
         allowed = [workspace.resolve()] + [Path(d).expanduser().resolve() for d in sandbox_allowed_dirs] + _collect_skill_dirs(cfg)
-        if not any(str(wd).startswith(str(a)) for a in allowed):
+        def _is_under(child: Path, parent: Path) -> bool:
+            try:
+                child.relative_to(parent)
+                return True
+            except ValueError:
+                return False
+
+        if not any(_is_under(wd, a) for a in allowed):
             raise ToolExecutionError(f"当前为沙盒模式，无法访问工作目录之外的路径：{wd}（允许范围：{workspace}）")
 
     # Background mode: spawn via ProcessRegistry and return immediately

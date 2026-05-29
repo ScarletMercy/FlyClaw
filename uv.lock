@@ -612,7 +612,7 @@ wheels = [
 
 [[package]]
 name = "flyclaw"
-version = "0.1.0"
+version = "2026.5.28.1"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },

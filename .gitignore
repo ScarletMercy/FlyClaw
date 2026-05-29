@@ -28,3 +28,13 @@ docs/
 我的出生日志.md
 飞书工具功能测试报告*.md
 package.json
+
+# 运行时文件
+.chat/
+.coverage
+MEMORY.md
+USER.md
+*.png
+*.html
+*.wav
+*.zip
