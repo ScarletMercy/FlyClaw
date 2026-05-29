@@ -4,11 +4,13 @@ import asyncio
 import fnmatch
 import json
 import logging
+import os
 import time
 from contextvars import ContextVar
 from typing import Literal, Optional
 
 from src.tools.exceptions import ToolExecutionError
+from src.tools.process import kill_process_tree
 
 logger = logging.getLogger("flyclaw.exec")
 
@@ -262,12 +264,9 @@ async def _exec_streaming(
         readers_remaining += 1
         tasks.append(asyncio.create_task(_read_stream(proc.stderr, err_buf)))
 
-    def _safe_kill():
-        """Kill process, ignoring ProcessLookupError if already exited."""
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
+    async def _safe_kill():
+        """Kill process tree, ignoring ProcessLookupError if already exited."""
+        await kill_process_tree(proc)
 
     try:
         deadline = start + timeout
@@ -280,7 +279,7 @@ async def _exec_streaming(
             # Check overall timeout
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                _safe_kill()
+                await _safe_kill()
                 await proc.wait()
                 duration = time.monotonic() - start
                 logger.warning("[exec-audit] TIMEOUT dur=%.1fs cmd=%.200s", duration, command)
@@ -309,14 +308,14 @@ async def _exec_streaming(
             if not got_output:
                 # No-output timeout
                 if time.monotonic() >= deadline:
-                    _safe_kill()
+                    await _safe_kill()
                     await proc.wait()
                     duration = time.monotonic() - start
                     logger.warning("[exec-audit] TIMEOUT dur=%.1fs cmd=%.200s", duration, command)
                     raise ToolExecutionError(f"Command timed out after {timeout}s")
 
                 killed = True
-                _safe_kill()
+                await _safe_kill()
                 await proc.wait()
                 break
 
@@ -325,7 +324,7 @@ async def _exec_streaming(
     except ToolExecutionError:
         raise
     except Exception as e:
-        _safe_kill()
+        await _safe_kill()
         await proc.wait()
         duration = time.monotonic() - start
         logger.error("[exec-audit] ERROR dur=%.1fs cmd=%.200s: %s", duration, command, e)
@@ -565,17 +564,17 @@ async def exec_command(
         # Sandbox: sanitize environment
         env = None
         if sandbox_enabled:
-            import os
-
             env = {k: os.environ[k] for k in sandbox_env_whitelist if k in os.environ}
 
-        proc = await asyncio.create_subprocess_shell(
-            command,
+        proc_kwargs: dict = dict(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=workdir,
             env=env,
         )
+        if os.name != "nt":
+            proc_kwargs["start_new_session"] = True
+        proc = await asyncio.create_subprocess_shell(command, **proc_kwargs)
 
         if no_output_timeout > 0:
             # Streaming mode: detect no-output timeout
@@ -611,10 +610,7 @@ async def exec_command(
             return output
 
     except asyncio.TimeoutError:
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
+        await kill_process_tree(proc)
         await proc.wait()
         duration = time.monotonic() - start
         logger.warning("[exec-audit] TIMEOUT dur=%.1fs cmd=%.200s", duration, command)

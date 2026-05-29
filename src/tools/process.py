@@ -19,6 +19,38 @@ from typing import Optional
 logger = logging.getLogger("flyclaw.process")
 
 
+async def kill_process_tree(proc: asyncio.subprocess.Process) -> None:
+    """Kill a process and all its descendants (cross-platform).
+
+    Does NOT call ``await proc.wait()`` — the caller is responsible for
+    reaping the process afterwards.
+    """
+    if proc.pid is None:
+        return
+    pid = proc.pid
+    if os.name == "nt":
+        try:
+            t = await asyncio.create_subprocess_exec(
+                "taskkill", "/T", "/F", "/PID", str(pid),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(t.wait(), timeout=10)
+        except (FileNotFoundError, OSError, asyncio.TimeoutError):
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+    else:
+        try:
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+
+
 # ── Existing supervised execution ──
 
 @dataclass
@@ -137,11 +169,21 @@ class ProcessSupervisor:
                     pass
         else:
             try:
-                proc.kill()
+                t = await asyncio.create_subprocess_exec(
+                    "taskkill", "/T", "/F", "/PID", str(pid),
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(t.wait(), timeout=10)
                 await proc.wait()
                 killed = True
-            except (ProcessLookupError, OSError):
-                pass
+            except (FileNotFoundError, OSError, asyncio.TimeoutError):
+                try:
+                    proc.kill()
+                    await proc.wait()
+                    killed = True
+                except ProcessLookupError:
+                    pass
 
         return killed
 
@@ -201,6 +243,8 @@ class ProcessRegistry:
             full_env = dict(os.environ)
             full_env.update(env)
             proc_kwargs["env"] = full_env
+        if os.name != "nt":
+            proc_kwargs["start_new_session"] = True
 
         proc = await asyncio.create_subprocess_shell(command, **proc_kwargs)
 
@@ -328,26 +372,13 @@ class ProcessRegistry:
             return f"Process already exited with code {session.exit_code}."
 
         try:
-            if os.name == "nt":
-                # Windows: use taskkill to kill the entire process tree
-                try:
-                    proc = await asyncio.create_subprocess_exec(
-                        "taskkill", "/T", "/F", "/PID", str(session.pid),
-                        stdout=asyncio.subprocess.DEVNULL,
-                        stderr=asyncio.subprocess.DEVNULL,
-                    )
-                    await proc.wait()
-                except (FileNotFoundError, OSError):
-                    session.proc.kill()
-            else:
-                try:
-                    os.killpg(os.getpgid(session.pid), signal.SIGTERM)
-                except (ProcessLookupError, OSError):
-                    session.proc.kill()
+            await kill_process_tree(session.proc)
+            await session.proc.wait()
             session.killed = True
             logger.info("[bg-process] killed session=%s pid=%d", session_id, session.pid)
             return f"Killed process {session_id} (pid {session.pid})."
-        except (ProcessLookupError, OSError) as e:
+        except Exception as e:
+            logger.warning("[bg-process] kill failed session=%s: %s", session_id, e)
             return f"Failed to kill: {e}"
 
     async def log(self, session_id: str, offset: int = 0, limit: int = 200) -> str:

@@ -55,11 +55,18 @@ def read_file(path: str, offset: int = 0, head_limit: int = 500) -> str:
         return f"Error: {e}"
 
     try:
+        if _is_binary(resolved):
+            return f"Error: binary file: {path}"
+        selected: list[str] = []
+        total = 0
         with open(resolved, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        total = len(lines)
+            for idx, line in enumerate(f):
+                total += 1
+                if idx < offset:
+                    continue
+                if len(selected) < head_limit:
+                    selected.append(line)
         end = offset + head_limit
-        selected = lines[offset:end]
         result = []
         for i, line in enumerate(selected):
             result.append(f"{offset + i + 1}\t{line.rstrip()}")
