@@ -88,7 +88,7 @@ class SkillManager:
         created_by: str = "agent",
     ) -> tuple[Skill, Optional[str]]:
         """创建新技能。
-        
+
         Returns:
             (Skill, error_message) - error_message is None on success
         """
@@ -132,7 +132,7 @@ class SkillManager:
         description: Optional[str] = None,
     ) -> tuple[Skill, Optional[str]]:
         """编辑现有技能。
-        
+
         Returns:
             (Skill, error_message) - error_message is None on success
         """
@@ -166,7 +166,7 @@ class SkillManager:
 
     def delete_skill(self, name: str) -> tuple[bool, Optional[str]]:
         """删除技能（仅用户创建的）。
-        
+
         Returns:
             (success, error_message)
         """
@@ -181,6 +181,7 @@ class SkillManager:
             return False, f"Cannot delete system skill: {name}"
 
         import shutil
+
         try:
             shutil.rmtree(skill_dir)
             self._record_usage(name, action="deleted")
@@ -238,7 +239,10 @@ class SkillManager:
         return True, None
 
     def write_supporting_file(
-        self, name: str, file_path: str, file_content: str,
+        self,
+        name: str,
+        file_path: str,
+        file_content: str,
     ) -> tuple[bool, Optional[str]]:
         """Write a supporting file under a skill (references/templates/scripts/assets)."""
         skill_dir = self.skills_dir / name
@@ -324,22 +328,22 @@ class SkillManager:
             return None
 
     def bump_view(self, skill_name: str) -> None:
-        self._mutate_usage(skill_name, lambda r: (
-            r.update(view_count=r.get("view_count", 0) + 1,
-                     last_viewed_at=datetime.now().isoformat()),
-        ))
+        self._mutate_usage(
+            skill_name,
+            lambda r: (r.update(view_count=r.get("view_count", 0) + 1, last_viewed_at=datetime.now().isoformat()),),
+        )
 
     def bump_use(self, skill_name: str) -> None:
-        self._mutate_usage(skill_name, lambda r: (
-            r.update(use_count=r.get("use_count", 0) + 1,
-                     last_used_at=datetime.now().isoformat()),
-        ))
+        self._mutate_usage(
+            skill_name,
+            lambda r: (r.update(use_count=r.get("use_count", 0) + 1, last_used_at=datetime.now().isoformat()),),
+        )
 
     def bump_patch(self, skill_name: str) -> None:
-        self._mutate_usage(skill_name, lambda r: (
-            r.update(patch_count=r.get("patch_count", 0) + 1,
-                     last_patched_at=datetime.now().isoformat()),
-        ))
+        self._mutate_usage(
+            skill_name,
+            lambda r: (r.update(patch_count=r.get("patch_count", 0) + 1, last_patched_at=datetime.now().isoformat()),),
+        )
 
     def mark_agent_created(self, skill_name: str) -> None:
         self._mutate_usage(skill_name, lambda r: r.update(created_by="agent"))
@@ -398,6 +402,7 @@ def get_tools() -> list:
         if not name:
             return json.dumps({"error": "name is required"})
         from src._container import get_container
+
         container = get_container()
         skills = container.skills_cache or []
         for s in skills:
@@ -405,17 +410,21 @@ def get_tools() -> list:
                 manager.bump_view(name)
                 usage = manager.get_usage(name) or {}
                 body_with_paths = s.body + f"\n\n## Skill Path Info\n- **Skill Directory**: {s.base_dir}"
-                return json.dumps({
-                    "name": s.name,
-                    "description": s.description,
-                    "source": s.source,
-                    "file_path": str(s.file_path),
-                    "body": body_with_paths,
-                    "view_count": usage.get("view_count", 0),
-                    "use_count": usage.get("use_count", 0),
-                    "last_viewed_at": usage.get("last_viewed_at"),
-                    "last_used_at": usage.get("last_used_at"),
-                }, ensure_ascii=False, indent=2)
+                return json.dumps(
+                    {
+                        "name": s.name,
+                        "description": s.description,
+                        "source": s.source,
+                        "file_path": str(s.file_path),
+                        "body": body_with_paths,
+                        "view_count": usage.get("view_count", 0),
+                        "use_count": usage.get("use_count", 0),
+                        "last_viewed_at": usage.get("last_viewed_at"),
+                        "last_used_at": usage.get("last_used_at"),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
         return json.dumps({"error": f"Skill not found: {name}"})
 
     async def skill_manage(
@@ -451,6 +460,7 @@ def get_tools() -> list:
             absorbed_into: Target umbrella skill name when deleting a merged skill
         """
         from src._container import get_container
+
         container = get_container()
 
         if action == "create":
@@ -460,14 +470,18 @@ def get_tools() -> list:
             if error:
                 return json.dumps({"error": error})
             from src.skills.provenance import is_background_review
+
             if is_background_review():
                 manager.mark_agent_created(name)
             _reload_skills(container)
-            return json.dumps({
-                "success": True,
-                "action": "created",
-                "skill": {"name": skill.name, "description": skill.description, "source": skill.source},
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "success": True,
+                    "action": "created",
+                    "skill": {"name": skill.name, "description": skill.description, "source": skill.source},
+                },
+                ensure_ascii=False,
+            )
 
         elif action == "edit":
             if not name or not content:
@@ -476,18 +490,24 @@ def get_tools() -> list:
             if error:
                 return json.dumps({"error": error})
             _reload_skills(container)
-            return json.dumps({
-                "success": True,
-                "action": "edited",
-                "skill": {"name": skill.name, "description": skill.description},
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "success": True,
+                    "action": "edited",
+                    "skill": {"name": skill.name, "description": skill.description},
+                },
+                ensure_ascii=False,
+            )
 
         elif action == "patch":
             if not name or not old_string or not new_string:
                 return json.dumps({"error": "name, old_string, and new_string are required for patch"})
             ok, error = manager.patch_skill(
-                name, old_string, new_string,
-                file_path=file_path, replace_all=replace_all,
+                name,
+                old_string,
+                new_string,
+                file_path=file_path,
+                replace_all=replace_all,
             )
             if error:
                 return json.dumps({"error": error})
@@ -507,6 +527,7 @@ def get_tools() -> list:
             if not name:
                 return json.dumps({"error": "name is required for toggle"})
             from src.config import save_config
+
             skills = container.skills_cache or []
             if not any(s.name == name for s in skills):
                 return json.dumps({"error": f"Skill not found: {name}"})
@@ -534,12 +555,14 @@ def get_tools() -> list:
                 _reload_skills(container)
             except Exception as e:
                 return json.dumps({"error": f"Failed to save config: {str(e)}"})
-            return json.dumps({
-                "success": True,
-                "skill": name,
-                "action": action_result,
-                "channel": channel or "global",
-            })
+            return json.dumps(
+                {
+                    "success": True,
+                    "skill": name,
+                    "action": action_result,
+                    "channel": channel or "global",
+                }
+            )
 
         elif action == "write_file":
             if not name or not file_path or not file_content:
@@ -558,7 +581,11 @@ def get_tools() -> list:
             return json.dumps({"success": True, "action": "removed_file", "skill": name, "file": file_path})
 
         else:
-            return json.dumps({"error": f"Unknown action: {action}. Valid actions: create, edit, patch, delete, toggle, write_file, remove_file"})
+            return json.dumps(
+                {
+                    "error": f"Unknown action: {action}. Valid actions: create, edit, patch, delete, toggle, write_file, remove_file"
+                }
+            )
 
     async def skill_hub(
         action: Literal["search_hub", "inspect_hub", "install_hub", "scan_hub", "install", "uninstall"],
@@ -591,6 +618,7 @@ def get_tools() -> list:
             force: Force install despite blocked scan verdict (for install_hub)
         """
         from src._container import get_container
+
         container = get_container()
 
         if action == "search_hub":
@@ -600,20 +628,26 @@ def get_tools() -> list:
                 return json.dumps({"error": "Hub is disabled in configuration"})
             try:
                 from src.skills.hub import create_sources, parallel_search
+
                 sources = create_sources()
                 results = await asyncio.to_thread(
-                    parallel_search, sources, query, limit=20,
+                    parallel_search,
+                    sources,
+                    query,
+                    limit=20,
                     source_filter=source or "all",
                 )
                 items = []
                 for r in results:
-                    items.append({
-                        "name": r.name,
-                        "description": (r.description or "")[:200],
-                        "source": r.source,
-                        "identifier": r.identifier,
-                        "trust_level": r.trust_level,
-                    })
+                    items.append(
+                        {
+                            "name": r.name,
+                            "description": (r.description or "")[:200],
+                            "source": r.source,
+                            "identifier": r.identifier,
+                            "trust_level": r.trust_level,
+                        }
+                    )
                 return json.dumps({"results": items}, ensure_ascii=False, indent=2)
             except Exception as e:
                 logger.error("Hub search failed: %s", e)
@@ -626,6 +660,7 @@ def get_tools() -> list:
                 return json.dumps({"error": "Hub is disabled in configuration"})
             try:
                 from src.skills.hub import create_sources, resolve_source
+
                 sources = create_sources()
                 src = resolve_source(identifier, sources)
                 if not src:
@@ -633,15 +668,19 @@ def get_tools() -> list:
                 meta = await asyncio.to_thread(src.inspect, identifier)
                 if not meta:
                     return json.dumps({"error": f"Skill not found: {identifier}"})
-                return json.dumps({
-                    "name": meta.name,
-                    "description": meta.description,
-                    "source": meta.source,
-                    "identifier": meta.identifier,
-                    "trust_level": meta.trust_level,
-                    "repo": meta.repo,
-                    "tags": meta.tags,
-                }, ensure_ascii=False, indent=2)
+                return json.dumps(
+                    {
+                        "name": meta.name,
+                        "description": meta.description,
+                        "source": meta.source,
+                        "identifier": meta.identifier,
+                        "trust_level": meta.trust_level,
+                        "repo": meta.repo,
+                        "tags": meta.tags,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
             except Exception as e:
                 logger.error("Hub inspect failed: %s", e)
                 return json.dumps({"error": f"Inspect failed: {str(e)}"})
@@ -654,8 +693,10 @@ def get_tools() -> list:
             quarantine_path = None
             try:
                 from src.skills.hub import (
-                    create_sources, resolve_source,
-                    quarantine_bundle, install_from_quarantine,
+                    create_sources,
+                    resolve_source,
+                    quarantine_bundle,
+                    install_from_quarantine,
                     ensure_hub_dirs,
                 )
                 from src.skills.guard import scan_skill, should_allow_install, format_scan_report
@@ -684,40 +725,54 @@ def get_tools() -> list:
                     allowed, reason = should_allow_install(scan_result, force=force)
                     if not allowed:
                         report = format_scan_report(scan_result)
-                        return json.dumps({
-                            "error": f"Install blocked: {reason}",
-                            "scan_report": report,
-                        }, ensure_ascii=False)
+                        return json.dumps(
+                            {
+                                "error": f"Install blocked: {reason}",
+                                "scan_report": report,
+                            },
+                            ensure_ascii=False,
+                        )
                 else:
                     from src.skills.types import ScanResult
+
                     scan_result = ScanResult(
-                        skill_name=bundle.name, source=bundle.source,
-                        trust_level=bundle.trust_level, verdict="safe",
-                        scanned_at="", summary="Guard disabled",
+                        skill_name=bundle.name,
+                        source=bundle.source,
+                        trust_level=bundle.trust_level,
+                        verdict="safe",
+                        scanned_at="",
+                        summary="Guard disabled",
                     )
 
                 install_dir = install_from_quarantine(
-                    quarantine_path, bundle.name, bundle, scan_result,
+                    quarantine_path,
+                    bundle.name,
+                    bundle,
+                    scan_result,
                 )
                 _reload_skills_from_manager()
 
-                return json.dumps({
-                    "success": True,
-                    "action": "installed",
-                    "skill": {
-                        "name": bundle.name,
-                        "source": bundle.source,
-                        "trust_level": bundle.trust_level,
-                        "scan_verdict": scan_result.verdict,
+                return json.dumps(
+                    {
+                        "success": True,
+                        "action": "installed",
+                        "skill": {
+                            "name": bundle.name,
+                            "source": bundle.source,
+                            "trust_level": bundle.trust_level,
+                            "scan_verdict": scan_result.verdict,
+                        },
+                        "message": f"技能 '{bundle.name}' 安装成功，可用 skill_view(name=\"{bundle.name}\") 查看和使用。",
                     },
-                    "message": f"技能 '{bundle.name}' 安装成功，可用 skill_view(name=\"{bundle.name}\") 查看和使用。",
-                }, ensure_ascii=False)
+                    ensure_ascii=False,
+                )
             except Exception as e:
                 logger.error("Hub install failed: %s", e)
                 return json.dumps({"error": f"Install failed: {str(e)}"})
             finally:
                 if quarantine_path and quarantine_path.exists():
                     import shutil
+
                     shutil.rmtree(quarantine_path, ignore_errors=True)
 
         elif action == "scan_hub":
@@ -727,16 +782,18 @@ def get_tools() -> list:
                 return json.dumps({"error": "Hub is disabled in configuration"})
             try:
                 from src.skills.guard import scan_skill, format_scan_report
+
                 skills = container.skills_cache or []
                 skill_dir = None
                 skill_source = "community"
                 for s in skills:
                     if s.name == name:
                         skill_dir = s.base_dir
-                        skill_source = getattr(s, 'source', 'community')
+                        skill_source = getattr(s, "source", "community")
                         break
                 if not skill_dir:
                     from src.skills.hub import HubLockFile, SKILLS_DIR
+
                     lock = HubLockFile()
                     entry = lock.get_installed(name)
                     install_path = entry.get("install_path") if entry else None
@@ -749,12 +806,15 @@ def get_tools() -> list:
                         return json.dumps({"error": f"Skill not found: {name}"})
                 result = scan_skill(skill_dir, source=skill_source)
                 report = format_scan_report(result)
-                return json.dumps({
-                    "name": name,
-                    "verdict": result.verdict,
-                    "findings_count": len(result.findings),
-                    "report": report,
-                }, ensure_ascii=False)
+                return json.dumps(
+                    {
+                        "name": name,
+                        "verdict": result.verdict,
+                        "findings_count": len(result.findings),
+                        "report": report,
+                    },
+                    ensure_ascii=False,
+                )
             except Exception as e:
                 logger.error("Hub scan failed: %s", e)
                 return json.dumps({"error": f"Scan failed: {str(e)}"})
@@ -775,6 +835,7 @@ def get_tools() -> list:
             if not name:
                 return json.dumps({"error": "name is required for uninstall"})
             from src.config import save_config
+
             skills = container.skills_cache or []
             skill_dir = None
             for s in skills:
@@ -787,6 +848,7 @@ def get_tools() -> list:
                 return json.dumps({"error": f"Can only uninstall user skills in {manager.skills_dir}"})
             try:
                 import shutil
+
                 shutil.rmtree(skill_dir)
             except Exception as e:
                 return json.dumps({"error": f"Failed to remove skill directory: {str(e)}"})
@@ -803,6 +865,7 @@ def get_tools() -> list:
                 return json.dumps({"error": f"Failed to save config: {str(e)}"})
             try:
                 from src.skills.hub import HubLockFile, append_audit_log
+
                 lock = HubLockFile()
                 entry = lock.get_installed(name)
                 if entry:
@@ -813,7 +876,11 @@ def get_tools() -> list:
             return json.dumps({"success": True, "uninstalled": name})
 
         else:
-            return json.dumps({"error": f"Unknown action: {action}. Valid actions: search_hub, inspect_hub, install_hub, scan_hub, install, uninstall"})
+            return json.dumps(
+                {
+                    "error": f"Unknown action: {action}. Valid actions: search_hub, inspect_hub, install_hub, scan_hub, install, uninstall"
+                }
+            )
 
     return [
         ToolDef.from_function(skill_view),
@@ -827,15 +894,18 @@ def _reload_skills(container) -> None:
     from src.skills.loader import discover_skills
     from src.skills.prompt import build_skills_prompt
     from src.prompt import _build_skills_section
+
     dirs = container._build_skill_directories()
     skills = discover_skills(dirs, container.config)
     container.skills_cache = skills
     if container.agent_loop:
         container.agent_loop._skills_prompt = build_skills_prompt(skills)
-        container.agent_loop._prompt_skills = "\n".join(
-            _build_skills_section(container.agent_loop._skills_prompt)
-        ) if container.agent_loop._skills_prompt else ""
-    dispatcher = getattr(container, 'dispatcher', None)
+        container.agent_loop._prompt_skills = (
+            "\n".join(_build_skills_section(container.agent_loop._skills_prompt))
+            if container.agent_loop._skills_prompt
+            else ""
+        )
+    dispatcher = getattr(container, "dispatcher", None)
     if dispatcher is not None:
         dispatcher._reload_skills(skills)
 
@@ -846,6 +916,7 @@ def _install_from_url(url: str) -> str:
     import zipfile
     from urllib.parse import urlparse
     import httpx
+
     parsed = urlparse(url)
     filename = Path(parsed.path).name
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -864,6 +935,7 @@ def _install_from_path(path: str) -> str:
     """Install a skill from a local path (directory or zip)."""
     import shutil
     import zipfile
+
     p = Path(path).expanduser().resolve()
     if not p.exists():
         return json.dumps({"error": f"Path not found: {path}"})
@@ -886,6 +958,7 @@ def _install_from_path(path: str) -> str:
 def _install_from_zip(zip_path: Path) -> str:
     """Install a skill from a zip file."""
     import zipfile
+
     if not zipfile.is_zipfile(zip_path):
         return json.dumps({"error": f"Not a valid zip file: {zip_path}"})
     with zipfile.ZipFile(zip_path, "r") as zf:
@@ -910,6 +983,7 @@ def _reload_skills_from_manager() -> None:
     """Reload skills (used by install functions that don't have container access)."""
     try:
         from src._container import get_container
+
         container = get_container()
         _reload_skills(container)
     except Exception as e:

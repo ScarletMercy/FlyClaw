@@ -69,9 +69,7 @@ class AcpServer:
     async def _handle_prompt(self, params: dict) -> dict:
         session_id = params.get("sessionId", "")
         content = params.get("content", [])
-        prompt_text = " ".join(
-            b.get("text", "") for b in content if b.get("type") == "text"
-        )
+        prompt_text = " ".join(b.get("text", "") for b in content if b.get("type") == "text")
 
         stop_reason = "end_turn"
         async for event in self._runtime.run_turn(
@@ -79,17 +77,19 @@ class AcpServer:
             prompt=prompt_text,
         ):
             if event.type == "text_delta" and event.text:
-                self._transport.write({
-                    "jsonrpc": "2.0",
-                    "method": "sessionUpdate",
-                    "params": {
-                        "sessionId": session_id,
-                        "update": {
-                            "type": "agent_message_chunk",
-                            "content": {"type": "text", "text": event.text},
+                self._transport.write(
+                    {
+                        "jsonrpc": "2.0",
+                        "method": "sessionUpdate",
+                        "params": {
+                            "sessionId": session_id,
+                            "update": {
+                                "type": "agent_message_chunk",
+                                "content": {"type": "text", "text": event.text},
+                            },
                         },
-                    },
-                })
+                    }
+                )
             elif event.type == "done":
                 stop_reason = event.stop_reason or "end_turn"
 
@@ -102,12 +102,7 @@ class AcpServer:
 
     async def _handle_list_sessions(self, params: dict) -> dict:
         sessions = self._sessions.list_sessions()
-        return {
-            "sessions": [
-                {"sessionId": s.session_id, "agentId": s.agent_id, "cwd": s.cwd}
-                for s in sessions
-            ]
-        }
+        return {"sessions": [{"sessionId": s.session_id, "agentId": s.agent_id, "cwd": s.cwd} for s in sessions]}
 
     async def _handle_load_session(self, params: dict) -> dict:
         session_id = params.get("sessionId", "")

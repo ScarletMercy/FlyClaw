@@ -85,6 +85,7 @@ class StateStore:
         self._locks_lock = asyncio.Lock()
         self._interrupt_flags = InterruptFlagStore()
         from pathlib import Path
+
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
@@ -107,11 +108,8 @@ class StateStore:
         async with self._locks_lock:
             if thread_id not in self._locks:
                 if len(self._locks) > _MAX_LOCKS:
-                    to_remove = [
-                        tid for tid, lock in self._locks.items()
-                        if not lock.locked()
-                    ]
-                    for tid in to_remove[:len(self._locks) - _MAX_LOCKS // 2]:
+                    to_remove = [tid for tid, lock in self._locks.items() if not lock.locked()]
+                    for tid in to_remove[: len(self._locks) - _MAX_LOCKS // 2]:
                         del self._locks[tid]
                 self._locks[thread_id] = asyncio.Lock()
             return self._locks[thread_id]
@@ -169,9 +167,7 @@ class StateStore:
 
     def list_threads(self) -> list[str]:
         assert self._db is not None
-        rows = self._db.execute(
-            "SELECT thread_id FROM sessions ORDER BY updated_at DESC"
-        ).fetchall()
+        rows = self._db.execute("SELECT thread_id FROM sessions ORDER BY updated_at DESC").fetchall()
         return [r[0] for r in rows]
 
     def close(self) -> None:
@@ -211,10 +207,9 @@ class InterruptFlagStore:
             if thread_id not in self._flags:
                 if len(self._flags) > _MAX_FLAGS:
                     to_remove = [
-                        tid for tid, flag in self._flags.items()
-                        if not flag.check()[0] and flag.drain_steer() is None
+                        tid for tid, flag in self._flags.items() if not flag.check()[0] and flag.drain_steer() is None
                     ]
-                    for tid in to_remove[:len(self._flags) - _MAX_FLAGS // 2]:
+                    for tid in to_remove[: len(self._flags) - _MAX_FLAGS // 2]:
                         del self._flags[tid]
                 self._flags[thread_id] = InterruptFlag()
             return self._flags[thread_id]

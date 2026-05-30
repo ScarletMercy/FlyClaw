@@ -16,8 +16,10 @@ from src.agent.tooldef import ToolDef
 
 def _make_tool(name: str, fn=None):
     if fn is None:
+
         async def fn(**kwargs):
             return f"{name} result"
+
     return ToolDef.from_function(fn, name=name)
 
 
@@ -39,6 +41,7 @@ def _make_config(**overrides):
     config = MagicMock()
     config.agents = MagicMock()
     config.agents.max_tool_rounds = 50
+    config.agents.tool_output_cache_chars = 8000
     config.agents.lock_timeout = 5.0
     config.agents.system_prompt = "You are helpful."
     config.agents.workspace = "."
@@ -218,10 +221,14 @@ class TestAgentLoopApproval:
 
         mock_mgr = MagicMock()
         mock_mgr.cancel_pending = MagicMock()
-        with patch("src.agent.loop.AgentLoop._handle_approval") as mock_handle, \
-             patch("src.tools.approval.get_approval_manager", return_value=mock_mgr):
+        with (
+            patch("src.agent.loop.AgentLoop._handle_approval") as mock_handle,
+            patch("src.tools.approval.get_approval_manager", return_value=mock_mgr),
+        ):
             mock_handle.side_effect = ApprovalPending(
-                thread_id="t5", request_id="r1", tool_name="exec_command",
+                thread_id="t5",
+                request_id="r1",
+                tool_name="exec_command",
                 command_preview="rm -rf /",
             )
             state = AgentState(messages=[{"role": "user", "content": "run"}])
@@ -249,9 +256,13 @@ class TestAgentLoopApproval:
         state = AgentState(
             messages=[
                 {"role": "user", "content": "test"},
-                {"role": "assistant", "content": "", "tool_calls": [
-                    {"id": "tc1", "type": "function", "function": {"name": "echo", "arguments": '{"text":"hi"}'}}
-                ]},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "tc1", "type": "function", "function": {"name": "echo", "arguments": '{"text":"hi"}'}}
+                    ],
+                },
             ],
             pending_approval={"request_id": "r1", "tool_call_id": "tc1", "tool_name": "echo", "command_preview": ""},
         )
@@ -272,9 +283,11 @@ class TestAgentLoopApproval:
         state = AgentState(
             messages=[
                 {"role": "user", "content": "test"},
-                {"role": "assistant", "content": "", "tool_calls": [
-                    {"id": "tc2", "type": "function", "function": {"name": "echo", "arguments": '{}'}}
-                ]},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{"id": "tc2", "type": "function", "function": {"name": "echo", "arguments": "{}"}}],
+                },
             ],
             pending_approval={"request_id": "r2", "tool_call_id": "tc2", "tool_name": "echo", "command_preview": ""},
         )
@@ -303,6 +316,7 @@ class TestAgentLoopStatePersistence:
 class TestToolLoopGuardrails:
     def test_repeat_failure_blocks(self):
         from src.agent.guardrails import ToolLoopGuardrails
+
         g = ToolLoopGuardrails(repeat_fail_block=3)
         args = {"cmd": "rm -rf /"}
         for _ in range(2):
@@ -317,6 +331,7 @@ class TestToolLoopGuardrails:
 
     def test_storm_blocks(self):
         from src.agent.guardrails import ToolLoopGuardrails
+
         g = ToolLoopGuardrails(storm_block=4)
         for i in range(3):
             g.record("exec_command", {"cmd": f"cmd_{i}"}, success=False)
@@ -330,6 +345,7 @@ class TestToolLoopGuardrails:
 
     def test_reset_clears_history(self):
         from src.agent.guardrails import ToolLoopGuardrails
+
         g = ToolLoopGuardrails(repeat_fail_block=2)
         args = {"cmd": "fail"}
         g.record("exec_command", args, success=False)
@@ -339,6 +355,7 @@ class TestToolLoopGuardrails:
 
     def test_mixed_success_resets_count(self):
         from src.agent.guardrails import ToolLoopGuardrails
+
         g = ToolLoopGuardrails(repeat_fail_block=3)
         args = {"cmd": "test"}
         g.record("exec_command", args, success=False)
@@ -351,6 +368,7 @@ class TestToolLoopGuardrails:
 class TestSanitizeSurrogates:
     def test_replaces_lone_surrogates(self):
         from src.agent.loop import AgentLoop
+
         loop = AgentLoop.__new__(AgentLoop)
         messages = [{"role": "user", "content": "hello\ud800world"}]
         sanitized = loop._sanitize_surrogates(messages)
@@ -359,15 +377,22 @@ class TestSanitizeSurrogates:
 
     def test_handles_nested_dicts(self):
         from src.agent.loop import AgentLoop
+
         loop = AgentLoop.__new__(AgentLoop)
-        messages = [{"role": "assistant", "tool_calls": [
-            {"id": "tc1", "function": {"name": "x", "arguments": '{"a": "\udc00"}'}},
-        ]}]
+        messages = [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {"id": "tc1", "function": {"name": "x", "arguments": '{"a": "\udc00"}'}},
+                ],
+            }
+        ]
         sanitized = loop._sanitize_surrogates(messages)
         assert "\udc00" not in sanitized[0]["tool_calls"][0]["function"]["arguments"]
 
     def test_preserves_valid_content(self):
         from src.agent.loop import AgentLoop
+
         loop = AgentLoop.__new__(AgentLoop)
         messages = [{"role": "user", "content": "normal text"}]
         sanitized = loop._sanitize_surrogates(messages)
@@ -377,6 +402,7 @@ class TestSanitizeSurrogates:
 class TestInterruptFlag:
     def test_interrupt_sets_flag(self):
         from src.agent.interrupt import InterruptFlag
+
         flag = InterruptFlag()
         flag.interrupt("stop now")
         is_int, msg = flag.check()
@@ -385,6 +411,7 @@ class TestInterruptFlag:
 
     def test_steer_sets_text(self):
         from src.agent.interrupt import InterruptFlag
+
         flag = InterruptFlag()
         assert flag.steer("focus on X") is True
         assert flag.drain_steer() == "focus on X"
@@ -392,6 +419,7 @@ class TestInterruptFlag:
 
     def test_interrupt_clears_steer(self):
         from src.agent.interrupt import InterruptFlag
+
         flag = InterruptFlag()
         flag.steer("steer text")
         flag.interrupt("stop")
@@ -401,6 +429,7 @@ class TestInterruptFlag:
 
     def test_steer_concatenates(self):
         from src.agent.interrupt import InterruptFlag
+
         flag = InterruptFlag()
         flag.steer("first")
         flag.steer("second")
@@ -408,12 +437,14 @@ class TestInterruptFlag:
 
     def test_steer_rejected_during_interrupt(self):
         from src.agent.interrupt import InterruptFlag
+
         flag = InterruptFlag()
         flag.interrupt()
         assert flag.steer("ignored") is False
 
     def test_clear_resets_all(self):
         from src.agent.interrupt import InterruptFlag
+
         flag = InterruptFlag()
         flag.interrupt("msg")
         flag.clear()
@@ -424,6 +455,7 @@ class TestInterruptFlag:
 
     def test_interrupt_sets_event(self):
         from src.agent.interrupt import InterruptFlag
+
         flag = InterruptFlag()
         event = flag.get_event()
         assert not event.is_set()
@@ -432,6 +464,7 @@ class TestInterruptFlag:
 
     def test_clear_resets_event(self):
         from src.agent.interrupt import InterruptFlag
+
         flag = InterruptFlag()
         event = flag.get_event()
         flag.interrupt("msg")
@@ -573,6 +606,7 @@ class TestInterruptInLoop:
 class TestToolCache:
     def test_small_content_not_truncated(self):
         from src.agent.loop import AgentLoop
+
         loop = AgentLoop.__new__(AgentLoop)
         loop._config = None
         content = "short text"
@@ -582,6 +616,7 @@ class TestToolCache:
 
     def test_large_content_truncated(self):
         from src.agent.loop import AgentLoop
+
         loop = AgentLoop.__new__(AgentLoop)
         loop._config = None
         content = "x" * 10000
@@ -592,6 +627,7 @@ class TestToolCache:
 
     def test_non_tool_messages_untouched(self):
         from src.agent.loop import AgentLoop
+
         loop = AgentLoop.__new__(AgentLoop)
         loop._config = None
         content = "x" * 10000
@@ -600,9 +636,46 @@ class TestToolCache:
         assert messages[0]["content"] == content
 
 
+class TestCleanTruncatedMarkers:
+    def test_removes_truncated_marker(self):
+        from src.agent.loop import AgentLoop
+
+        loop = AgentLoop.__new__(AgentLoop)
+        msgs = [{"role": "tool", "content": "result", "_truncated": True}]
+        loop._clean_truncated_markers(msgs)
+        assert "_truncated" not in msgs[0]
+
+    def test_removes_cache_file_path(self):
+        from src.agent.loop import AgentLoop
+
+        loop = AgentLoop.__new__(AgentLoop)
+        content = "x" * 8000 + "\n... [content truncated, 10000 chars total. Full content saved to: `/home/user/.flyclaw/temp/tool_cache/t/file.txt`]"
+        msgs = [{"role": "tool", "content": content, "_truncated": True}]
+        loop._clean_truncated_markers(msgs)
+        assert "Full content saved to:" not in msgs[0]["content"]
+        assert "content truncated" in msgs[0]["content"]
+
+    def test_leaves_normal_content_unchanged(self):
+        from src.agent.loop import AgentLoop
+
+        loop = AgentLoop.__new__(AgentLoop)
+        content = "hello world"
+        msgs = [{"role": "user", "content": content}]
+        loop._clean_truncated_markers(msgs)
+        assert msgs[0]["content"] == content
+
+    def test_no_error_on_missing_keys(self):
+        from src.agent.loop import AgentLoop
+
+        loop = AgentLoop.__new__(AgentLoop)
+        msgs = [{"role": "tool", "tool_call_id": "tc1"}]
+        loop._clean_truncated_markers(msgs)
+
+
 class TestFindSafeCut:
     def test_no_tool_calls(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
             {"role": "user", "content": "hi"},
             {"role": "assistant", "content": "hello"},
@@ -613,39 +686,54 @@ class TestFindSafeCut:
 
     def test_preserves_tool_group(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
             {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+                ],
+            },
             {"role": "tool", "tool_call_id": "tc1", "content": "result"},
             {"role": "assistant", "content": "done"},
         ]
-        # tail_count=2 → cut=2 → group adjust to 1 → forward: no user after 1, stays at 1
-        assert _find_safe_cut(msgs, 2) == 1
+        # tail_count=2 → cut=2 → group adjust to 1 → forward: no user after 1, returns 0
+        assert _find_safe_cut(msgs, 2) == 0
 
     def test_preserves_parallel_tool_group(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
             {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc1", "type": "function", "function": {"name": "a", "arguments": "{}"}},
-                {"id": "tc2", "type": "function", "function": {"name": "b", "arguments": "{}"}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc1", "type": "function", "function": {"name": "a", "arguments": "{}"}},
+                    {"id": "tc2", "type": "function", "function": {"name": "b", "arguments": "{}"}},
+                ],
+            },
             {"role": "tool", "tool_call_id": "tc1", "content": "r1"},
             {"role": "tool", "tool_call_id": "tc2", "content": "r2"},
             {"role": "assistant", "content": "done"},
         ]
-        # tail_count=3 → cut=2 → group adjust to 1 → forward: no user after 1, stays at 1
-        assert _find_safe_cut(msgs, 3) == 1
+        # tail_count=3 → cut=2 → group adjust to 1 → forward: no user after 1, returns 0
+        assert _find_safe_cut(msgs, 3) == 0
 
     def test_cut_before_group(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
             {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+                ],
+            },
             {"role": "tool", "tool_call_id": "tc1", "content": "result"},
         ]
         # tail_count=3 keeps all, cut=0
@@ -653,11 +741,16 @@ class TestFindSafeCut:
 
     def test_cut_after_group(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
             {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+                ],
+            },
             {"role": "tool", "tool_call_id": "tc1", "content": "result"},
             {"role": "assistant", "content": "done"},
             {"role": "user", "content": "next"},
@@ -682,25 +775,66 @@ class TestApprovalPendingPartialResults:
         assert len(exc.partial_results) == 1
 
 
+class TestApprovalPendingData:
+    def test_tc_id_default_empty(self):
+        exc = ApprovalPending("t1", "r1", "exec", "cmd")
+        assert exc.tc_id == ""
+
+    def test_tc_id_stored(self):
+        exc = ApprovalPending("t1", "r1", "exec", "cmd", tc_id="tc_123")
+        assert exc.tc_id == "tc_123"
+
+    def test_to_pending_data_basic(self):
+        exc = ApprovalPending("t1", "r1", "exec", "cmd", tc_id="tc_1")
+        data = exc.to_pending_data()
+        assert data == {
+            "request_id": "r1",
+            "tool_name": "exec",
+            "command_preview": "cmd",
+            "tool_call_id": "tc_1",
+        }
+
+    def test_to_pending_data_with_keys(self):
+        exc = ApprovalPending("t1", "r1", "memory_delete", "k1,k2", keys=["k1", "k2"], tc_id="tc_2")
+        data = exc.to_pending_data()
+        assert data["memory_keys"] == ["k1", "k2"]
+        assert data["tool_call_id"] == "tc_2"
+
+    def test_to_pending_data_no_keys_no_memory_keys_field(self):
+        exc = ApprovalPending("t1", "r1", "exec", "cmd", tc_id="tc_3")
+        data = exc.to_pending_data()
+        assert "memory_keys" not in data
+
+
 class TestFindSafeCutEdgeCases:
     def test_adjacent_groups_cut_at_boundary(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
             {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc1", "type": "function", "function": {"name": "a", "arguments": "{}"}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc1", "type": "function", "function": {"name": "a", "arguments": "{}"}},
+                ],
+            },
             {"role": "tool", "tool_call_id": "tc1", "content": "r1"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc2", "type": "function", "function": {"name": "b", "arguments": "{}"}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc2", "type": "function", "function": {"name": "b", "arguments": "{}"}},
+                ],
+            },
             {"role": "tool", "tool_call_id": "tc2", "content": "r2"},
         ]
-        # tail_count=2 → cut=3 (assistant+tc2) → forward: no user after 3, stays at 3
-        assert _find_safe_cut(msgs, 2) == 3
+        # tail_count=2 → cut=3 (assistant+tc2) → forward: no user after 3, returns 0
+        assert _find_safe_cut(msgs, 2) == 0
 
     def test_orphan_tool_result_ignored(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
             {"role": "user", "content": "hi"},
             {"role": "tool", "tool_call_id": "orphan_1", "content": "ghost"},
@@ -712,11 +846,16 @@ class TestFindSafeCutEdgeCases:
 
     def test_tool_call_without_result_no_group(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
             {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc_no_result", "type": "function", "function": {"name": "x", "arguments": "{}"}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc_no_result", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+                ],
+            },
             {"role": "assistant", "content": "follow-up"},
             {"role": "user", "content": "next"},
         ]
@@ -725,48 +864,91 @@ class TestFindSafeCutEdgeCases:
 
     def test_empty_tool_call_id(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
             {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "", "type": "function", "function": {"name": "x", "arguments": "{}"}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+                ],
+            },
             {"role": "tool", "tool_call_id": "", "content": "r"},
             {"role": "assistant", "content": "done"},
         ]
-        # tail_count=2 → cut=2 (tool) → forward: no user after 2, stays at 2
-        assert _find_safe_cut(msgs, 2) == 2
+        # tail_count=2 → cut=2 (tool) → forward: no user after 2, returns 0
+        assert _find_safe_cut(msgs, 2) == 0
 
     def test_single_element_list(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [{"role": "user", "content": "hi"}]
         assert _find_safe_cut(msgs, 1) == 0
 
     def test_tail_count_equals_length(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+                ],
+            },
             {"role": "tool", "tool_call_id": "tc1", "content": "r"},
+        ]
+        assert _find_safe_cut(msgs, 2) == 0
+
+    def test_no_user_in_tail_returns_zero(self):
+        from src.compressor.compressor import _find_safe_cut
+
+        msgs = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc1", "type": "function", "function": {"name": "a", "arguments": "{}"}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "tc1", "content": "r1"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc2", "type": "function", "function": {"name": "b", "arguments": "{}"}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "tc2", "content": "r2"},
         ]
         assert _find_safe_cut(msgs, 2) == 0
 
     def test_adjustment_only_once(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
             {"role": "user", "content": "u1"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc1", "type": "function", "function": {"name": "a", "arguments": "{}"}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc1", "type": "function", "function": {"name": "a", "arguments": "{}"}},
+                ],
+            },
             {"role": "tool", "tool_call_id": "tc1", "content": "r1"},
             {"role": "user", "content": "u2"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc2", "type": "function", "function": {"name": "b", "arguments": "{}"}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc2", "type": "function", "function": {"name": "b", "arguments": "{}"}},
+                ],
+            },
             {"role": "tool", "tool_call_id": "tc2", "content": "r2"},
         ]
-        # tail_count=2 → cut=4 (assistant+tc2) → forward: no user after 4, stays at 4
-        assert _find_safe_cut(msgs, 2) == 4
+        # tail_count=2 → cut=4 (assistant+tc2) → forward: no user after 4, returns 0
+        assert _find_safe_cut(msgs, 2) == 0
 
         # tail_count=3 → cut=3 (u2) → already on user, no change
         assert _find_safe_cut(msgs, 3) == 3
@@ -778,6 +960,7 @@ class TestFindSafeCutEdgeCases:
 class TestFindSafeCutUserTurnAlignment:
     def test_tail_starts_from_user_message(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
             {"role": "user", "content": "u1"},
             {"role": "assistant", "content": "a1"},
@@ -793,17 +976,26 @@ class TestFindSafeCutUserTurnAlignment:
 
     def test_tail_starts_from_user_with_tool_calls(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
             {"role": "user", "content": "u1"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+                ],
+            },
             {"role": "tool", "tool_call_id": "tc1", "content": "r1"},
             {"role": "assistant", "content": "a1"},
             {"role": "user", "content": "u2"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc2", "type": "function", "function": {"name": "y", "arguments": "{}"}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc2", "type": "function", "function": {"name": "y", "arguments": "{}"}},
+                ],
+            },
             {"role": "tool", "tool_call_id": "tc2", "content": "r2"},
         ]
         # tail_count=3 → cut=4 (u2) → already on user, no change
@@ -813,6 +1005,7 @@ class TestFindSafeCutUserTurnAlignment:
 
     def test_cut_already_on_user_message(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
             {"role": "user", "content": "u1"},
             {"role": "assistant", "content": "a1"},
@@ -824,15 +1017,20 @@ class TestFindSafeCutUserTurnAlignment:
 
     def test_multiple_user_messages_between_groups(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
             {"role": "user", "content": "u1"},
             {"role": "assistant", "content": "a1"},
             {"role": "user", "content": "u2"},
             {"role": "assistant", "content": "a2"},
             {"role": "user", "content": "u3"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
-            ]},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc1", "type": "function", "function": {"name": "x", "arguments": "{}"}},
+                ],
+            },
             {"role": "tool", "tool_call_id": "tc1", "content": "r1"},
             {"role": "assistant", "content": "a3"},
             {"role": "user", "content": "u4"},
@@ -843,10 +1041,11 @@ class TestFindSafeCutUserTurnAlignment:
 
     def test_no_user_message_before_cut(self):
         from src.compressor.compressor import _find_safe_cut
+
         msgs = [
             {"role": "assistant", "content": "a1"},
             {"role": "tool", "tool_call_id": "tc1", "content": "r1"},
             {"role": "assistant", "content": "a2"},
         ]
-        # No user messages at all → cut stays at computed value
-        assert _find_safe_cut(msgs, 2) == 1
+        # No user messages at all → returns 0 (no compression)
+        assert _find_safe_cut(msgs, 2) == 0

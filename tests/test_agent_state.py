@@ -13,12 +13,15 @@ from src.agent.state import AgentState, StateStore, MemoryStateStore, _VALID_ROL
 # AgentState — Pydantic validation
 # ---------------------------------------------------------------------------
 
+
 class TestAgentStateValidation:
     def test_valid_messages(self):
-        state = AgentState(messages=[
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "hi"},
-        ])
+        state = AgentState(
+            messages=[
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "hi"},
+            ]
+        )
         assert len(state.messages) == 2
 
     def test_invalid_role_auto_fixed(self):
@@ -32,19 +35,25 @@ class TestAgentStateValidation:
         assert state.messages[0]["tool_call_id"] == "unknown"
 
     def test_tool_message_with_tool_call_id_accepted(self):
-        state = AgentState(messages=[
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "tc1", "type": "function", "function": {"name": "test", "arguments": "{}"}}
-            ]},
-            {"role": "tool", "tool_call_id": "tc1", "content": "ok"},
-        ])
+        state = AgentState(
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "test", "arguments": "{}"}}],
+                },
+                {"role": "tool", "tool_call_id": "tc1", "content": "ok"},
+            ]
+        )
         assert len(state.messages) == 2
 
     def test_assistant_tool_calls_missing_id_auto_fixed(self):
         """Old data with malformed tool_calls should be auto-fixed."""
-        state = AgentState(messages=[{"role": "assistant", "content": "", "tool_calls": [
-            {"function": {"name": "test", "arguments": "{}"}}
-        ]}])
+        state = AgentState(
+            messages=[
+                {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "test", "arguments": "{}"}}]}
+            ]
+        )
         assert state.messages[0]["tool_calls"][0]["id"] == "unknown"
 
     def test_all_valid_roles(self):
@@ -69,6 +78,7 @@ class TestAgentStateValidation:
 # ---------------------------------------------------------------------------
 # AgentState — append_message
 # ---------------------------------------------------------------------------
+
 
 class TestAppendMessage:
     def test_append_valid(self):
@@ -96,12 +106,17 @@ class TestAppendMessage:
 # AgentState — meta_dict
 # ---------------------------------------------------------------------------
 
+
 class TestMetaDict:
     def test_meta_dict_roundtrip(self):
         import json
+
         state = AgentState(
-            system_prompt="sys", sender_id="u1", chat_id="c1",
-            chat_type="group", channel="qq",
+            system_prompt="sys",
+            sender_id="u1",
+            chat_id="c1",
+            chat_type="group",
+            channel="qq",
             pending_approval={"request_id": "r1"},
         )
         meta = state.meta_dict()
@@ -115,12 +130,14 @@ class TestMetaDict:
 # StateStore — save/load round-trip
 # ---------------------------------------------------------------------------
 
+
 class TestStateStore:
     def test_save_load_roundtrip(self, tmp_path):
         store = StateStore(str(tmp_path / "test.db"))
         state = AgentState(
             messages=[{"role": "user", "content": "hello"}],
-            sender_id="u1", channel="qq",
+            sender_id="u1",
+            channel="qq",
         )
         asyncio.run(store.save("t1", state))
         loaded = store.load("t1")
@@ -135,10 +152,12 @@ class TestStateStore:
 
     def test_load_messages(self, tmp_path):
         store = StateStore(str(tmp_path / "test.db"))
-        state = AgentState(messages=[
-            {"role": "user", "content": "a"},
-            {"role": "assistant", "content": "b"},
-        ])
+        state = AgentState(
+            messages=[
+                {"role": "user", "content": "a"},
+                {"role": "assistant", "content": "b"},
+            ]
+        )
         asyncio.run(store.save("t1", state))
         msgs = store.load_messages("t1")
         assert len(msgs) == 2
@@ -161,15 +180,28 @@ class TestStateStore:
     def test_model_validate_tolerates_extra_keys(self, tmp_path):
         store = StateStore(str(tmp_path / "test.db"))
         import json
+
         # Manually insert metadata with an extra key
         store._db.execute(
             "INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?)",
-            ("t1", json.dumps([{"role": "user", "content": "hi"}]),
-             json.dumps({"system_prompt": "", "sender_id": "", "chat_id": "",
-                         "chat_type": "p2p", "message_id": "", "user_role": "",
-                         "channel": "", "pending_approval": None,
-                         "future_field": "should_be_ignored"}),
-             0.0),
+            (
+                "t1",
+                json.dumps([{"role": "user", "content": "hi"}]),
+                json.dumps(
+                    {
+                        "system_prompt": "",
+                        "sender_id": "",
+                        "chat_id": "",
+                        "chat_type": "p2p",
+                        "message_id": "",
+                        "user_role": "",
+                        "channel": "",
+                        "pending_approval": None,
+                        "future_field": "should_be_ignored",
+                    }
+                ),
+                0.0,
+            ),
         )
         store._db.commit()
         loaded = store.load("t1")
@@ -180,6 +212,7 @@ class TestStateStore:
 # ---------------------------------------------------------------------------
 # MemoryStateStore
 # ---------------------------------------------------------------------------
+
 
 class TestMemoryStateStore:
     def test_memory_store_works(self):
@@ -192,13 +225,14 @@ class TestMemoryStateStore:
 
     def test_memory_store_has_locks(self):
         store = MemoryStateStore()
-        assert hasattr(store, '_locks')
-        assert hasattr(store, '_locks_lock')
+        assert hasattr(store, "_locks")
+        assert hasattr(store, "_locks_lock")
 
 
 # ---------------------------------------------------------------------------
 # Concurrency locks
 # ---------------------------------------------------------------------------
+
 
 class TestConcurrencyLocks:
     def test_acquire_thread_returns_lock(self, tmp_path):

@@ -23,9 +23,11 @@ def _get_channel():
     channel_type = _current_channel_type.get("")
     if channel_type == "qq":
         from src.channels.qq import get_qq_channel
+
         return get_qq_channel()
     elif channel_type == "weixin":
         from src.channels.weixin import get_weixin_channel
+
         return get_weixin_channel()
     return None
 
@@ -57,6 +59,7 @@ async def send_image(image_key: str = "") -> str:
     if not image_key.startswith(("http://", "https://", "data:")):
         try:
             from src.tools.file_tools import _resolve_path
+
             resolved_key = _resolve_path(image_key)
             p = Path(resolved_key)
         except ValueError as e:
@@ -94,6 +97,7 @@ async def send_file(file_key: str = "") -> str:
     if not file_key.startswith(("http://", "https://")):
         try:
             from src.tools.file_tools import _resolve_path
+
             resolved_key = _resolve_path(file_key)
             p = Path(resolved_key)
         except ValueError as e:
@@ -128,6 +132,7 @@ async def send_voice(file_path: str = "") -> str:
 
     try:
         from src.tools.file_tools import _resolve_path
+
         resolved = _resolve_path(file_path)
         p = Path(resolved)
     except ValueError as e:
@@ -152,6 +157,7 @@ async def send_voice(file_path: str = "") -> str:
 
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef
+
     return [
         ToolDef.from_function(send_image),
         ToolDef.from_function(send_file),

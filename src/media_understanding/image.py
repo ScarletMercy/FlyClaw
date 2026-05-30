@@ -21,7 +21,12 @@ async def understand_image(
         resize_threshold = 4 * 1024 * 1024
         processed_data, processed_mime = _preprocess_image(image_data, mime_type, max_bytes=resize_threshold)
         if max_bytes > 0 and len(processed_data) > max_bytes:
-            return _media_error(MediaCapability.IMAGE, client, mime_type, f"Image too large: {len(processed_data)} bytes, limit {max_bytes}")
+            return _media_error(
+                MediaCapability.IMAGE,
+                client,
+                mime_type,
+                f"Image too large: {len(processed_data)} bytes, limit {max_bytes}",
+            )
 
         result = await client.describe_image(processed_data, processed_mime, prompt, max_tokens)
 

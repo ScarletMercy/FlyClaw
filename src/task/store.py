@@ -61,9 +61,7 @@ class TaskRunStore:
 
     async def get(self, run_id: str) -> Optional[TaskRun]:
         await self._ensure_initialized()
-        cursor = await self._conn.execute(
-            "SELECT data FROM task_runs WHERE id = ?", (run_id,)
-        )
+        cursor = await self._conn.execute("SELECT data FROM task_runs WHERE id = ?", (run_id,))
         row = await cursor.fetchone()
         if not row:
             return None

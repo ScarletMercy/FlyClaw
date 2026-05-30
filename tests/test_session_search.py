@@ -1,4 +1,5 @@
 """Tests for session search feature."""
+
 import os
 import sqlite3
 import sys
@@ -109,9 +110,7 @@ class TestSessionIndexStore:
 
         db_path = str(tmp_path / "index.db")
         store = await SessionIndexStore.create(db_path)
-        cursor = await store._db.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        )
+        cursor = await store._db.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = await cursor.fetchall()
         table_names = {t[0] for t in tables}
         assert "sessions" in table_names
@@ -314,13 +313,23 @@ class TestSyncMessages:
     async def test_sync_extracts_messages(self, tmp_path):
         from src.session_index.store import SessionIndexStore
         from src.session_index.sync import sync_messages
+
         store = await SessionIndexStore.create(str(tmp_path / "index.db"))
         msgs = [
             {"role": "user", "content": "hello world", "id": "h1"},
             {"role": "assistant", "content": "hi there", "id": "a1"},
             {"role": "tool", "content": "/bin/ls output...", "tool_call_id": "tc1", "id": "t1", "name": "exec_command"},
         ]
-        await sync_messages(store, thread_id="t1", messages=msgs, channel="qq", sender_id="ou_abc", chat_id="c1", chat_type="p2p", tool_max_chars=500)
+        await sync_messages(
+            store,
+            thread_id="t1",
+            messages=msgs,
+            channel="qq",
+            sender_id="ou_abc",
+            chat_id="c1",
+            chat_type="p2p",
+            tool_max_chars=500,
+        )
         cursor = await store._db.execute("SELECT COUNT(*) FROM messages WHERE thread_id='t1'")
         assert (await cursor.fetchone())[0] == 3
         await store.close()
@@ -328,9 +337,12 @@ class TestSyncMessages:
     async def test_sync_truncates_tool_content(self, tmp_path):
         from src.session_index.store import SessionIndexStore
         from src.session_index.sync import sync_messages
+
         store = await SessionIndexStore.create(str(tmp_path / "index.db"))
         msgs = [{"role": "tool", "content": "x" * 2000, "tool_call_id": "tc1", "id": "t1", "name": "exec_command"}]
-        await sync_messages(store, "t1", msgs, channel="qq", sender_id="s", chat_id="c", chat_type="p2p", tool_max_chars=500)
+        await sync_messages(
+            store, "t1", msgs, channel="qq", sender_id="s", chat_id="c", chat_type="p2p", tool_max_chars=500
+        )
         cursor = await store._db.execute("SELECT content FROM messages WHERE thread_id='t1'")
         row = await cursor.fetchone()
         assert len(row["content"]) == 500
@@ -339,6 +351,7 @@ class TestSyncMessages:
     async def test_sync_idempotent(self, tmp_path):
         from src.session_index.store import SessionIndexStore
         from src.session_index.sync import sync_messages
+
         store = await SessionIndexStore.create(str(tmp_path / "index.db"))
         msgs = [{"role": "user", "content": "hello", "id": "h1"}]
         await sync_messages(store, "t1", msgs, "qq", "s", "c", "p2p", 500)

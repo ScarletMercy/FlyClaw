@@ -98,7 +98,8 @@ class CronStore:
                 else:
                     logger.warning(
                         "Cron job %s version mismatch (expected %d), forcing update",
-                        job.id, job.version,
+                        job.id,
+                        job.version,
                     )
                     await conn.execute(
                         "UPDATE cron_jobs SET data = ?, version = ? WHERE id = ?",
@@ -135,8 +136,11 @@ class CronStore:
         if job is None:
             return
         updates = {
-            "consecutive_errors": consecutive_errors, "last_run_at": last_run_at,
-            "last_run_status": last_run_status, "last_error": last_error, "next_run_at": next_run_at,
+            "consecutive_errors": consecutive_errors,
+            "last_run_at": last_run_at,
+            "last_run_status": last_run_status,
+            "last_error": last_error,
+            "next_run_at": next_run_at,
         }
         for key, val in updates.items():
             if val is not None:

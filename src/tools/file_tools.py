@@ -32,6 +32,7 @@ def _resolve_path(path: str) -> str:
         raise ValueError(f"Path '{path}' could not be resolved")
     from src.tools.exec import is_sandbox_enabled
     from src.agent.tool_cache import cache_root as get_cache_root
+
     if not is_sandbox_enabled():
         return str(real)
     base = Path(_BASE_DIR).resolve()
@@ -43,10 +44,7 @@ def _resolve_path(path: str) -> str:
             return str(real)
         except ValueError:
             continue
-    raise ValueError(
-        f"当前为沙盒模式，无法访问工作目录之外的路径：{path}"
-        f"（允许范围：{_BASE_DIR}、{cache_root}）"
-    )
+    raise ValueError(f"当前为沙盒模式，无法访问工作目录之外的路径：{path}（允许范围：{_BASE_DIR}、{cache_root}）")
 
 
 def read_file(path: str, offset: int = 0, head_limit: int = 500) -> str:
@@ -102,6 +100,7 @@ def write_file(path: str, content: str) -> str:
     except ValueError as e:
         return f"Error: {e}"
     from src.tools.snapshot import snapshot_before_write
+
     snapshot_before_write(_BASE_DIR)
     with _edit_condition:
         try:
@@ -134,6 +133,7 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
     except ValueError as e:
         return f"Error: {e}"
     from src.tools.snapshot import snapshot_before_write
+
     snapshot_before_write(_BASE_DIR)
     with _edit_condition:
         if not _edit_condition.wait_for(lambda: os.path.exists(resolved), timeout=10.0):
@@ -205,15 +205,60 @@ def list_dir(path: str = ".") -> str:
 _EXCLUDED_DIRS = frozenset((".git", "__pycache__", "node_modules"))
 _GREP_HARD_LIMIT = 10000
 _GLOB_HARD_LIMIT = 10000
-_BINARY_EXTS = frozenset((
-    ".pyc", ".pyo", ".exe", ".dll", ".so", ".dylib", ".bin", ".dat",
-    ".db", ".sqlite", ".sqlite3", ".class", ".o", ".a", ".lib",
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
-    ".mp3", ".mp4", ".avi", ".mkv", ".mov", ".wav", ".flac", ".ogg",
-    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    ".woff", ".woff2", ".ttf", ".eot", ".otf",
-))
+_BINARY_EXTS = frozenset(
+    (
+        ".pyc",
+        ".pyo",
+        ".exe",
+        ".dll",
+        ".so",
+        ".dylib",
+        ".bin",
+        ".dat",
+        ".db",
+        ".sqlite",
+        ".sqlite3",
+        ".class",
+        ".o",
+        ".a",
+        ".lib",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".ico",
+        ".svg",
+        ".webp",
+        ".mp3",
+        ".mp4",
+        ".avi",
+        ".mkv",
+        ".mov",
+        ".wav",
+        ".flac",
+        ".ogg",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".7z",
+        ".rar",
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".ppt",
+        ".pptx",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".otf",
+    )
+)
 
 
 def _is_binary(filepath: str) -> bool:
@@ -245,9 +290,14 @@ def _path_not_found_hint(path: str, resolved: str) -> str:
     return f"Error: 路径不存在: {path}{hint}"
 
 
-def grep(pattern: str, path: str = ".", glob_pattern: str = "*",
-         head_limit: int = 50, offset: int = 0,
-         output_mode: Literal["content", "files_with_matches"] = "content") -> str:
+def grep(
+    pattern: str,
+    path: str = ".",
+    glob_pattern: str = "*",
+    head_limit: int = 50,
+    offset: int = 0,
+    output_mode: Literal["content", "files_with_matches"] = "content",
+) -> str:
     """在文件内容中搜索匹配的文本行（正则表达式）。
 
     Args:
@@ -261,8 +311,7 @@ def grep(pattern: str, path: str = ".", glob_pattern: str = "*",
     return _grep_impl(pattern, path, glob_pattern, head_limit, offset, output_mode)
 
 
-def glob(pattern: str = "*", path: str = ".",
-         head_limit: int = 50, offset: int = 0) -> str:
+def glob(pattern: str = "*", path: str = ".", head_limit: int = 50, offset: int = 0) -> str:
     """按文件名模式递归搜索文件（glob 模式，按修改时间倒序）。
 
     Args:
@@ -274,9 +323,14 @@ def glob(pattern: str = "*", path: str = ".",
     return _glob_impl(pattern, path, head_limit, offset)
 
 
-def _grep_impl(pattern: str, path: str = ".", glob_pattern: str = "*",
-               head_limit: int = 50, offset: int = 0,
-               output_mode: str = "content") -> str:
+def _grep_impl(
+    pattern: str,
+    path: str = ".",
+    glob_pattern: str = "*",
+    head_limit: int = 50,
+    offset: int = 0,
+    output_mode: str = "content",
+) -> str:
     try:
         resolved = _resolve_path(path)
     except ValueError as e:
@@ -318,7 +372,7 @@ def _grep_impl(pattern: str, path: str = ".", glob_pattern: str = "*",
         if not results:
             return f"No matches found for '{pattern}' in {path}"
         total = len(results)
-        page = results[offset:offset + head_limit]
+        page = results[offset : offset + head_limit]
         header = f"Found {len(page)} of {total} match(es) for '{pattern}':\n"
         suffix = ""
         if offset + head_limit < total:
@@ -363,7 +417,7 @@ def _grep_impl(pattern: str, path: str = ".", glob_pattern: str = "*",
     total = len(results)
     if not total:
         return f"No matches found for '{pattern}' in {path}"
-    page = results[offset:offset + head_limit]
+    page = results[offset : offset + head_limit]
     header = f"Found {len(page)} of {total} match(es) for '{pattern}':\n"
     suffix = ""
     if truncated:
@@ -373,9 +427,9 @@ def _grep_impl(pattern: str, path: str = ".", glob_pattern: str = "*",
     return header + "\n".join(page) + suffix
 
 
-def _grep_files_with_matches(regex, resolved: str, path: str,
-                     glob_pattern: str, head_limit: int, offset: int,
-                     pattern: str = "") -> str:
+def _grep_files_with_matches(
+    regex, resolved: str, path: str, glob_pattern: str, head_limit: int, offset: int, pattern: str = ""
+) -> str:
     files = []
     try:
         for root, dirs, fnames in os.walk(resolved):
@@ -405,7 +459,7 @@ def _grep_files_with_matches(regex, resolved: str, path: str,
     total = len(files)
     if not total:
         return f"No files matching '{pattern}'"
-    page = files[offset:offset + head_limit]
+    page = files[offset : offset + head_limit]
     header = f"Found {len(page)} of {total} file(s) matching pattern in {path}:\n"
     suffix = ""
     if total >= _GREP_HARD_LIMIT:
@@ -441,7 +495,7 @@ def _glob_impl(pattern: str, path: str = ".", head_limit: int = 50, offset: int 
             return f"No files matched '{pattern}' in {path}"
         all_matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         total = len(all_matches)
-        page = all_matches[offset:offset + head_limit]
+        page = all_matches[offset : offset + head_limit]
         lines = []
         for m in page:
             rel = str(m.relative_to(resolved))
@@ -463,6 +517,7 @@ def _glob_impl(pattern: str, path: str = ".", head_limit: int = 50, offset: int 
 
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef
+
     return [
         ToolDef.from_function(read_file),
         ToolDef.from_function(write_file),

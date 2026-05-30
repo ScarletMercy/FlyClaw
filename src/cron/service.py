@@ -190,11 +190,13 @@ class CronService:
                     job.last_error = None
                     try:
                         import json
+
                         defer_info = json.loads(result.output or "{}")
                         new_at = defer_info.get("new_at", "")
                         if new_at and job.name.startswith("task:"):
                             from .executor import execute_cron_job
                             from .types import CronSchedule, CronJobCreate, CronPayload, CronDelivery
+
                             schedule = CronSchedule(kind="at", at=new_at)
                             payload = job.payload
                             delivery = job.delivery
@@ -215,7 +217,10 @@ class CronService:
                                 run_id = parts[1]
                                 cp_id = parts[3]
                                 from src.task.store import get_task_store
-                                task_store = get_task_store(getattr(self._config.task, "db_path", "~/.flyclaw/data/task_runs.db"))
+
+                                task_store = get_task_store(
+                                    getattr(self._config.task, "db_path", "~/.flyclaw/data/task_runs.db")
+                                )
                                 run = await task_store.get(run_id)
                                 if run:
                                     for cp in run.checkpoints:
@@ -309,7 +314,16 @@ class CronService:
         job = self._jobs.get(job_id)
         if job is None:
             return None
-        for field in ("name", "description", "enabled", "schedule", "payload", "delivery", "session_target", "depends_on"):
+        for field in (
+            "name",
+            "description",
+            "enabled",
+            "schedule",
+            "payload",
+            "delivery",
+            "session_target",
+            "depends_on",
+        ):
             val = getattr(patch, field, None)
             if val is not None:
                 setattr(job, field, val)

@@ -13,21 +13,29 @@ from pathlib import Path
 logger = logging.getLogger("flyclaw.prompt")
 
 _CONTEXT_THREAT_PATTERNS: list[tuple[str, str]] = [
-    (r'ignore\s+(previous|all|above|prior)\s+instructions', "prompt_injection"),
-    (r'do\s+not\s+tell\s+the\s+user', "deception_hide"),
-    (r'system\s+prompt\s+override', "sys_prompt_override"),
-    (r'disregard\s+(your|all|any)\s+(instructions|rules|guidelines)', "disregard_rules"),
-    (r'act\s+as\s+(if|though)\s+you\s+(have\s+no|don\'t\s+have)\s+(restrictions|limits|rules)', "bypass_restrictions"),
-    (r'<!--[^>]*(?:ignore|override|system|secret|hidden)[^>]*-->', "html_comment_injection"),
+    (r"ignore\s+(previous|all|above|prior)\s+instructions", "prompt_injection"),
+    (r"do\s+not\s+tell\s+the\s+user", "deception_hide"),
+    (r"system\s+prompt\s+override", "sys_prompt_override"),
+    (r"disregard\s+(your|all|any)\s+(instructions|rules|guidelines)", "disregard_rules"),
+    (r"act\s+as\s+(if|though)\s+you\s+(have\s+no|don\'t\s+have)\s+(restrictions|limits|rules)", "bypass_restrictions"),
+    (r"<!--[^>]*(?:ignore|override|system|secret|hidden)[^>]*-->", "html_comment_injection"),
     (r'<\s*div\s+style\s*=\s*["\'][\s\S]*?display\s*:\s*none', "hidden_div"),
-    (r'translate\s+.*\s+into\s+.*\s+and\s+(execute|run|eval)', "translate_execute"),
-    (r'curl\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)', "exfil_curl"),
-    (r'cat\s+[^\n]*(\.env|credentials|\.netrc|\.pgpass)', "read_secrets"),
+    (r"translate\s+.*\s+into\s+.*\s+and\s+(execute|run|eval)", "translate_execute"),
+    (r"curl\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)", "exfil_curl"),
+    (r"cat\s+[^\n]*(\.env|credentials|\.netrc|\.pgpass)", "read_secrets"),
 ]
 
 _CONTEXT_INVISIBLE_CHARS = {
-    '\u200b', '\u200c', '\u200d', '\u2060', '\ufeff',
-    '\u202a', '\u202b', '\u202c', '\u202d', '\u202e',
+    "\u200b",
+    "\u200c",
+    "\u200d",
+    "\u2060",
+    "\ufeff",
+    "\u202a",
+    "\u202b",
+    "\u202c",
+    "\u202d",
+    "\u202e",
 }
 
 
@@ -41,7 +49,9 @@ def _scan_context_content(content: str, filename: str) -> str:
             findings.append(pid)
     if findings:
         logger.warning("Context file %s blocked: %s", filename, ", ".join(findings))
-        return f"[BLOCKED: {filename} contained potential prompt injection ({', '.join(findings)}). Content not loaded.]"
+        return (
+            f"[BLOCKED: {filename} contained potential prompt injection ({', '.join(findings)}). Content not loaded.]"
+        )
     return content
 
 
@@ -58,14 +68,8 @@ PLATFORM_HINTS: dict[str, str] = {
         "其他文件作为可下载文档发送。"
         "也可以使用 send_image 和 send_file 工具直接发送。"
     ),
-    "api": (
-        "你通过 API 服务响应。渲染层未知，假设纯文本输出，不使用 markdown 格式。"
-        "保持回复简洁自然。"
-    ),
-    "ws": (
-        "你通过 WebSocket 连接响应。渲染层未知，假设纯文本输出，不使用 markdown 格式。"
-        "保持回复简洁自然。"
-    ),
+    "api": ("你通过 API 服务响应。渲染层未知，假设纯文本输出，不使用 markdown 格式。保持回复简洁自然。"),
+    "ws": ("你通过 WebSocket 连接响应。渲染层未知，假设纯文本输出，不使用 markdown 格式。保持回复简洁自然。"),
 }
 
 
@@ -148,12 +152,16 @@ def _build_tooling_rules(tools: list | None = None) -> list[str]:
         "- 在回复文本中用 <media>path</media> 标签包裹本地文件路径，系统自动识别类型并发送",
     ]
     if "browser_navigate" in tool_names:
-        lines.append("- 浏览器自动化：先 browser_navigate 打开网页，再 browser_snapshot 获取元素引用（@e1, @e2...），操作失败时重新 snapshot")
-    lines.extend([
-        "- 当用户提及过去的对话内容，用 session_search 检索历史记录，不要让用户重复",
-        "- 完成复杂任务（5+ 次工具调用）后，主动用 skill_manage(action=\"create\") 保存为技能；发现技能过时立即用 patch 修补",
-        "",
-    ])
+        lines.append(
+            "- 浏览器自动化：先 browser_navigate 打开网页，再 browser_snapshot 获取元素引用（@e1, @e2...），操作失败时重新 snapshot"
+        )
+    lines.extend(
+        [
+            "- 当用户提及过去的对话内容，用 session_search 检索历史记录，不要让用户重复",
+            '- 完成复杂任务（5+ 次工具调用）后，主动用 skill_manage(action="create") 保存为技能；发现技能过时立即用 patch 修补',
+            "",
+        ]
+    )
     return lines
 
 
@@ -222,13 +230,13 @@ def _build_skills_section(skills_prompt: str) -> list[str]:
         "",
         "### 使用方式",
         "1. **发现**：浏览上方技能列表，根据描述判断是否有匹配用户需求的技能。",
-        "2. **加载**：当用户请求匹配某个技能时，用 skill_view(name=\"技能名\") 加载完整指令。如果技能有问题，用 skill_manage(action=\"patch\") 修补。",
+        '2. **加载**：当用户请求匹配某个技能时，用 skill_view(name="技能名") 加载完整指令。如果技能有问题，用 skill_manage(action="patch") 修补。',
         "3. **执行**：遵循技能指令完成任务。技能可能包含 scripts 目录下的脚本，可用 exec_command 执行。",
         "",
         "如果没有匹配的技能，不要调用任何技能工具（skill_view/skill_manage/skill_hub）。不要用 read_file 读取技能文件。",
-        "如果本地技能都不适用，用 skill_hub(action=\"search_hub\", query=\"...\") 搜索远程技能库。",
-        "搜索到合适的技能后，用 skill_hub(action=\"inspect_hub\", identifier=\"...\") 查看详情，确认后用 skill_hub(action=\"install_hub\", identifier=\"...\") 安装。",
-        "当用户发送了 skill 压缩包文件时，先保存到本地，再用 skill_hub(action=\"install\", source=\"保存路径\") 安装。",
+        '如果本地技能都不适用，用 skill_hub(action="search_hub", query="...") 搜索远程技能库。',
+        '搜索到合适的技能后，用 skill_hub(action="inspect_hub", identifier="...") 查看详情，确认后用 skill_hub(action="install_hub", identifier="...") 安装。',
+        '当用户发送了 skill 压缩包文件时，先保存到本地，再用 skill_hub(action="install", source="保存路径") 安装。',
         "注意：如果 search_hub/inspect_hub/install_hub 返回 'Hub is disabled in configuration'，说明远程技能库已禁用，只能使用本地技能。",
         "限制：最多加载一个技能；仅在选定后加载。完成困难任务后，主动提出保存为技能。",
         "",

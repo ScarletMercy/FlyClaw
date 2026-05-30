@@ -28,20 +28,21 @@ class LearningLoop:
         self.config = config
         # Use configured skills directory if available, otherwise default
         from pathlib import Path
+
         skills_dir = Path.home() / ".flyclaw" / "skills"
-        extra_dirs = getattr(config.skills, 'extra_dirs', [])
+        extra_dirs = getattr(config.skills, "extra_dirs", [])
         if extra_dirs:
             skills_dir = Path(extra_dirs[0]).expanduser().resolve()
-        
+
         self.skill_manager = SkillManager(skills_dir)
         self.curator = SkillCurator(skills_dir)
 
     async def on_session_end(self, messages: list[dict]) -> dict:
         """会话结束时的学习循环。
-        
+
         Args:
             messages: 完整的会话消息列表
-        
+
         Returns:
             学习结果字典
         """
@@ -55,6 +56,7 @@ class LearningLoop:
         if self.config.memory_store.enabled:
             try:
                 from src.tools.memory_tools import extract_session_end_memories
+
                 count = await extract_session_end_memories(
                     messages,
                     self.config.memory_store.memory_judge_model or self.config.model.name,
@@ -88,7 +90,7 @@ class LearningLoop:
 
     async def trigger_full_learning_cycle(self) -> dict:
         """手动触发完整学习循环。
-        
+
         Returns:
             循环结果字典
         """

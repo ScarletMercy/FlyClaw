@@ -41,6 +41,7 @@ class TestAgentLoopRuntime:
     @pytest.mark.asyncio
     async def test_close_removes_session(self):
         from src.acp.session import AcpSessionManager
+
         mgr = AcpSessionManager()
         sid = mgr.create("default")
         runtime = AgentLoopRuntime(mgr)

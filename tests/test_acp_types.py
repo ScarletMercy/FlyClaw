@@ -23,9 +23,7 @@ def test_new_session_response():
     assert resp.configOptions == []
     assert resp.modes == []
 
-    resp2 = AcpNewSessionResponse(
-        sessionId="xyz", configOptions=[{"key": "val"}], modes=["code"]
-    )
+    resp2 = AcpNewSessionResponse(sessionId="xyz", configOptions=[{"key": "val"}], modes=["code"])
     assert resp2.configOptions == [{"key": "val"}]
     assert resp2.modes == ["code"]
 

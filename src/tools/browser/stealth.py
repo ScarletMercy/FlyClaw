@@ -9,6 +9,7 @@ logger = logging.getLogger("flyclaw.browser.stealth")
 _STEALTH_AVAILABLE = False
 try:
     from playwright_stealth import stealth_async  # type: ignore[import-untyped]
+
     _STEALTH_AVAILABLE = True
 except ImportError:
     stealth_async = None  # type: ignore[assignment]

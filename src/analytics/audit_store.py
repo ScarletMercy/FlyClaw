@@ -78,7 +78,17 @@ class AuditStore:
                 """INSERT INTO tool_calls 
                    (thread_id, tool_name, sender_id, channel, success, duration_ms, args_preview, error, timestamp)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (thread_id, tool_name, sender_id, channel, int(success), duration_ms, args_preview[:500], error, time.time()),
+                (
+                    thread_id,
+                    tool_name,
+                    sender_id,
+                    channel,
+                    int(success),
+                    duration_ms,
+                    args_preview[:500],
+                    error,
+                    time.time(),
+                ),
             )
             return cursor.lastrowid
 
@@ -149,9 +159,7 @@ class AuditStore:
 
         with sqlite3.connect(str(self.db_path)) as conn:
             # Total calls
-            total = conn.execute(
-                "SELECT COUNT(*) FROM tool_calls WHERE timestamp >= ?", (from_ts,)
-            ).fetchone()[0]
+            total = conn.execute("SELECT COUNT(*) FROM tool_calls WHERE timestamp >= ?", (from_ts,)).fetchone()[0]
 
             # Success rate
             success_count = conn.execute(
@@ -159,9 +167,10 @@ class AuditStore:
             ).fetchone()[0]
 
             # Average duration
-            avg_duration = conn.execute(
-                "SELECT AVG(duration_ms) FROM tool_calls WHERE timestamp >= ?", (from_ts,)
-            ).fetchone()[0] or 0
+            avg_duration = (
+                conn.execute("SELECT AVG(duration_ms) FROM tool_calls WHERE timestamp >= ?", (from_ts,)).fetchone()[0]
+                or 0
+            )
 
             # Top tools
             top_tools = conn.execute(
@@ -190,11 +199,11 @@ class AuditStore:
             "avg_duration_ms": round(avg_duration, 2),
             "top_tools": [
                 {
-                    "tool": r[0], 
+                    "tool": r[0],
                     "count": r[1],
                     "success_rate": round(r[2], 4) if r[2] is not None else 0,
                     "avg_duration_ms": round(r[3], 2) if r[3] is not None else 0,
-                } 
+                }
                 for r in top_tools
             ],
             "period_days": days,

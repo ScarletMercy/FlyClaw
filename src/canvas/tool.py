@@ -11,7 +11,9 @@ from src.agent.tooldef import ToolDef
 logger = logging.getLogger("flyclaw.canvas.tool")
 
 
-async def canvas_render(text: str, format: Literal["text", "markdown", "json", "html"] = "text", surface_id: str = "main") -> str:
+async def canvas_render(
+    text: str, format: Literal["text", "markdown", "json", "html"] = "text", surface_id: str = "main"
+) -> str:
     """Render content on the canvas. Use this to display rich output to the user.
 
     Args:
@@ -48,6 +50,7 @@ async def canvas_render(text: str, format: Literal["text", "markdown", "json", "
 async def _safe_broadcast():
     try:
         from src.canvas.server import broadcast_reload
+
         await broadcast_reload()
     except Exception:
         pass

@@ -46,13 +46,16 @@ class RBAC:
 
         # Upgrade existing user if config default_role is higher than current role
         from src.auth.models import ROLE_HIERARCHY
+
         if user.role != default_role:
             current_level = ROLE_HIERARCHY.get(user.role, 0)
             default_level = ROLE_HIERARCHY.get(default_role, 0)
             if default_level > current_level:
                 logger.info(
                     "Upgrading user %s from %s to %s (config default_role)",
-                    user.user_id, user.role.value, default_role.value,
+                    user.user_id,
+                    user.role.value,
+                    default_role.value,
                 )
                 self._store.update_user_role(user.user_id, default_role)
                 user.role = default_role

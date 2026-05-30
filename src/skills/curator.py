@@ -6,6 +6,7 @@ Runs periodically (triggered by idle or manual command) to:
 - Archive/restore skills
 - Clean up unused agent-created skills
 """
+
 from __future__ import annotations
 
 import json
@@ -45,9 +46,9 @@ CURATOR_REVIEW_PROMPT = (
     "维护者会为这个类别命名并写一个技能吗？'如果是，选择或创建伞形并吸收兄弟。\n"
     "3. 三种整合方式——每个聚类用合适的：\n"
     "   a. 合并到现有伞形——聚类中已有一个足够宽的技能。"
-    "用 skill_manage(action=\"patch\") 为每个兄弟添加标记子节，然后归档兄弟。\n"
+    '用 skill_manage(action="patch") 为每个兄弟添加标记子节，然后归档兄弟。\n'
     "   b. 创建新伞形 SKILL.md——没有现有成员足够宽。"
-    "用 skill_manage(action=\"create\") 写一个新的类级技能。归档被吸收的窄兄弟。\n"
+    '用 skill_manage(action="create") 写一个新的类级技能。归档被吸收的窄兄弟。\n'
     "   c. 降级为支撑文件——兄弟有窄但有价值的会话特定内容。"
     "移动到伞形的适当支撑目录（references/、templates/、scripts/）。"
     "然后归档旧兄弟。\n"
@@ -128,29 +129,35 @@ class SkillCurator:
             if current_state == "active" and self._is_stale(last_activity, days=self.stale_after_days):
                 if not dry_run:
                     self._update_skill_state(skill.name, "stale")
-                changes.append({
-                    "skill": skill.name,
-                    "action": "marked_stale",
-                    "reason": f"Not used for {self.stale_after_days} days",
-                })
+                changes.append(
+                    {
+                        "skill": skill.name,
+                        "action": "marked_stale",
+                        "reason": f"Not used for {self.stale_after_days} days",
+                    }
+                )
 
             elif current_state == "stale" and self._is_stale(last_activity, days=self.archive_after_days):
                 if not dry_run:
                     self._archive_skill_dir(skill.name)
                     self._update_skill_state(skill.name, "archived")
-                changes.append({
-                    "skill": skill.name,
-                    "action": "archived",
-                    "reason": f"Not used for {self.archive_after_days} days",
-                })
+                changes.append(
+                    {
+                        "skill": skill.name,
+                        "action": "archived",
+                        "reason": f"Not used for {self.archive_after_days} days",
+                    }
+                )
 
             elif current_state == "stale" and not self._is_stale(last_activity, days=self.stale_after_days):
                 if not dry_run:
                     self._update_skill_state(skill.name, "active")
-                changes.append({
-                    "skill": skill.name,
-                    "action": "reactivated",
-                })
+                changes.append(
+                    {
+                        "skill": skill.name,
+                        "action": "reactivated",
+                    }
+                )
 
         self.state["last_review"] = datetime.now().isoformat()
         self.state["total_reviews"] = self.state.get("total_reviews", 0) + 1
@@ -188,17 +195,18 @@ class SkillCurator:
         )
 
         from src.skills.review import spawn_background_review
+
         messages = [{"role": "user", "content": report_prompt}]
 
         summary = await spawn_background_review(
-                client=client,
-                tools=tools,
-                config=config,
-                messages_snapshot=messages,
-                review_skills=True,
-                review_memory=False,
-                max_rounds=max_rounds,
-            )
+            client=client,
+            tools=tools,
+            config=config,
+            messages_snapshot=messages,
+            review_skills=True,
+            review_memory=False,
+            max_rounds=max_rounds,
+        )
 
         self._write_report(auto_result, summary, dry_run)
 
@@ -216,8 +224,11 @@ class SkillCurator:
             return []
         try:
             data = json.loads(usage_file.read_text(encoding="utf-8"))
-            return [name for name, record in data.items()
-                    if record.get("created_by") == "agent" and record.get("state") != "archived"]
+            return [
+                name
+                for name, record in data.items()
+                if record.get("created_by") == "agent" and record.get("state") != "archived"
+            ]
         except Exception:
             return []
 

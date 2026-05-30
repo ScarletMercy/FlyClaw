@@ -31,10 +31,22 @@ def _get_ref(node_id: str) -> str:
 
 
 _INTERACTIVE_ROLES = {
-    "button", "link", "textbox", "searchbox", "combobox",
-    "checkbox", "radio", "slider", "tab", "menuitem",
-    "menuitemcheckbox", "menuitemradio", "switch", "option",
-    "treeitem", "gridcell",
+    "button",
+    "link",
+    "textbox",
+    "searchbox",
+    "combobox",
+    "checkbox",
+    "radio",
+    "slider",
+    "tab",
+    "menuitem",
+    "menuitemcheckbox",
+    "menuitemradio",
+    "switch",
+    "option",
+    "treeitem",
+    "gridcell",
 }
 
 _SKIP_ROLES = {"generic", "none", "presentation", "StaticText"}

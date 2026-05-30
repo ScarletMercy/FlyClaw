@@ -21,6 +21,7 @@ async def start_canvas_watcher(root: Path):
 
     async def _watch():
         from src.canvas.server import broadcast_reload
+
         async for _changes in awatch(root):
             await broadcast_reload()
 

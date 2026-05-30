@@ -63,6 +63,7 @@ async def windows_screenshot() -> str:
     except Exception as e:
         return f"Error taking screenshot: {e}"
 
+
 async def windows_press(key: str) -> str:
     """Press a keyboard key (e.g. Enter, Tab, Escape, Backspace, delete, up, down, left, right).
 
@@ -106,22 +107,23 @@ async def windows_hotkey(keys: str) -> str:
             key_list = [k.strip().lower() for k in keys.split("+")]
         else:
             key_list = [k.strip().lower() for k in keys.split(",")]
-        
+
         logger.info(f"[HOTKEY] 原始输入: keys={keys!r}")
         logger.info(f"[HOTKEY] 解析后: key_list={key_list}")
         logger.info(f"[HOTKEY] 即将调用 pyautogui.hotkey({', '.join(repr(k) for k in key_list)})")
-        
+
         blocked = _check_blocked_hotkey(key_list)
         if blocked:
             logger.warning(f"[HOTKEY] 被阻止: {blocked}")
             return f"Error: {blocked}，已屏蔽此组合键。"
-        
+
         pyautogui.hotkey(*key_list)
         logger.info(f"[HOTKEY] 执行完成: {'+'.join(key_list)}")
         return f"Hotkey: {'+'.join(key_list)}"
     except Exception as e:
         logger.error(f"[HOTKEY] 执行出错: {e}")
         return f"Error pressing hotkey: {e}"
+
 
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef

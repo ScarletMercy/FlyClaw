@@ -18,7 +18,9 @@ async def transcribe_audio(
 ) -> MediaResult:
     try:
         if max_bytes > 0 and len(audio_data) > max_bytes:
-            return _media_error(MediaCapability.AUDIO, client, mime_type, f"Audio too large: {len(audio_data)} bytes, limit {max_bytes}")
+            return _media_error(
+                MediaCapability.AUDIO, client, mime_type, f"Audio too large: {len(audio_data)} bytes, limit {max_bytes}"
+            )
         result = await client.transcribe_audio(audio_data, mime_type, language, prompt)
 
         if "error" in result:

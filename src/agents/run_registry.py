@@ -118,18 +118,20 @@ class RunRegistry:
             active = []
             for r in self._runs.values():
                 if r["status"] in ("running", "pending"):
-                    active.append({
-                        "id": r["id"],
-                        "agent_name": r["agent_name"],
-                        "task": r["task"][:100],
-                        "depth": r["depth"],
-                        "status": r["status"],
-                        "started_at": r["started_at"],
-                        "elapsed": round(now - r["started_at"], 1),
-                        "last_activity_at": r.get("last_activity_at"),
-                        "idle_seconds": round(now - (r.get("last_activity_at") or r["started_at"]), 1),
-                        "interrupt_requested": r.get("interrupt_requested", False),
-                    })
+                    active.append(
+                        {
+                            "id": r["id"],
+                            "agent_name": r["agent_name"],
+                            "task": r["task"][:100],
+                            "depth": r["depth"],
+                            "status": r["status"],
+                            "started_at": r["started_at"],
+                            "elapsed": round(now - r["started_at"], 1),
+                            "last_activity_at": r.get("last_activity_at"),
+                            "idle_seconds": round(now - (r.get("last_activity_at") or r["started_at"]), 1),
+                            "interrupt_requested": r.get("interrupt_requested", False),
+                        }
+                    )
             return sorted(active, key=lambda x: x["started_at"])
 
     async def request_interrupt(self, run_id: str) -> bool:

@@ -91,10 +91,14 @@ def _find_safe_cut(non_system: list[dict], desired_tail_count: int) -> int:
     # Ensure cut lands on a user message.
     # This guarantees the tail starts with a user turn.
     if cut < len(non_system) and non_system[cut].get("role") != "user":
+        found = False
         for i in range(cut, len(non_system)):
             if non_system[i].get("role") == "user":
                 cut = i
+                found = True
                 break
+        if not found:
+            return 0
 
     return max(0, cut)
 
@@ -120,10 +124,7 @@ def _tool_result_summary(name: str, content: str) -> str:
     line_count = content.count("\n") + 1 if isinstance(content, str) else 0
 
     if name in ("exec_command", "terminal"):
-        preview = (
-            (content[:80] if isinstance(content, str) else "")
-            .replace("\n", " ")
-        )
+        preview = (content[:80] if isinstance(content, str) else "").replace("\n", " ")
         return f"[{name}] {preview}... ({line_count} lines)"
 
     if name in ("read_file",):
@@ -238,9 +239,7 @@ class ContextCompressor:
             if m.get("role") == "tool":
                 content = m.get("content", "")
                 if isinstance(content, str) and len(content) > 300:
-                    tool_name = call_id_to_name.get(
-                        m.get("tool_call_id", ""), "unknown"
-                    )
+                    tool_name = call_id_to_name.get(m.get("tool_call_id", ""), "unknown")
                     if m.get("name"):
                         tool_name = m["name"]
                     summary = _tool_result_summary(tool_name, content)

@@ -46,13 +46,15 @@ class MediaUnderstandingRunner:
         if self._fallback_clients is None:
             self._fallback_clients = []
             for fb in self.config.fallbacks:
-                self._fallback_clients.append(MediaProviderClient(
-                    provider=fb.provider or self.config.provider,
-                    name=fb.name,
-                    base_url=fb.base_url,
-                    api_key=fb.api_key or self.config.api_key or self._fallback_key,
-                    timeout=self.config.timeout_seconds,
-                ))
+                self._fallback_clients.append(
+                    MediaProviderClient(
+                        provider=fb.provider or self.config.provider,
+                        name=fb.name,
+                        base_url=fb.base_url,
+                        api_key=fb.api_key or self.config.api_key or self._fallback_key,
+                        timeout=self.config.timeout_seconds,
+                    )
+                )
         return self._fallback_clients
 
     def _get_client_for_capability(self, capability: MediaCapability) -> MediaProviderClient:
@@ -120,14 +122,18 @@ class MediaUnderstandingRunner:
                 if i < len(all_clients) - 1:
                     logger.warning(
                         "Media understanding failed with %s (%s), trying fallback: %s",
-                        client.model, capability.value, result.error,
+                        client.model,
+                        capability.value,
+                        result.error,
                     )
             except Exception as e:
                 last_result = MediaResult(capability=capability, text="", error=str(e))
                 if i < len(all_clients) - 1:
                     logger.warning(
                         "Media understanding raised with %s (%s), trying fallback: %s",
-                        client.model, capability.value, e,
+                        client.model,
+                        capability.value,
+                        e,
                     )
 
         return last_result or MediaResult(capability=capability, text="", error="No clients available")
@@ -143,7 +149,12 @@ class MediaUnderstandingRunner:
 
         try:
             if max_bytes > 0 and len(video_data) > max_bytes:
-                return _media_error(MediaCapability.VIDEO, client, mime_type, f"Video too large: {len(video_data)} bytes, limit {max_bytes}")
+                return _media_error(
+                    MediaCapability.VIDEO,
+                    client,
+                    mime_type,
+                    f"Video too large: {len(video_data)} bytes, limit {max_bytes}",
+                )
 
             prompt = "Describe what is happening in this video."
             result = await client.describe_video_native(video_data, mime_type, prompt, max_tokens=2048)

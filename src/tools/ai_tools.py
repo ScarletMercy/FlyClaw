@@ -35,6 +35,7 @@ async def subagent_status() -> str:
 
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef
+
     return [
         ToolDef.from_function(subagent_status),
     ]

@@ -4,6 +4,7 @@ After accumulating enough tool-calling iterations, spawns a background
 agent that reviews the conversation and creates/updates skills.
 Follows the Hermes-Agent pattern: nudge counter → background review fork.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -29,10 +30,10 @@ SKILL_REVIEW_PROMPT = (
     "  • 本次会话加载或参考的技能过时、缺少步骤或有误。立即修补。\n\n"
     "优先级顺序——优先选择最早适用的动作，但一定要选一个：\n"
     "  1. 更新已加载的技能。回看对话中通过 /skill-name 加载或 "
-    "skill_view(name=\"...\") 查看的技能。如果其中某个覆盖了"
+    'skill_view(name="...") 查看的技能。如果其中某个覆盖了'
     "新学习的领域，优先修补它。\n"
     "  2. 更新现有伞形技能（通过 "
-    "skill_view(name=\"...\")）。如果没有已加载的技能适合，"
+    'skill_view(name="...")）。如果没有已加载的技能适合，'
     "但存在一个类级技能匹配，修补它。添加子节、陷阱或扩展触发条件。\n"
     "  3. 在现有伞形下添加支撑文件。技能可以包含三种支撑文件"
     "——按类型使用正确目录：\n"
@@ -40,7 +41,7 @@ SKILL_REVIEW_PROMPT = (
     "Provider 怪癖）和浓缩知识库。\n"
     "     • templates/<name>.<ext> — 用于复制修改的起始文件。\n"
     "     • scripts/<name>.<ext> — 可静态重复运行的动作。\n"
-    "通过 skill_manage(action=\"write_file\") 添加，"
+    '通过 skill_manage(action="write_file") 添加，'
     "file_path 以 references/、templates/ 或 scripts/ 开头。\n"
     "  4. 创建新的类级伞形技能。当没有现有技能覆盖该类别时使用。"
     "名称必须是类级的。名称不能是特定 PR 号、错误字符串、功能代号或 "
@@ -172,7 +173,9 @@ async def _run_review_loop(
 
     try:
         result_state = await agent_loop.run(
-            state, "background:skill-review", max_rounds=max_rounds,
+            state,
+            "background:skill-review",
+            max_rounds=max_rounds,
         )
     except Exception as e:
         logger.warning("Background review loop failed: %s", e)
@@ -211,6 +214,7 @@ def _summarize_actions(messages: list[dict], pre_count: int) -> list[str]:
 
 def _extract_name(actions: list[str], content: str, prefix: str) -> None:
     import json
+
     try:
         data = json.loads(content)
         name = data.get("skill", "")

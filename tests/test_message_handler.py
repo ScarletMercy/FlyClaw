@@ -77,9 +77,7 @@ class TestMessageCallbackBasicFlow:
 
     @pytest.mark.asyncio
     async def test_session_key_per_sender(self, container, reply_fn):
-        container.agent_loop.run.return_value = AgentState(
-            messages=[{"role": "assistant", "content": "ok"}]
-        )
+        container.agent_loop.run.return_value = AgentState(messages=[{"role": "assistant", "content": "ok"}])
 
         handler = MessageHandler(container)
         callback = handler.create_callback("per_sender")
@@ -99,9 +97,7 @@ class TestMessageCallbackBasicFlow:
 
     @pytest.mark.asyncio
     async def test_session_key_global(self, container, reply_fn):
-        container.agent_loop.run.return_value = AgentState(
-            messages=[{"role": "assistant", "content": "ok"}]
-        )
+        container.agent_loop.run.return_value = AgentState(messages=[{"role": "assistant", "content": "ok"}])
 
         handler = MessageHandler(container)
         callback = handler.create_callback("global")
@@ -139,7 +135,8 @@ class TestMessageCallbackSlashCommands:
         )
 
         container.dispatcher.dispatch.assert_awaited_once_with(
-            "help", "",
+            "help",
+            "",
             context={
                 "thread_id": "qq:user:u1",
                 "sender_id": "u1",

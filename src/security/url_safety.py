@@ -18,22 +18,26 @@ from urllib.parse import urlparse
 logger = logging.getLogger("flyclaw.security.url_safety")
 
 # Cloud metadata hostnames — always blocked regardless of config
-_BLOCKED_HOSTNAMES = frozenset({
-    "metadata.google.internal",
-    "metadata.goog",
-})
+_BLOCKED_HOSTNAMES = frozenset(
+    {
+        "metadata.google.internal",
+        "metadata.goog",
+    }
+)
 
 # Cloud metadata IPs — always blocked even with allow_private_urls=true
-_ALWAYS_BLOCKED_IPS = frozenset({
-    ipaddress.ip_address("169.254.169.254"),  # AWS/GCP/Azure/DO/Oracle
-    ipaddress.ip_address("169.254.170.2"),     # AWS ECS task IAM creds
-    ipaddress.ip_address("169.254.169.253"),   # Azure IMDS
-    ipaddress.ip_address("fd00:ec2::254"),     # AWS metadata IPv6
-    ipaddress.ip_address("100.100.100.200"),   # Alibaba Cloud
-})
+_ALWAYS_BLOCKED_IPS = frozenset(
+    {
+        ipaddress.ip_address("169.254.169.254"),  # AWS/GCP/Azure/DO/Oracle
+        ipaddress.ip_address("169.254.170.2"),  # AWS ECS task IAM creds
+        ipaddress.ip_address("169.254.169.253"),  # Azure IMDS
+        ipaddress.ip_address("fd00:ec2::254"),  # AWS metadata IPv6
+        ipaddress.ip_address("100.100.100.200"),  # Alibaba Cloud
+    }
+)
 
 _ALWAYS_BLOCKED_NETWORKS = (
-    ipaddress.ip_network("169.254.0.0/16"),    # Link-local (no legit agent target)
+    ipaddress.ip_network("169.254.0.0/16"),  # Link-local (no legit agent target)
 )
 
 # 100.64.0.0/10 CGNAT — not covered by ipaddress.is_private
@@ -60,6 +64,7 @@ def _allow_private_urls() -> bool:
     # Config file
     try:
         from src.config import load_config
+
         cfg = load_config()
         _allow_private_cache = getattr(cfg.security, "allow_private_urls", False)
     except Exception:
@@ -108,9 +113,7 @@ def is_safe_url(url: str) -> tuple[bool, str]:
 
         # Resolve hostname to IP(s)
         try:
-            addr_info = socket.getaddrinfo(
-                hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
-            )
+            addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
         except socket.gaierror:
             return False, f"DNS resolution failed: {hostname}"
 

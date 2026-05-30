@@ -87,6 +87,7 @@ class TestEventBusPriority:
         def make_handler(val):
             def handler(event, **ctx):
                 results.append(val)
+
             return handler
 
         bus.subscribe("test.event", make_handler(3), priority=3)
@@ -193,7 +194,7 @@ class TestEventBusWildcard:
 
         bus.emit("session.reset")
         assert catch_all_count == 2  # Catch-all fires again
-        assert specific_count == 1   # Specific doesn't fire
+        assert specific_count == 1  # Specific doesn't fire
 
 
 class TestEventBusErrorIsolation:
@@ -306,11 +307,13 @@ class TestEventBusAsync:
         recorded = []
 
         def _on_tool_completed(event, **ctx):
-            recorded.append({
-                "tool": ctx.get("tool_name", ""),
-                "success": ctx.get("success", False),
-                "duration": ctx.get("duration_ms", 0.0),
-            })
+            recorded.append(
+                {
+                    "tool": ctx.get("tool_name", ""),
+                    "success": ctx.get("success", False),
+                    "duration": ctx.get("duration_ms", 0.0),
+                }
+            )
 
         bus.subscribe_async("tool.exec_completed", _on_tool_completed)
         await bus.emit_async(
@@ -338,8 +341,11 @@ class TestEventBusIntrospection:
     def test_get_subscribers(self):
         bus = EventBus()
 
-        def h1(event, **ctx): pass
-        def h2(event, **ctx): pass
+        def h1(event, **ctx):
+            pass
+
+        def h2(event, **ctx):
+            pass
 
         bus.subscribe("test.event", h1)
         bus.subscribe("test.event", h2)
@@ -350,7 +356,8 @@ class TestEventBusIntrospection:
     def test_clear_inactive(self):
         bus = EventBus()
 
-        def handler(event, **ctx): pass
+        def handler(event, **ctx):
+            pass
 
         sub = bus.subscribe("test.event", handler)
         sub.active = False

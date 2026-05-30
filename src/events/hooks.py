@@ -35,9 +35,7 @@ class HookSpec:
             return None
 
         try:
-            spec = importlib.util.spec_from_file_location(
-                f"hook_{path.stem}", str(path)
-            )
+            spec = importlib.util.spec_from_file_location(f"hook_{path.stem}", str(path))
             if spec is None or spec.loader is None:
                 logger.warning("Cannot load hook spec: %s", self.handler_path)
                 return None
@@ -123,6 +121,7 @@ class HookManager:
                 handler_fn = spec.load_handler()
                 if handler_fn is not None:
                     import asyncio
+
                     is_async = asyncio.iscoroutinefunction(handler_fn)
                     if is_async:
                         sub = self._bus.subscribe_async(event, handler_fn)

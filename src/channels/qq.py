@@ -46,12 +46,14 @@ OP_INVALID_SESSION = 9
 OP_HELLO = 10
 OP_HEARTBEAT_ACK = 11
 
-_MESSAGE_DISPATCH_EVENTS = frozenset({
-    "C2C_MESSAGE_CREATE",
-    "GROUP_AT_MESSAGE_CREATE",
-    "AT_MESSAGE_CREATE",
-    "DIRECT_MESSAGE_CREATE",
-})
+_MESSAGE_DISPATCH_EVENTS = frozenset(
+    {
+        "C2C_MESSAGE_CREATE",
+        "GROUP_AT_MESSAGE_CREATE",
+        "AT_MESSAGE_CREATE",
+        "DIRECT_MESSAGE_CREATE",
+    }
+)
 
 # Intent bits
 INTENT_PUBLIC_GUILD_MESSAGES = 1 << 30
@@ -65,12 +67,12 @@ _MAX_RECONNECT_ATTEMPTS = 100
 _MSG_SEQ_MAX = 65536
 
 # URL conversion for markdown mode
-_URL_RE = re.compile(r'(?<!\()(https?://[^\s\)]+)(?!\))')
+_URL_RE = re.compile(r"(?<!\()(https?://[^\s\)]+)(?!\))")
 
 
 def _convert_urls_to_markdown(text: str) -> str:
     """将裸链接转换为 markdown 链接语法，保持已有 markdown 链接不变。"""
-    return _URL_RE.sub(r'[链接](\1)', text)
+    return _URL_RE.sub(r"[链接](\1)", text)
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +198,7 @@ class _QQWebSocketClient:
         try:
             import certifi
             import ssl
+
             ssl_ctx = ssl.create_default_context(cafile=certifi.where())
         except Exception:
             pass
@@ -214,6 +217,7 @@ class _QQWebSocketClient:
                 self._log.warning("SSL cert verification failed, retrying without verify")
                 try:
                     import ssl
+
                     no_verify = ssl.create_default_context()
                     no_verify.check_hostname = False
                     no_verify.verify_mode = 0  # ssl.CERT_NONE
@@ -494,7 +498,7 @@ class QQChannel(Channel):
                 if _attempt >= 2:
                     logger.error("QQ Bot auth failed after 3 attempts: %s", e)
                     return
-                wait = 2 ** _attempt
+                wait = 2**_attempt
                 logger.warning("QQ Bot auth attempt %d failed, retry in %ds: %s", _attempt + 1, wait, e)
                 await asyncio.sleep(wait)
 
@@ -585,6 +589,7 @@ class QQChannel(Channel):
                 if wav_bytes and self._mu_runner:
                     try:
                         from src.media_understanding.types import MediaCapability
+
                         result = await self._mu_runner.understand(wav_bytes, MediaCapability.AUDIO)
                         transcript = result.text or None
                     except Exception as e:
@@ -712,12 +717,14 @@ class QQChannel(Channel):
                         voice_wav = vwav.strip()
                         if voice_wav.startswith("//"):
                             voice_wav = f"https:{voice_wav}"
-                    voice_attachments.append({
-                        "url": url,
-                        "content_type": ct,
-                        "asr_refer_text": asr_refer,
-                        "voice_wav_url": voice_wav,
-                    })
+                    voice_attachments.append(
+                        {
+                            "url": url,
+                            "content_type": ct,
+                            "asr_refer_text": asr_refer,
+                            "voice_wav_url": voice_wav,
+                        }
+                    )
                 elif ct == "file" and url:
                     fname = att.get("filename", "")
                     size = att.get("size", 0)
@@ -780,6 +787,7 @@ class QQChannel(Channel):
         # Inject chat context for send tools
         try:
             from src.tools.chat_tools import set_current_chat_context
+
             set_current_chat_context("qq", chat_id)
         except ImportError:
             pass
@@ -1047,7 +1055,12 @@ class QQChannel(Channel):
         size = p.stat().st_size
         max_size = 25 * 1024 * 1024  # 25 MB
         if size > max_size:
-            logger.error("File too large for base64 upload (%d MB, max %d MB): %s", size // (1024 * 1024), max_size // (1024 * 1024), file_path)
+            logger.error(
+                "File too large for base64 upload (%d MB, max %d MB): %s",
+                size // (1024 * 1024),
+                max_size // (1024 * 1024),
+                file_path,
+            )
             return None
         data = p.read_bytes()
         b64 = base64.b64encode(data).decode()

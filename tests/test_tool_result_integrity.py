@@ -23,8 +23,10 @@ from src.config import CompressionConfig
 
 def _make_tool(name: str, fn=None):
     if fn is None:
+
         async def fn(**kwargs):
             return f"{name} result"
+
     return ToolDef.from_function(fn, name=name)
 
 
@@ -73,9 +75,15 @@ def _build_messages_with_groups(n_groups: int, extra_middle: int = 0) -> list[di
     """Build a message list with n_groups of tool_call/result pairs + extra filler."""
     msgs: list[dict] = [{"role": "user", "content": "start"}]
     for g in range(n_groups):
-        msgs.append({"role": "assistant", "content": "", "tool_calls": [
-            {"id": f"tc_{g}", "type": "function", "function": {"name": "tool_x", "arguments": "{}"}},
-        ]})
+        msgs.append(
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": f"tc_{g}", "type": "function", "function": {"name": "tool_x", "arguments": "{}"}},
+                ],
+            }
+        )
         msgs.append({"role": "tool", "tool_call_id": f"tc_{g}", "content": f"result_{g}"})
         for _ in range(extra_middle):
             msgs.append({"role": "assistant", "content": "filler text " * 20})
@@ -174,8 +182,10 @@ class TestParallelApprovalPending:
 
         with patch("src.agent.loop.AgentLoop._handle_approval") as mock_handle:
             mock_handle.side_effect = ApprovalPending(
-                thread_id="test_thread", request_id="r1",
-                tool_name="glob", command_preview="needs approval",
+                thread_id="test_thread",
+                request_id="r1",
+                tool_name="glob",
+                command_preview="needs approval",
             )
             with pytest.raises(ApprovalPending) as exc_info:
                 await loop._execute_tools_parallel(
@@ -216,9 +226,14 @@ class TestParallelApprovalPending:
         )
 
         store = loop.get_store()
-        await store.save("par_ap", AgentState(messages=[
-            {"role": "user", "content": "go"},
-        ]))
+        await store.save(
+            "par_ap",
+            AgentState(
+                messages=[
+                    {"role": "user", "content": "go"},
+                ]
+            ),
+        )
 
         call_count = 0
 
@@ -226,18 +241,23 @@ class TestParallelApprovalPending:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return ChatResponse(content="", tool_calls=[
-                    _make_tc("web_search", {"query": "a"}, tc_id="tc1"),
-                    _make_tc("glob", {"pattern": "*"}, tc_id="tc2"),
-                ])
+                return ChatResponse(
+                    content="",
+                    tool_calls=[
+                        _make_tc("web_search", {"query": "a"}, tc_id="tc1"),
+                        _make_tc("glob", {"pattern": "*"}, tc_id="tc2"),
+                    ],
+                )
             return ChatResponse(content="done", tool_calls=[])
 
         client.chat.side_effect = fake_chat
 
         with patch("src.agent.loop.AgentLoop._handle_approval") as mock_handle:
             mock_handle.side_effect = ApprovalPending(
-                thread_id="par_ap", request_id="r1",
-                tool_name="glob", command_preview="needs approval",
+                thread_id="par_ap",
+                request_id="r1",
+                tool_name="glob",
+                command_preview="needs approval",
             )
             state = AgentState(messages=[{"role": "user", "content": "go"}])
             with pytest.raises(ApprovalPending):
@@ -278,8 +298,10 @@ class TestParallelApprovalPending:
 
         with patch("src.agent.loop.AgentLoop._handle_approval") as mock_handle:
             mock_handle.side_effect = ApprovalPending(
-                thread_id="test_3par", request_id="r1",
-                tool_name="glob", command_preview="needs approval",
+                thread_id="test_3par",
+                request_id="r1",
+                tool_name="glob",
+                command_preview="needs approval",
             )
             with pytest.raises(ApprovalPending) as exc_info:
                 await loop._execute_tools_parallel(
@@ -390,8 +412,8 @@ class TestEndToEndSanitize:
         for i in range(1, len(non_system)):
             if non_system[i - 1]["role"] == "assistant" and non_system[i]["role"] == "assistant":
                 pytest.fail(
-                    f"Consecutive assistant messages at indices {i-1} and {i}: "
-                    f"{non_system[i-1].get('content', '')[:60]} / {non_system[i].get('content', '')[:60]}"
+                    f"Consecutive assistant messages at indices {i - 1} and {i}: "
+                    f"{non_system[i - 1].get('content', '')[:60]} / {non_system[i].get('content', '')[:60]}"
                 )
 
     @pytest.mark.asyncio

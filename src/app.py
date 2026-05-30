@@ -109,9 +109,12 @@ class ServiceContainer:
         if self.agent_loop:
             self.agent_loop._skills_prompt = build_skills_prompt(self.skills_cache)
             from src.prompt import _build_skills_section
-            self.agent_loop._prompt_skills = "\n".join(
-                _build_skills_section(self.agent_loop._skills_prompt)
-            ) if self.agent_loop._skills_prompt else ""
+
+            self.agent_loop._prompt_skills = (
+                "\n".join(_build_skills_section(self.agent_loop._skills_prompt))
+                if self.agent_loop._skills_prompt
+                else ""
+            )
         if self.dispatcher:
             self.dispatcher._reload_skills(self.skills_cache)
 
@@ -127,7 +130,6 @@ class ServiceContainer:
             "src.tools.chat_tools",
             "src.tools.ai_tools",
             "src.tools.cron_tools",
-
             "src.tools.media_understanding_tools",
             "src.tools.session_search_tools",
             "src.tools.web_tools",
@@ -141,11 +143,16 @@ class ServiceContainer:
             tool_modules.append("src.tools.browser.tools")
         if getattr(self.config, "canvas", None) and self.config.canvas.enabled:
             tool_modules.append("src.canvas.tool")
-        if sys.platform == "win32" and getattr(self.config.tools, "windows_use", None) and self.config.tools.windows_use.enabled:
+        if (
+            sys.platform == "win32"
+            and getattr(self.config.tools, "windows_use", None)
+            and self.config.tools.windows_use.enabled
+        ):
             tool_modules.append("src.tools.windows")
         for mod_name in tool_modules:
             try:
                 import importlib
+
                 mod = importlib.import_module(mod_name)
                 if hasattr(mod, "get_tools"):
                     tools.extend(mod.get_tools())
@@ -155,6 +162,7 @@ class ServiceContainer:
         if self.config.plugins.enabled:
             try:
                 from src.plugins.registry import get_plugin_registry
+
                 reg = get_plugin_registry()
                 tools.extend(reg.collect_tools())
             except Exception:
@@ -168,6 +176,7 @@ class ServiceContainer:
         if not self.config.plugins.enabled:
             return
         from src.plugins.registry import PluginRegistry, discover_plugins
+
         self.plugin_registry = PluginRegistry()
         records = discover_plugins(self.config.plugins.extra_dirs)
         for record in records:
@@ -179,12 +188,14 @@ class ServiceContainer:
             return
         from src.agents.registry import AgentRegistry
         from src.agents.run_registry import RunRegistry
+
         self.agent_registry = AgentRegistry()
         subagents = getattr(self.config.agents, "subagents", None)
         if subagents:
             for name, cfg in subagents.items():
                 if isinstance(cfg, dict):
                     from src.config import AgentSubconfig
+
                     cfg = AgentSubconfig(**cfg)
                 self.agent_registry.register(name, cfg)
         self.run_registry = RunRegistry()
@@ -201,7 +212,10 @@ class ServiceContainer:
             dimensions = getattr(self.config.memory, "embedding_dimensions", 1536)
             if backend == "lancedb":
                 from src.memory.lance_store import LanceMemoryStore
-                lancedb_uri = getattr(self.config.memory, "lancedb_uri", str(Path.home() / ".flyclaw" / "data" / "memory_lancedb"))
+
+                lancedb_uri = getattr(
+                    self.config.memory, "lancedb_uri", str(Path.home() / ".flyclaw" / "data" / "memory_lancedb")
+                )
                 store = LanceMemoryStore(
                     self.config.memory.db_path,
                     dimensions=dimensions,
@@ -210,6 +224,7 @@ class ServiceContainer:
                 )
             else:
                 from src.memory.store import MemoryStore
+
                 store = MemoryStore(
                     self.config.memory.db_path,
                     dimensions=dimensions,
@@ -222,6 +237,7 @@ class ServiceContainer:
             if getattr(self.config.memory, "api_key", "") or self.config.model.api_key:
                 try:
                     from src.memory.embeddings import EmbeddingProvider
+
                     embeddings = EmbeddingProvider(self.config.memory, self.config.model)
                 except Exception as e:
                     logger.warning("Embedding provider init failed, using FTS5-only: %s", e)
@@ -246,6 +262,7 @@ class ServiceContainer:
             return
         from src.auth.store import AuthStore
         from src.auth.rbac import RBAC
+
         auth_store = AuthStore(self.config.auth.db_path)
         self.rbac = RBAC(auth_store, self.config)
         logger.info(
@@ -258,6 +275,7 @@ class ServiceContainer:
         if not self.config.session_search.enabled:
             return
         from src.session_index.store import SessionIndexStore
+
         store = await SessionIndexStore.create(self.config.session_search.index_path)
         self.session_index = store
         logger.info("会话搜索索引已初始化: %s", self.config.session_search.index_path)
@@ -274,6 +292,7 @@ class ServiceContainer:
     def _setup_registries(self):
         from src.tools.registry import ToolRegistry
         from src.tools.approval import ApprovalManager
+
         self.tool_registry = ToolRegistry()
         self.approval_manager = ApprovalManager(data_dir=str(_FLYCLAW_DATA_DIR))
 
@@ -283,6 +302,7 @@ class ServiceContainer:
         if self.config.channels.qq.enabled:
             try:
                 from src.media_understanding.runner import MediaUnderstandingRunner
+
                 self._qq_mu_runner = MediaUnderstandingRunner(
                     self.config.tools.media_understanding,
                     fallback_api_key=self.config.model.api_key or "",
@@ -296,6 +316,7 @@ class ServiceContainer:
             return
         try:
             from src.tools.browser.manager import BrowserManager
+
             self.browser_manager = BrowserManager()
             logger.info("浏览器管理器已初始化")
         except Exception as e:
@@ -317,16 +338,19 @@ class ServiceContainer:
 
     async def _setup_workspace(self):
         from src.tools.file_tools import set_workspace
+
         workspace_path = str(Path(self.config.agents.workspace).expanduser().resolve())
         Path(workspace_path).mkdir(parents=True, exist_ok=True)
         set_workspace(workspace_path)
 
         if getattr(self.config, "memory_store", None) and self.config.memory_store.enabled:
             from src.tools.memory_tools import get_memory_store
+
             await get_memory_store(self.config.memory_store.db_path)
 
         if getattr(self.config, "task", None) and self.config.task.enabled:
             from src.task.store import get_task_store
+
             store = get_task_store(self.config.task.db_path)
             await store.initialize()
 
@@ -343,6 +367,7 @@ class ServiceContainer:
     def _setup_gateway(self):
         from src.gateway import create_gateway
         import src.gateway as _gw_mod
+
         self.api = create_gateway(self.config, self.agent_loop, self.cron_service)
         _gw_mod._app_ref = self
 
@@ -350,6 +375,7 @@ class ServiceContainer:
 
     async def setup(self):
         from src._container import set_container
+
         set_container(self)
 
         logger.info("flyclaw 0.1.0 启动中...")
@@ -412,6 +438,7 @@ class ServiceContainer:
         self._setup_browser()
 
         from src.tools.process import ProcessSupervisor
+
         self.process_supervisor = ProcessSupervisor()
 
         self._setup_cron()
@@ -423,6 +450,7 @@ class ServiceContainer:
         self._setup_gateway()
 
         from src.tools.exec import reset_config_cache
+
         reset_config_cache()
 
         return tools, skills
@@ -433,6 +461,7 @@ class ServiceContainer:
         try:
             await asyncio.sleep(2)
             from src.session_index.sync import startup_sync
+
             await startup_sync(
                 store,
                 self.state_store,
@@ -449,11 +478,14 @@ class ServiceContainer:
             model=f"{self.config.model.provider}/{self.config.model.name}",
             tools_count=len(self.agent_loop._tools) if self.agent_loop else 0,
             skills_count=len(self.skills_cache),
-            channels_enabled=[ch for ch in ["qq", "weixin"] if getattr(getattr(self.config.channels, ch, None), "enabled", False)],
+            channels_enabled=[
+                ch for ch in ["qq", "weixin"] if getattr(getattr(self.config.channels, ch, None), "enabled", False)
+            ],
         )
 
         try:
             from src.analytics.audit_store import subscribe_audit_to_events
+
             subscribe_audit_to_events()
             logger.info("审计存储已订阅工具事件")
         except Exception as e:
@@ -462,6 +494,7 @@ class ServiceContainer:
         try:
             from src.events import subscribe_async
             from src.agent.learning import LearningLoop
+
             learning_loop = LearningLoop(self.config)
 
             async def _on_session_reset(event, **ctx):
@@ -500,6 +533,7 @@ class ServiceContainer:
             return
         try:
             from src.security import run_security_audit
+
             run_security_audit(self.config)
         except Exception as e:
             logger.warning("安全审计失败: %s", e)
@@ -512,6 +546,7 @@ class ServiceContainer:
             return
         try:
             from src.skills.curator import SkillCurator
+
             curator = SkillCurator(
                 review_interval_days=curator_cfg.interval_hours // 24 if curator_cfg.interval_hours >= 24 else 1,
                 stale_after_days=curator_cfg.stale_after_days,
@@ -530,10 +565,12 @@ class ServiceContainer:
             return
         from pathlib import Path as _Path
         from src.canvas.server import init_canvas
+
         canvas_root = _Path(self.config.canvas.root)
         init_canvas(canvas_root)
         if self.config.canvas.live_reload:
             from src.canvas.live_reload import start_canvas_watcher
+
             await start_canvas_watcher(canvas_root)
 
     async def _start_session_maintenance(self):
@@ -541,6 +578,7 @@ class ServiceContainer:
         if self.config.session.auto_prune and self.state_store:
             try:
                 from src.session.pruner import should_prune_now, prune_sessions, vacuum_database
+
                 cp_path = self.config.checkpointer.path
                 si_path = self.config.session_search.index_path if self.config.session_search.enabled else None
                 if should_prune_now(cp_path, self.config.session.min_interval_hours):
@@ -569,6 +607,7 @@ class ServiceContainer:
             return
         try:
             from src.memory.watcher import start_memory_watcher
+
             await start_memory_watcher(
                 self.config.memory.extra_paths,
                 lambda path, content: asyncio.ensure_future(self.memory_searcher.index_document(path, content)),
@@ -607,6 +646,7 @@ class ServiceContainer:
 
         from src.config_watcher import ConfigWatcher
         from src.config_reload import ReloadExecutor
+
         self._reload_executor = ReloadExecutor(self)
         self._config_watcher = ConfigWatcher(
             path=self._config_path,
@@ -625,6 +665,7 @@ class ServiceContainer:
             if getattr(self.config, "memory_store", None) and self.config.memory_store.enabled:
                 try:
                     from src.tools.memory_tools import get_memory_store
+
                     mem_store = await get_memory_store()
                     await mem_store.close()
                 except Exception:
@@ -632,14 +673,17 @@ class ServiceContainer:
             if getattr(self.config, "task", None) and self.config.task.enabled:
                 try:
                     from src.task.store import get_task_store
+
                     task_store = get_task_store()
                     await task_store.close()
                 except Exception:
                     pass
             from src.memory.watcher import stop_memory_watcher
+
             await stop_memory_watcher()
             if getattr(self.config, "canvas", None) and self.config.canvas.enabled and self.config.canvas.live_reload:
                 from src.canvas.live_reload import stop_canvas_watcher
+
                 await stop_canvas_watcher()
             if self.cron_service:
                 await self.cron_service.stop()
@@ -657,6 +701,7 @@ class ServiceContainer:
                 await self.browser_manager.close_all()
             try:
                 from src.events import emit_async
+
                 await emit_async(
                     "app.shutdown",
                     active_sessions=self.session_tracker.active_count if self.session_tracker else 0,
@@ -665,6 +710,7 @@ class ServiceContainer:
                 pass
             try:
                 from src.events import get_hook_manager
+
                 get_hook_manager().unload_all()
             except Exception:
                 pass

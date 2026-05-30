@@ -6,13 +6,12 @@ self-improvement review writes using a ContextVar.
 Only background-review-originated skill creates are marked as
 agent-created, making them eligible for curator lifecycle management.
 """
+
 from __future__ import annotations
 
 import contextvars
 
-_write_origin: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "skill_write_origin", default="foreground"
-)
+_write_origin: contextvars.ContextVar[str] = contextvars.ContextVar("skill_write_origin", default="foreground")
 
 BACKGROUND_REVIEW = "background_review"
 

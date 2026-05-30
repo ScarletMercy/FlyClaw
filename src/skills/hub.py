@@ -70,6 +70,7 @@ def _validate_bundle_rel_path(rel_path: str) -> str:
 def _guarded_http_get(url: str, *, timeout: int = 20) -> Optional[httpx.Response]:
     try:
         from src.security.url_safety import is_safe_url
+
         safe, _ = is_safe_url(url)
         if not safe:
             logger.warning("Blocked unsafe hub URL: %s", url)
@@ -88,9 +89,11 @@ def _guarded_http_get(url: str, *, timeout: int = 20) -> Optional[httpx.Response
             if not location:
                 return None
             from urllib.parse import urljoin
+
             current_url = urljoin(current_url, location)
             try:
                 from src.security.url_safety import is_safe_url
+
                 safe, _ = is_safe_url(current_url)
                 if not safe:
                     logger.warning("Blocked unsafe redirect target: %s", current_url)
@@ -154,15 +157,13 @@ class SkillSource(ABC):
 class SkillsShSource(SkillSource):
     BASE_URL = "https://skills.sh"
     SEARCH_URL = f"{BASE_URL}/api/search"
-    _SKILL_LINK_RE = re.compile(
-        r'href=["\']/(?P<id>(?!agents/|_next/|api/)[^"\'/]+/[^"\'/]+/[^"\'/]+)["\']'
-    )
+    _SKILL_LINK_RE = re.compile(r'href=["\']/(?P<id>(?!agents/|_next/|api/)[^"\'/]+/[^"\'/]+/[^"\'/]+)["\']')
     _INSTALL_CMD_RE = re.compile(
-        r'npx\s+skills\s+add\s+(?P<repo>https?://github\.com/[^\s<]+|[^\s<]+)'
-        r'(?:\s+--skill\s+(?P<skill>[^\s<]+))?',
+        r"npx\s+skills\s+add\s+(?P<repo>https?://github\.com/[^\s<]+|[^\s<]+)"
+        r"(?:\s+--skill\s+(?P<skill>[^\s<]+))?",
         re.IGNORECASE,
     )
-    _PAGE_H1_RE = re.compile(r'<h1[^>]*>(?P<title>.*?)</h1>', re.IGNORECASE | re.DOTALL)
+    _PAGE_H1_RE = re.compile(r"<h1[^>]*>(?P<title>.*?)</h1>", re.IGNORECASE | re.DOTALL)
     _PROSE_H1_RE = re.compile(
         r'<div[^>]*class=["\'][^"\']*prose[^"\']*["\'][^>]*>.*?<h1[^>]*>(?P<title>.*?)</h1>',
         re.IGNORECASE | re.DOTALL,
@@ -195,7 +196,9 @@ class SkillsShSource(SkillSource):
 
         try:
             resp = httpx.get(
-                self.SEARCH_URL, params={"q": query, "limit": limit}, timeout=20,
+                self.SEARCH_URL,
+                params={"q": query, "limit": limit},
+                timeout=20,
             )
             if resp.status_code != 200:
                 return []
@@ -275,9 +278,9 @@ class SkillsShSource(SkillSource):
 
     def _normalize_identifier(self, identifier: str) -> str:
         if identifier.startswith("skills-sh/"):
-            return identifier[len("skills-sh/"):]
+            return identifier[len("skills-sh/") :]
         if identifier.startswith("skills.sh/"):
-            return identifier[len("skills.sh/"):]
+            return identifier[len("skills.sh/") :]
         return identifier
 
     def _wrap_identifier(self, canonical: str) -> str:
@@ -347,15 +350,17 @@ class SkillsShSource(SkillSource):
                 continue
             repo = f"{parts[0]}/{parts[1]}"
             skill_path = parts[2]
-            results.append(SkillMeta(
-                name=skill_path.split("/")[-1],
-                description=f"Featured on skills.sh from {repo}",
-                source="skills.sh",
-                identifier=self._wrap_identifier(canonical),
-                trust_level=self.trust_level_for(canonical),
-                repo=repo,
-                path=skill_path,
-            ))
+            results.append(
+                SkillMeta(
+                    name=skill_path.split("/")[-1],
+                    description=f"Featured on skills.sh from {repo}",
+                    source="skills.sh",
+                    identifier=self._wrap_identifier(canonical),
+                    trust_level=self.trust_level_for(canonical),
+                    repo=repo,
+                    path=skill_path,
+                )
+            )
             if len(results) >= limit:
                 break
 
@@ -444,7 +449,7 @@ class SkillsShSource(SkillSource):
         if not value:
             return None
         if value.startswith("https://github.com/"):
-            slug = value[len("https://github.com/"):].rstrip("/")
+            slug = value[len("https://github.com/") :].rstrip("/")
             if "/" in slug:
                 return slug.split("/")[0] + "/" + slug.split("/")[1]
         if "/" in value:
@@ -458,7 +463,7 @@ class SkillsShSource(SkillSource):
         m = pattern.search(text)
         if m:
             raw = m.group(1) if m.lastindex else m.group(0)
-            return re.sub(r'<[^>]+>', '', raw).strip()
+            return re.sub(r"<[^>]+>", "", raw).strip()
         return None
 
     def _detail_to_metadata(self, identifier: str, detail: Optional[dict]) -> dict:
@@ -491,7 +496,9 @@ class ClawHubSource(SkillSource):
         cached = _read_index_cache(cache_key)
         if cached is not None:
             return self._finalize_search_results(
-                query, [SkillMeta(**s) for s in cached], limit,
+                query,
+                [SkillMeta(**s) for s in cached],
+                limit,
             )
 
         try:
@@ -518,14 +525,16 @@ class ClawHubSource(SkillSource):
             display_name = item.get("displayName") or item.get("name") or slug
             summary = item.get("summary") or item.get("description") or ""
             tags = self._normalize_tags(item.get("tags", []))
-            results.append(SkillMeta(
-                name=display_name,
-                description=summary,
-                source="clawhub",
-                identifier=slug,
-                trust_level="community",
-                tags=tags,
-            ))
+            results.append(
+                SkillMeta(
+                    name=display_name,
+                    description=summary,
+                    source="clawhub",
+                    identifier=slug,
+                    trust_level="community",
+                    tags=tags,
+                )
+            )
 
         final_results = self._finalize_search_results(query, results, limit)
         _write_index_cache(cache_key, [_skill_meta_to_dict(s) for s in final_results])
@@ -661,9 +670,7 @@ class ClawHubSource(SkillSource):
             return self.inspect(slug)
         return None
 
-    def _finalize_search_results(
-        self, query: str, results: list[SkillMeta], limit: int
-    ) -> list[SkillMeta]:
+    def _finalize_search_results(self, query: str, results: list[SkillMeta], limit: int) -> list[SkillMeta]:
         query_norm = query.strip()
         if not query_norm:
             return self._dedupe_results(results)[:limit]
@@ -886,6 +893,7 @@ def _parse_frontmatter_quick(content: str) -> dict:
         return {}
     try:
         import yaml
+
         data = yaml.safe_load(m.group(1).strip())
         return data if isinstance(data, dict) else {}
     except Exception:
@@ -951,8 +959,12 @@ class HubLockFile:
 
 
 def append_audit_log(
-    action: str, skill_name: str, source: str,
-    trust_level: str, verdict: str, extra: str = "",
+    action: str,
+    skill_name: str,
+    source: str,
+    trust_level: str,
+    verdict: str,
+    extra: str = "",
 ) -> None:
     AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -1039,8 +1051,11 @@ def install_from_quarantine(
     )
 
     append_audit_log(
-        "INSTALL", safe_skill_name, bundle.source,
-        bundle.trust_level, scan_result.verdict,
+        "INSTALL",
+        safe_skill_name,
+        bundle.source,
+        bundle.trust_level,
+        scan_result.verdict,
         skill_hash_val,
     )
 
@@ -1120,7 +1135,8 @@ def parallel_search(
 
 
 def resolve_source(
-    identifier: str, sources: list[SkillSource],
+    identifier: str,
+    sources: list[SkillSource],
 ) -> Optional[SkillSource]:
     if identifier.startswith("skills-sh/") or identifier.startswith("skills.sh/"):
         for s in sources:

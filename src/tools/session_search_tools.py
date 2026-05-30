@@ -8,16 +8,10 @@ from datetime import datetime
 def _format_results(results: list[dict]) -> str:
     lines = []
     for r in results:
-        ts = (
-            datetime.fromtimestamp(r["last_message_at"]).strftime("%m-%d %H:%M")
-            if r.get("last_message_at")
-            else "?"
-        )
+        ts = datetime.fromtimestamp(r["last_message_at"]).strftime("%m-%d %H:%M") if r.get("last_message_at") else "?"
         active = "" if r.get("is_active", True) else " [expired]"
         snippet = (r.get("snippet") or "")[:120]
-        lines.append(
-            f"[{r.get('channel', '?')}] {ts} ({r.get('message_count', 0)}msgs) {snippet}{active}"
-        )
+        lines.append(f"[{r.get('channel', '?')}] {ts} ({r.get('message_count', 0)}msgs) {snippet}{active}")
     return "\n".join(lines)
 
 
@@ -42,6 +36,7 @@ async def session_search(query: str = "", limit: int = 3) -> str:
 
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef
+
     return [
         ToolDef.from_function(session_search),
     ]

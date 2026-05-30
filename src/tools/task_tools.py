@@ -37,6 +37,7 @@ def _parse_plan_json(raw: str) -> Optional[dict]:
         return json.loads(text)
     except json.JSONDecodeError:
         import re
+
         m = re.search(r"\{[\s\S]*\}", text)
         if m:
             try:
@@ -55,6 +56,7 @@ def _parse_relative_time(at_str: str) -> Optional[str]:
         pass
 
     import re
+
     now = datetime.now(timezone(timedelta(hours=8)))
 
     m = re.match(r"(\d+)\s*分钟", at_str)
@@ -100,9 +102,9 @@ _TASK_TOOL_DESCRIPTION = (
 )
 
 
-async def task_manage(action: str, goal: str = "", plan_json: str = "",
-                      step_index: int = -1, result_summary: str = "",
-                      run_id: str = "") -> str:
+async def task_manage(
+    action: str, goal: str = "", plan_json: str = "", step_index: int = -1, result_summary: str = "", run_id: str = ""
+) -> str:
     """Manage autonomous task plans with a single compressed tool.
 
     Args:
@@ -146,8 +148,7 @@ async def _task_plan_impl(goal: str, plan_json: str) -> str:
         return json.dumps({"error": "计划必须包含至少一个步骤"}, ensure_ascii=False)
 
     steps = [
-        s.get("description") or s.get("name") or json.dumps(s, ensure_ascii=False)
-        if isinstance(s, dict) else str(s)
+        s.get("description") or s.get("name") or json.dumps(s, ensure_ascii=False) if isinstance(s, dict) else str(s)
         for s in raw_steps
     ]
 
@@ -180,17 +181,21 @@ async def _task_plan_impl(goal: str, plan_json: str) -> str:
                 continue
         except (ValueError, TypeError):
             continue
-        checkpoints.append(TaskCheckpoint(
-            at=resolved,
-            prompt=rc.get("prompt", "检查任务进度并继续执行"),
-        ))
+        checkpoints.append(
+            TaskCheckpoint(
+                at=resolved,
+                prompt=rc.get("prompt", "检查任务进度并继续执行"),
+            )
+        )
 
     if not checkpoints:
         default_at = (now + timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
-        checkpoints.append(TaskCheckpoint(
-            at=default_at,
-            prompt="检查任务进度并继续执行下一步",
-        ))
+        checkpoints.append(
+            TaskCheckpoint(
+                at=default_at,
+                prompt="检查任务进度并继续执行下一步",
+            )
+        )
 
     try:
         run = TaskRun(
@@ -204,12 +209,16 @@ async def _task_plan_impl(goal: str, plan_json: str) -> str:
         )
     except Exception as e:
         from pydantic import ValidationError
+
         if isinstance(e, ValidationError):
             bad = [str(err["loc"][-1]) for err in e.errors()]
-            return json.dumps({
-                "error": f"计划格式有误，steps 应为字符串数组，例如 [\"步骤1\", \"步骤2\"]。"
-                         f"当前 steps 中第 {', '.join(bad)} 项格式不对，请修正后重试",
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "error": f'计划格式有误，steps 应为字符串数组，例如 ["步骤1", "步骤2"]。'
+                    f"当前 steps 中第 {', '.join(bad)} 项格式不对，请修正后重试",
+                },
+                ensure_ascii=False,
+            )
         logger.error("TaskRun 构造失败: %s", e)
         return json.dumps({"error": f"创建任务失败: {e}"}, ensure_ascii=False)
 
@@ -251,16 +260,20 @@ async def _task_plan_impl(goal: str, plan_json: str) -> str:
 
     await store.save(run)
 
-    return json.dumps({
-        "ok": True,
-        "run_id": run.id,
-        "steps": steps,
-        "checkpoints": registered_cps,
-    }, ensure_ascii=False)
+    return json.dumps(
+        {
+            "ok": True,
+            "run_id": run.id,
+            "steps": steps,
+            "checkpoints": registered_cps,
+        },
+        ensure_ascii=False,
+    )
 
 
 async def _task_status_impl() -> str:
     from src.task.store import get_task_store
+
     container = get_container()
     store = get_task_store(container.config.task.db_path)
     runs = await store.list_by_status("planning", "running")
@@ -270,20 +283,23 @@ async def _task_status_impl() -> str:
     result = []
     for r in runs:
         cps = [{"id": c.id, "status": c.status, "at": c.at} for c in r.checkpoints]
-        result.append({
-            "run_id": r.id,
-            "goal": r.goal,
-            "current_step": r.current_step,
-            "total_steps": len(r.steps),
-            "steps": r.steps,
-            "status": r.status,
-            "checkpoints": cps,
-        })
+        result.append(
+            {
+                "run_id": r.id,
+                "goal": r.goal,
+                "current_step": r.current_step,
+                "total_steps": len(r.steps),
+                "steps": r.steps,
+                "status": r.status,
+                "checkpoints": cps,
+            }
+        )
     return json.dumps({"active_tasks": len(result), "tasks": result}, ensure_ascii=False)
 
 
 async def _task_advance_impl(step_index: int, result_summary: str, run_id: str) -> str:
     from src.task.store import get_task_store
+
     container = get_container()
     store = get_task_store(container.config.task.db_path)
 
@@ -303,7 +319,9 @@ async def _task_advance_impl(step_index: int, result_summary: str, run_id: str) 
         run = runs[0]
 
     if step_index >= len(run.steps):
-        return json.dumps({"error": f"Invalid step_index {step_index}, must be 0-{len(run.steps) - 1}"}, ensure_ascii=False)
+        return json.dumps(
+            {"error": f"Invalid step_index {step_index}, must be 0-{len(run.steps) - 1}"}, ensure_ascii=False
+        )
 
     run.current_step = step_index + 1
     if run.current_step >= len(run.steps):
@@ -316,18 +334,22 @@ async def _task_advance_impl(step_index: int, result_summary: str, run_id: str) 
                     pass
     await store.save(run)
 
-    return json.dumps({
-        "ok": True,
-        "run_id": run.id,
-        "completed_step": step_index,
-        "current_step": run.current_step,
-        "total_steps": len(run.steps),
-        "status": run.status,
-    }, ensure_ascii=False)
+    return json.dumps(
+        {
+            "ok": True,
+            "run_id": run.id,
+            "completed_step": step_index,
+            "current_step": run.current_step,
+            "total_steps": len(run.steps),
+            "status": run.status,
+        },
+        ensure_ascii=False,
+    )
 
 
 async def _task_cancel_impl(run_id: str) -> str:
     from src.task.store import get_task_store
+
     container = get_container()
     store = get_task_store(container.config.task.db_path)
 
@@ -372,7 +394,7 @@ def get_tools() -> list[ToolDef]:
                     },
                     "plan_json": {
                         "type": "string",
-                        "description": "计划 JSON，格式: {\"steps\": [...], \"checkpoints\": [{\"at\": \"30分钟后\", \"prompt\": \"...\"}]}（plan 必填）",
+                        "description": '计划 JSON，格式: {"steps": [...], "checkpoints": [{"at": "30分钟后", "prompt": "..."}]}（plan 必填）',
                     },
                     "step_index": {
                         "type": "integer",

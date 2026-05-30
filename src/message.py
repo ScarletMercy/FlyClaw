@@ -16,12 +16,14 @@ _MAX_FORMAT_LEN = 8000
 def _is_connection_error(e: Exception) -> bool:
     try:
         from openai import APIConnectionError, APITimeoutError
+
         if isinstance(e, (APIConnectionError, APITimeoutError)):
             return True
     except ImportError:
         pass
     try:
         import httpx
+
         if isinstance(e, (httpx.ConnectError, httpx.ReadError, httpx.TimeoutException)):
             return True
     except ImportError:
@@ -76,10 +78,17 @@ def _format_display(text: str) -> str:
     return _JSON_FENCE_RE.sub(_replacer, text)
 
 
-_SILENT_TOOLS = frozenset({
-    "text_to_speech", "send_image", "send_file", "send_voice",
-    "skill_view", "skill_manage", "skill_hub",
-})
+_SILENT_TOOLS = frozenset(
+    {
+        "text_to_speech",
+        "send_image",
+        "send_file",
+        "send_voice",
+        "skill_view",
+        "skill_manage",
+        "skill_hub",
+    }
+)
 
 
 _MAX_INTERRUPT_DEPTH = 5
@@ -88,14 +97,32 @@ _MAX_PENDING_QUEUE = 10
 
 class _DrainContext:
     __slots__ = (
-        "thread_id", "session_key", "chat_id", "sender_id",
-        "chat_type", "channel_prefix", "reply_fn", "stream_fn",
-        "system_prompt", "depth",
+        "thread_id",
+        "session_key",
+        "chat_id",
+        "sender_id",
+        "chat_type",
+        "channel_prefix",
+        "reply_fn",
+        "stream_fn",
+        "system_prompt",
+        "depth",
     )
 
-    def __init__(self, *, thread_id, session_key, chat_id, sender_id,
-                 chat_type, channel_prefix, reply_fn, stream_fn,
-                 system_prompt, depth):
+    def __init__(
+        self,
+        *,
+        thread_id,
+        session_key,
+        chat_id,
+        sender_id,
+        chat_type,
+        channel_prefix,
+        reply_fn,
+        stream_fn,
+        system_prompt,
+        depth,
+    ):
         self.thread_id = thread_id
         self.session_key = session_key
         self.chat_id = chat_id
@@ -185,23 +212,45 @@ class MessageHandler:
             self._container.session_tracker.touch(thread_id)
 
             from src.tools.exec import _current_thread_id
+
             _tid_token = _current_thread_id.set(thread_id)
             try:
                 await _on_message_inner(
-                    text, sender_id, chat_id, chat_type, message_id,
-                    reply_fn, stream_fn, thread_id, is_command, channel_prefix,
-                    session_scope, legacy_thread_id, session_key,
+                    text,
+                    sender_id,
+                    chat_id,
+                    chat_type,
+                    message_id,
+                    reply_fn,
+                    stream_fn,
+                    thread_id,
+                    is_command,
+                    channel_prefix,
+                    session_scope,
+                    legacy_thread_id,
+                    session_key,
                 )
             finally:
                 _current_thread_id.reset(_tid_token)
 
         async def _on_message_inner(
-                text, sender_id, chat_id, chat_type, message_id,
-                reply_fn, stream_fn, thread_id, is_command, channel_prefix,
-                session_scope, legacy_thread_id, session_key,
+            text,
+            sender_id,
+            chat_id,
+            chat_type,
+            message_id,
+            reply_fn,
+            stream_fn,
+            thread_id,
+            is_command,
+            channel_prefix,
+            session_scope,
+            legacy_thread_id,
+            session_key,
         ):
             if channel_prefix in ("qq", "weixin"):
                 from src.tools.approval import get_approval_manager
+
                 mgr = get_approval_manager()
                 pending_list = mgr.list_pending()
                 unresolved = [r for r in pending_list if r.chat_id == chat_id and not mgr.is_resolved(r.id)]
@@ -212,7 +261,10 @@ class MessageHandler:
                         resumed_threads: set[str] = set()
                         for req in unresolved:
                             mgr.resolve(req.id, "allow_once")
-                            if req.thread_id not in resumed_threads and req.thread_id not in self._approval_handler_threads:
+                            if (
+                                req.thread_id not in resumed_threads
+                                and req.thread_id not in self._approval_handler_threads
+                            ):
                                 resumed_threads.add(req.thread_id)
                                 asyncio.create_task(self._resume_and_reply(req.thread_id, "allow_once", chat_id))
                         has_mem = any(r.tool_name in ("memory_delete", "memory") for r in unresolved)
@@ -233,7 +285,13 @@ class MessageHandler:
                 result = await self._container.dispatcher.dispatch(
                     cmd_name,
                     cmd_args,
-                    context={"thread_id": thread_id, "sender_id": sender_id, "chat_id": chat_id, "user_key": legacy_thread_id, "channel_prefix": channel_prefix},
+                    context={
+                        "thread_id": thread_id,
+                        "sender_id": sender_id,
+                        "chat_id": chat_id,
+                        "user_key": legacy_thread_id,
+                        "channel_prefix": channel_prefix,
+                    },
                 )
                 await reply_fn(result)
                 return
@@ -244,13 +302,17 @@ class MessageHandler:
                 return
 
             from src.tools.cron_tools import set_current_chat_id
+
             set_current_chat_id(chat_id)
             from src.tools.media_tools import set_current_channel
+
             set_current_channel(channel_prefix)
             from src.tools.browser.tools import set_browser_session
+
             set_browser_session(chat_id)
 
             from src.tools.task_tools import set_task_context
+
             set_task_context(chat_id=chat_id, sender_id=sender_id, thread_id=thread_id)
 
             from src.agent.state import AgentState
@@ -260,9 +322,9 @@ class MessageHandler:
                 system_prompt += (
                     "\n\n## 自主工作模式\n"
                     "自主工作模式已开启。如果用户提出复杂任务（研究、开发、调研、写作等），"
-                    "请先调用 task_manage(action=\"plan\") 工具制定执行计划，包含步骤和检查点，然后再开始执行。"
-                    "在检查点触发时，调用 task_manage(action=\"status\") 查看进度，然后继续执行下一步。"
-                    "完成任务后调用 task_manage(action=\"advance\") 标记步骤完成。"
+                    '请先调用 task_manage(action="plan") 工具制定执行计划，包含步骤和检查点，然后再开始执行。'
+                    '在检查点触发时，调用 task_manage(action="status") 查看进度，然后继续执行下一步。'
+                    '完成任务后调用 task_manage(action="advance") 标记步骤完成。'
                 )
 
             input_state = AgentState(
@@ -286,11 +348,16 @@ class MessageHandler:
             # Also treat as busy when drain_pending is still processing an
             # interrupted message or queued messages — prevents new messages
             # from racing in and grabbing the lock before drain runs.
-            if (self._container.agent_loop.is_thread_busy(thread_id)
-                    or thread_id in self._interrupted_threads
-                    or thread_id in self._pending_queue):
+            if (
+                self._container.agent_loop.is_thread_busy(thread_id)
+                or thread_id in self._interrupted_threads
+                or thread_id in self._pending_queue
+            ):
                 await self._handle_busy_message(
-                    text, thread_id, channel_prefix, reply_fn,
+                    text,
+                    thread_id,
+                    channel_prefix,
+                    reply_fn,
                 )
                 return
 
@@ -310,9 +377,7 @@ class MessageHandler:
 
         return on_message
 
-    async def _try_send_voice(
-        self, text: str, chat_id: str, channel_prefix: str, voice: str
-    ) -> bool:
+    async def _try_send_voice(self, text: str, chat_id: str, channel_prefix: str, voice: str) -> bool:
         """Try to convert text to speech and send as voice message. Returns True if sent."""
         import edge_tts
         import tempfile
@@ -341,6 +406,7 @@ class MessageHandler:
                 return await channel.send_audio(chat_id, audio_bytes)
             elif channel_prefix == "weixin":
                 import tempfile as _tf
+
                 with _tf.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
                     f.write(audio_bytes)
                     tmp_file = f.name
@@ -354,7 +420,11 @@ class MessageHandler:
         return False
 
     async def _handle_busy_message(
-        self, text: str, thread_id: str, channel_prefix: str, reply_fn,
+        self,
+        text: str,
+        thread_id: str,
+        channel_prefix: str,
+        reply_fn,
     ) -> None:
         mode = self._container.config.agents.busy_input_mode
         flag = self._container.state_store.get_interrupt_flag(thread_id)
@@ -380,12 +450,18 @@ class MessageHandler:
         if thread_id not in self._interrupted_threads:
             self._interrupted_threads[thread_id] = text
             flag.interrupt(text)
-            await reply_fn("⚡ 已中断当前任务，正在处理你的新消息.." if zh else
-                           "⚡ Interrupted current task, processing your message...")
+            await reply_fn(
+                "⚡ 已中断当前任务，正在处理你的新消息.."
+                if zh
+                else "⚡ Interrupted current task, processing your message..."
+            )
         else:
             self._enqueue(thread_id, text)
-            await reply_fn("⏳ 消息已排队，将在当前中断任务完成后处理。" if zh else
-                           "⏳ Message queued, will process after the current interrupted task.")
+            await reply_fn(
+                "⏳ 消息已排队，将在当前中断任务完成后处理。"
+                if zh
+                else "⏳ Message queued, will process after the current interrupted task."
+            )
 
     async def _run_agent_turn(
         self,
@@ -438,7 +514,11 @@ class MessageHandler:
                         parsed = json.loads(raw_args)
                         if isinstance(parsed, dict):
                             vals = list(parsed.values())
-                            args_preview = str(vals[0])[:80] if len(parsed) == 1 else ", ".join(f"{k}={v}" for k, v in parsed.items())[:80]
+                            args_preview = (
+                                str(vals[0])[:80]
+                                if len(parsed) == 1
+                                else ", ".join(f"{k}={v}" for k, v in parsed.items())[:80]
+                            )
                         else:
                             args_preview = raw_args[:80]
                     except (json.JSONDecodeError, ValueError):
@@ -462,6 +542,7 @@ class MessageHandler:
                 pass
 
         from src.events import subscribe_async, unsubscribe
+
         _progress_unsub = subscribe_async("tool.*", _on_tool_event)
 
         _assistant_msg_unsub = None
@@ -491,18 +572,27 @@ class MessageHandler:
                 saved_interrupt = self._interrupted_threads.pop(thread_id, None)
                 saved_queue = self._pending_queue.pop(thread_id, None)
                 drain_ctx = _DrainContext(
-                    thread_id=thread_id, session_key=session_key,
-                    chat_id=chat_id, sender_id=sender_id,
-                    chat_type=chat_type, channel_prefix=channel_prefix,
-                    reply_fn=reply_fn, stream_fn=stream_fn,
-                    system_prompt=system_prompt, depth=depth,
+                    thread_id=thread_id,
+                    session_key=session_key,
+                    chat_id=chat_id,
+                    sender_id=sender_id,
+                    chat_type=chat_type,
+                    channel_prefix=channel_prefix,
+                    reply_fn=reply_fn,
+                    stream_fn=stream_fn,
+                    system_prompt=system_prompt,
+                    depth=depth,
                 )
-                asyncio.create_task(self._handle_approval_pending(
-                    exc, chat_id, channel_prefix,
-                    saved_interrupt=saved_interrupt,
-                    saved_queue=saved_queue,
-                    drain_ctx=drain_ctx,
-                ))
+                asyncio.create_task(
+                    self._handle_approval_pending(
+                        exc,
+                        chat_id,
+                        channel_prefix,
+                        saved_interrupt=saved_interrupt,
+                        saved_queue=saved_queue,
+                        drain_ctx=drain_ctx,
+                    )
+                )
                 return
 
             logger.debug("[flow] agent_loop run done")
@@ -546,12 +636,16 @@ class MessageHandler:
             logger.error("Agent error: %s", e, exc_info=True)
             if _is_connection_error(e):
                 zh = self._container.config.agents.language == "zh"
-                assistant_text = ("模型服务连接失败，请稍后重试。" if zh
-                                  else "Model service connection failed, please try again later.")
+                assistant_text = (
+                    "模型服务连接失败，请稍后重试。"
+                    if zh
+                    else "Model service connection failed, please try again later."
+                )
             else:
                 assistant_text = f"[error] {type(e).__name__}: {e}"
 
             from src.events import emit_async
+
             await emit_async(
                 "agent.error",
                 thread_id=thread_id,
@@ -566,7 +660,10 @@ class MessageHandler:
                 unsubscribe("agent_loop.assistant_message", _on_assistant_message)
 
         if assistant_text:
-            if getattr(self._container.config, "link_understanding", None) and self._container.config.link_understanding.enabled:
+            if (
+                getattr(self._container.config, "link_understanding", None)
+                and self._container.config.link_understanding.enabled
+            ):
                 try:
                     from src.link_understanding import detect_and_preview_links
 
@@ -582,6 +679,7 @@ class MessageHandler:
 
             try:
                 from src.media_delivery import deliver_media
+
                 ch = self._get_channel(channel_prefix)
                 if ch:
                     display_text = await deliver_media(display_text, chat_id, channel_prefix, ch)
@@ -599,9 +697,7 @@ class MessageHandler:
                 and len(display_text.strip()) < voice_cfg.threshold
             ):
                 try:
-                    voice_sent = await self._try_send_voice(
-                        display_text, chat_id, channel_prefix, voice_cfg.voice
-                    )
+                    voice_sent = await self._try_send_voice(display_text, chat_id, channel_prefix, voice_cfg.voice)
                 except Exception as e:
                     logger.warning("Voice mode TTS failed: %s", e)
 
@@ -614,6 +710,7 @@ class MessageHandler:
                     logger.error("Reply failed: %s", e)
 
             from src.events import emit_async
+
             await emit_async(
                 "message.replied",
                 thread_id=thread_id,
@@ -644,14 +741,19 @@ class MessageHandler:
             if getattr(self._container.config, "memory_store", None) and self._container.config.memory_store.enabled:
                 try:
                     from src.tools.memory_tools import auto_extract_memory, save_memory
+
                     extracted = auto_extract_memory(original_text, display_text)
                     if extracted:
                         content, category = extracted
                         await save_memory(content, category=category)
                     else:
-                        task = asyncio.create_task(self._memory_llm_judge(
-                            original_text, display_text, reply_fn,
-                        ))
+                        task = asyncio.create_task(
+                            self._memory_llm_judge(
+                                original_text,
+                                display_text,
+                                reply_fn,
+                            )
+                        )
                         self._container.background_tasks.add(task)
                         task.add_done_callback(self._container.background_tasks.discard)
                 except Exception:
@@ -708,8 +810,7 @@ class MessageHandler:
             latest = await self._container.state_store.aload(thread_id)
             if latest:
                 has_msg = any(
-                    m.get("content") == interrupt_msg and m.get("role") == "user"
-                    for m in latest.messages[-5:]
+                    m.get("content") == interrupt_msg and m.get("role") == "user" for m in latest.messages[-5:]
                 )
                 if not has_msg:
                     latest.append_message({"role": "user", "content": interrupt_msg})
@@ -823,7 +924,11 @@ class MessageHandler:
                 decision, user_response = await mgr.await_approval(current_exc.request_id, timeout=approval_timeout)
                 if decision == "timeout":
                     if tool_name in ("memory_delete", "memory") or auto_deny:
-                        timeout_msg = "⏰ 操作超时，记忆删除已取消。" if tool_name in ("memory_delete", "memory") else ("操作超时，已自动拒绝。" if zh else "Operation timed out, auto-denied.")
+                        timeout_msg = (
+                            "⏰ 操作超时，记忆删除已取消。"
+                            if tool_name in ("memory_delete", "memory")
+                            else ("操作超时，已自动拒绝。" if zh else "Operation timed out, auto-denied.")
+                        )
                         await approval_ch.send_text(chat_id, timeout_msg)
                     decision = "deny"
 
@@ -909,15 +1014,21 @@ class MessageHandler:
             _rp = "weixin" if not chat_id.startswith(("c2c:", "group:", "channel:", "dm:")) else "qq"
             saved = self._approval_saved_ctx.pop(exc.thread_id, None)
             _si, _sq, _dc = saved if saved else (None, None, None)
-            asyncio.create_task(self._handle_approval_pending(
-                exc, chat_id, _rp,
-                saved_interrupt=_si,
-                saved_queue=_sq,
-                drain_ctx=_dc,
-            ))
+            asyncio.create_task(
+                self._handle_approval_pending(
+                    exc,
+                    chat_id,
+                    _rp,
+                    saved_interrupt=_si,
+                    saved_queue=_sq,
+                    drain_ctx=_dc,
+                )
+            )
         except RuntimeError as e:
             if "busy" in str(e).lower() or "lock" in str(e).lower():
-                logger.debug("_resume_and_reply: thread %s is busy, _handle_approval_pending is still running", thread_id)
+                logger.debug(
+                    "_resume_and_reply: thread %s is busy, _handle_approval_pending is still running", thread_id
+                )
             else:
                 logger.warning("_resume_and_reply failed: %s", e)
         except Exception:
@@ -928,11 +1039,17 @@ class MessageHandler:
             from src.tools.memory_tools import judge_memory_with_llm, save_memory
 
             model_name = self._container.config.memory_store.memory_judge_model or self._container.config.model.name
-            base_url = self._container.config.memory_store.memory_judge_base_url or self._container.config.model.base_url
+            base_url = (
+                self._container.config.memory_store.memory_judge_base_url or self._container.config.model.base_url
+            )
             api_key = self._container.config.memory_store.memory_judge_api_key or self._container.config.model.api_key
 
             result = await judge_memory_with_llm(
-                user_input, ai_response, model_name, base_url, api_key,
+                user_input,
+                ai_response,
+                model_name,
+                base_url,
+                api_key,
             )
             if result:
                 content, category = result

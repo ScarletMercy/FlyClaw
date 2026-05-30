@@ -81,9 +81,9 @@ class TestChatCompletionsAuth:
         with patch("src.gateway._get_app") as mock_app:
             mock_app_obj = MagicMock()
             mock_app_obj.agent_loop = MagicMock()
-            mock_app_obj.agent_loop.run = AsyncMock(return_value=MagicMock(
-                messages=[{"role": "assistant", "content": "test reply"}]
-            ))
+            mock_app_obj.agent_loop.run = AsyncMock(
+                return_value=MagicMock(messages=[{"role": "assistant", "content": "test reply"}])
+            )
             mock_app_obj.config = AppConfig()
             mock_app_obj.state_store = MagicMock()
             mock_app_obj.state_store.aload = AsyncMock(return_value=None)
@@ -102,6 +102,7 @@ class TestConfigAPI:
     @pytest.mark.asyncio
     async def test_get_config_returns_json(self, client):
         import src.gateway as gw_mod
+
         mock_app = MagicMock()
         mock_app.config = AppConfig()
         gw_mod._app_ref = mock_app

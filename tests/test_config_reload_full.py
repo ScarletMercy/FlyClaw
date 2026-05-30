@@ -85,8 +85,7 @@ class TestReloadAuth:
         executor = ReloadExecutor(app)
         plan = ReloadPlan(actions=[ReloadAction(action="reload_auth")])
 
-        with patch("src.auth.rbac.RBAC") as MockRBAC, \
-             patch("src.auth.store.AuthStore") as MockStore:
+        with patch("src.auth.rbac.RBAC") as MockRBAC, patch("src.auth.store.AuthStore") as MockStore:
             MockStore.return_value = MagicMock()
             MockRBAC.return_value = MagicMock()
             await executor.execute(plan)
@@ -108,8 +107,10 @@ class TestRequiresRestart:
             requires_restart=True,
         )
 
-        with patch("src.agent.client.create_chain") as mock_chain, \
-             patch("src.tools.registry.get_tool_registry") as mock_reg:
+        with (
+            patch("src.agent.client.create_chain") as mock_chain,
+            patch("src.tools.registry.get_tool_registry") as mock_reg,
+        ):
             await executor.execute(plan)
 
         mock_chain.assert_not_called()

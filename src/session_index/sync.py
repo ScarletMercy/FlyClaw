@@ -130,9 +130,7 @@ async def startup_sync(
         logger.info("All %d threads already indexed", len(thread_ids))
         return 0
 
-    logger.info(
-        "Startup sync: %d/%d threads need indexing", len(to_sync), len(thread_ids)
-    )
+    logger.info("Startup sync: %d/%d threads need indexing", len(to_sync), len(thread_ids))
     synced = 0
     for tid in to_sync:
         try:
@@ -141,9 +139,7 @@ async def startup_sync(
                 continue
 
             meta = parse_thread_id(tid)
-            channel = (
-                meta["channel"] if meta["channel"] != "unknown" else "unknown"
-            )
+            channel = meta["channel"] if meta["channel"] != "unknown" else "unknown"
             if state.channel:
                 channel = state.channel
 
@@ -161,7 +157,5 @@ async def startup_sync(
         except Exception as e:
             logger.debug("Skipping thread %s: %s", tid, e)
 
-    logger.info(
-        "Startup sync complete: %d/%d threads indexed", synced, len(to_sync)
-    )
+    logger.info("Startup sync complete: %d/%d threads indexed", synced, len(to_sync))
     return synced

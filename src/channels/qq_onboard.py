@@ -33,10 +33,7 @@ ONBOARD_POLL_PATH = "/lite/poll_bind_result"
 ONBOARD_POLL_INTERVAL = 2.0
 ONBOARD_API_TIMEOUT = 10.0
 
-QR_URL_TEMPLATE = (
-    "https://q.qq.com/qqbot/openclaw/connect.html"
-    "?task_id={task_id}&_wv=2&source=flyclaw"
-)
+QR_URL_TEMPLATE = "https://q.qq.com/qqbot/openclaw/connect.html?task_id={task_id}&_wv=2&source=flyclaw"
 
 _MAX_REFRESHES = 3
 

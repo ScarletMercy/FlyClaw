@@ -85,8 +85,8 @@ def _repair_tool_args(args_str: str) -> str:
 
     for i in range(len(s)):
         try:
-            json.loads(s[:len(s) - i], strict=False)
-            return s[:len(s) - i]
+            json.loads(s[: len(s) - i], strict=False)
+            return s[: len(s) - i]
         except (json.JSONDecodeError, TypeError):
             continue
 
@@ -125,7 +125,6 @@ def _repair_tool_args(args_str: str) -> str:
     return "{}"
 
 
-
 def _estimate_tokens_simple(messages: list[dict]) -> int:
     """Fast token estimate without per-message overhead."""
     total = 0
@@ -144,7 +143,19 @@ def _estimate_tokens_simple(messages: list[dict]) -> int:
 class ApprovalPending(Exception):
     """Raised when a tool needs user approval. Loop pauses, caller resumes."""
 
-    def __init__(self, thread_id: str, request_id: str, tool_name: str, command_preview: str, denylisted: bool = False, timeout: int | None = None, auto_deny: bool = False, keys: list[str] | None = None, partial_results: list[tuple[str, str]] | None = None):
+    def __init__(
+        self,
+        thread_id: str,
+        request_id: str,
+        tool_name: str,
+        command_preview: str,
+        denylisted: bool = False,
+        timeout: int | None = None,
+        auto_deny: bool = False,
+        keys: list[str] | None = None,
+        partial_results: list[tuple[str, str]] | None = None,
+        tc_id: str = "",
+    ):
         self.thread_id = thread_id
         self.request_id = request_id
         self.tool_name = tool_name
@@ -154,7 +165,19 @@ class ApprovalPending(Exception):
         self.auto_deny = auto_deny
         self.keys = keys or []
         self.partial_results: list[tuple[str, str]] = list(partial_results) if partial_results else []
+        self.tc_id = tc_id
         super().__init__(f"需要审批: {tool_name} — {command_preview[:80]}")
+
+    def to_pending_data(self) -> dict:
+        pending_data: dict[str, Any] = {
+            "request_id": self.request_id,
+            "tool_name": self.tool_name,
+            "command_preview": self.command_preview[:200],
+            "tool_call_id": self.tc_id,
+        }
+        if self.keys:
+            pending_data["memory_keys"] = self.keys
+        return pending_data
 
 
 class AgentLoop:
@@ -181,17 +204,17 @@ class AgentLoop:
         # Compressor - always create, even without config
         from src.compressor.compressor import ContextCompressor
         from src.config import CompressionConfig
+
         compression_config = config.compression if config else CompressionConfig()
         self._compressor = ContextCompressor(compression_config, main_config=config, client=client)
 
         if config:
             from src.bootstrap import load_bootstrap_files
+
             agents_cfg = getattr(config, "agents", None)
             if agents_cfg:
                 extra = getattr(agents_cfg, "bootstrap_files", None)
-                self._context_files = load_bootstrap_files(
-                    agents_cfg.workspace, extra_names=extra
-                )
+                self._context_files = load_bootstrap_files(agents_cfg.workspace, extra_names=extra)
 
         self._cache_prompt_sections(tools, skills_prompt)
 
@@ -231,8 +254,8 @@ class AgentLoop:
             thread_id=thread_id,
             max_rounds=max_rounds,
             message_count=len(state.messages),
-            channel=getattr(state, 'channel', ''),
-            sender_id=getattr(state, 'sender_id', ''),
+            channel=getattr(state, "channel", ""),
+            sender_id=getattr(state, "sender_id", ""),
         )
 
         lock = await self._store.acquire_thread(thread_id)
@@ -292,6 +315,7 @@ class AgentLoop:
             state.append_message({"role": "user", "content": interrupt_msg})
         import time as _time
         from src.events import emit_async
+
         duration_ms = (_time.monotonic() - start_ts) * 1000
         await emit_async(
             "agent_loop.interrupted",
@@ -364,6 +388,7 @@ class AgentLoop:
                 await self._store.save(thread_id, state)
                 try:
                     from src.tools.approval import get_approval_manager
+
                     get_approval_manager().clear_session(thread_id)
                 except Exception:
                     pass
@@ -387,22 +412,28 @@ class AgentLoop:
             # 6. Execute tool calls (always parallel)
             tool_round += 1
             try:
-                parallel_results = await self._execute_tools_parallel(response.tool_calls, state, thread_id, interrupt_event=ie)
+                parallel_results = await self._execute_tools_parallel(
+                    response.tool_calls, state, thread_id, interrupt_event=ie
+                )
             except ApprovalPending as ap:
                 for tc_id, result in ap.partial_results:
-                    state.append_message({
-                        "role": "tool",
-                        "tool_call_id": tc_id,
-                        "content": result,
-                    })
+                    state.append_message(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": result,
+                        }
+                    )
                 await self._store.save(thread_id, state)
                 raise
             for tc_id, result in parallel_results:
-                state.append_message({
-                    "role": "tool",
-                    "tool_call_id": tc_id,
-                    "content": result,
-                })
+                state.append_message(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": result,
+                    }
+                )
             await self._store.save(thread_id, state)
             if await self._check_interrupt(state, thread_id, start_ts, tool_round):
                 return state
@@ -431,17 +462,21 @@ class AgentLoop:
         )
 
         # Grace period: budget exhausted, let the model summarize
-        state.append_message({
-            "role": "user",
-            "content": "工具调用预算已用完。请总结当前进度和结果，不要再调用工具。",
-        })
+        state.append_message(
+            {
+                "role": "user",
+                "content": "工具调用预算已用完。请总结当前进度和结果，不要再调用工具。",
+            }
+        )
         try:
             summary_resp = await interruptible(ie, self._call_model_with_retry(state.messages, tools=None))
             if summary_resp is not None:
-                state.append_message({
-                    "role": "assistant",
-                    "content": summary_resp.content,
-                })
+                state.append_message(
+                    {
+                        "role": "assistant",
+                        "content": summary_resp.content,
+                    }
+                )
                 await self._store.save(thread_id, state)
         except Exception as e:
             logger.warning("Grace period summary failed: %s", e)
@@ -475,7 +510,7 @@ class AgentLoop:
         # Determine which tool_calls already have results
         existing_results: set[str] = set()
         if assistant_msg_idx is not None:
-            for msg in state.messages[assistant_msg_idx + 1:]:
+            for msg in state.messages[assistant_msg_idx + 1 :]:
                 if msg.get("role") == "tool":
                     existing_results.add(msg.get("tool_call_id", ""))
 
@@ -487,6 +522,7 @@ class AgentLoop:
 
             from src.tools.approval import get_approval_manager
             from src.tools.exec import _current_thread_id
+
             try:
                 _approval_mgr = get_approval_manager()
                 _approval_mgr.approve_session(thread_id, pending_tool, command_preview)
@@ -499,35 +535,46 @@ class AgentLoop:
                     deleted = []
                     try:
                         from src.tools.memory_tools import get_memory_store
+
                         mem_store = await get_memory_store()
                         for k in memory_keys:
                             await mem_store.forget(k)
                             deleted.append(k)
                     except Exception as exc:
                         import logging as _log
+
                         _log.getLogger("flyclaw.loop").warning("memory delete resume failed: %s", exc)
                     result_content = json.dumps(
                         {"ok": True, "deleted": deleted, "count": len(deleted)},
                         ensure_ascii=False,
                     )
-                    state.append_message({
-                        "role": "tool",
-                        "tool_call_id": pending_tc_id,
-                        "content": result_content,
-                    })
+                    state.append_message(
+                        {
+                            "role": "tool",
+                            "tool_call_id": pending_tc_id,
+                            "content": result_content,
+                        }
+                    )
                     existing_results.add(pending_tc_id)
                 elif pending_tc_id and assistant_msg_idx is not None:
                     assistant_msg = state.messages[assistant_msg_idx]
                     for tc in assistant_msg["tool_calls"]:
                         if tc.get("id") == pending_tc_id:
-                            result = await self._execute_tool(tc, state, thread_id)
+                            try:
+                                result = await self._execute_tool(tc, state, thread_id)
+                            except ApprovalPending as ap:
+                                state.pending_approval = ap.to_pending_data()
+                                await self._store.save(thread_id, state)
+                                raise
                             if not result:
                                 result = "[interrupted] 工具执行被打断"
-                            state.append_message({
-                                "role": "tool",
-                                "tool_call_id": tc["id"],
-                                "content": result,
-                            })
+                            state.append_message(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tc["id"],
+                                    "content": result,
+                                }
+                            )
                             break
                     existing_results.add(pending_tc_id)
 
@@ -537,37 +584,48 @@ class AgentLoop:
                         if tc_id and tc_id not in existing_results:
                             try:
                                 result = await self._execute_tool(tc, state, thread_id)
-                            except ApprovalPending:
+                            except ApprovalPending as ap:
+                                state.pending_approval = ap.to_pending_data()
                                 for t in assistant_msg["tool_calls"]:
                                     tid = t.get("id", "")
                                     if tid and tid not in existing_results and tid != tc_id:
-                                        state.append_message({
-                                            "role": "tool",
-                                            "tool_call_id": tid,
-                                            "content": "[已跳过] 等待审批中，执行已暂停。",
-                                        })
+                                        state.append_message(
+                                            {
+                                                "role": "tool",
+                                                "tool_call_id": tid,
+                                                "content": "[已跳过] 等待审批中，执行已暂停。",
+                                            }
+                                        )
                                         existing_results.add(tid)
                                 await self._store.save(thread_id, state)
                                 raise
                             if not result:
                                 result = "[interrupted] 工具执行被打断"
-                            state.append_message({
-                                "role": "tool",
-                                "tool_call_id": tc_id,
-                                "content": result,
-                            })
+                            state.append_message(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tc_id,
+                                    "content": result,
+                                }
+                            )
                             existing_results.add(tc_id)
             finally:
                 _current_thread_id.reset(_tid_token)
         else:
             if pending_tc_id:
                 pending_tool = pending.get("tool_name", "exec_command")
-                deny_msg = "[denied] 记忆删除已取消。" if pending_tool in ("memory_delete", "memory") else "[denied] Command execution was denied by user."
-                state.append_message({
-                    "role": "tool",
-                    "tool_call_id": pending_tc_id,
-                    "content": deny_msg,
-                })
+                deny_msg = (
+                    "[denied] 记忆删除已取消。"
+                    if pending_tool in ("memory_delete", "memory")
+                    else "[denied] Command execution was denied by user."
+                )
+                state.append_message(
+                    {
+                        "role": "tool",
+                        "tool_call_id": pending_tc_id,
+                        "content": deny_msg,
+                    }
+                )
                 existing_results.add(pending_tc_id)
 
             # Deny remaining unexecuted tool calls too
@@ -576,11 +634,13 @@ class AgentLoop:
                 for tc in assistant_msg["tool_calls"]:
                     tc_id = tc.get("id", "")
                     if tc_id and tc_id not in existing_results:
-                        state.append_message({
-                            "role": "tool",
-                            "tool_call_id": tc_id,
-                            "content": "[denied] Skipped due to associated denial.",
-                        })
+                        state.append_message(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "content": "[denied] Skipped due to associated denial.",
+                            }
+                        )
                         existing_results.add(tc_id)
 
         state.pending_approval = None
@@ -616,10 +676,13 @@ class AgentLoop:
                     base = 10.0
                 elif status in (503, 529) or "overload" in err_str:
                     base = 15.0
-                delay = min(base * (2 ** attempt) + random.uniform(0, base), 60.0)
+                delay = min(base * (2**attempt) + random.uniform(0, base), 60.0)
                 logger.warning(
                     "Model API error (attempt %d/%d), retrying in %.1fs: %s",
-                    attempt + 1, max_retries, delay, e,
+                    attempt + 1,
+                    max_retries,
+                    delay,
+                    e,
                 )
                 await asyncio.sleep(delay)
         raise last_exc
@@ -638,6 +701,7 @@ class AgentLoop:
 
         async def _bg_review():
             from src.skills.review import spawn_background_review
+
             summary = await spawn_background_review(
                 client=self._client,
                 tools=self._tools,
@@ -669,6 +733,8 @@ class AgentLoop:
         self._truncate_large_outputs(state.messages, thread_id)
 
         history = list(state.messages)
+
+        self._clean_truncated_markers(history)
 
         # Proactive compression check
         if self._compressor.should_compress(history, self._ctx_window_tokens):
@@ -705,10 +771,22 @@ class AgentLoop:
                 threshold = self._config.agents.tool_output_cache_chars if self._config else 8000
                 if isinstance(content, str) and len(content) > threshold and not m.get("_truncated"):
                     from src.agent.tool_cache import cache_large_output
+
                     truncated, _path = cache_large_output(content, thread_id, max_chars=threshold, preview=threshold)
                     m["content"] = truncated
                     m["_truncated"] = True
 
+    def _clean_truncated_markers(self, messages: list[dict]) -> None:
+        """Remove _truncated markers and cache file paths before compression."""
+        for m in messages:
+            m.pop("_truncated", None)
+            content = m.get("content", "")
+            if isinstance(content, str):
+                m["content"] = re.sub(
+                    r'\. Full content saved to: `[^`]+`',
+                    '.',
+                    content,
+                )
 
     # ------------------------------------------------------------------
     # Sanitization helpers
@@ -739,7 +817,8 @@ class AgentLoop:
             missing_ids.discard(pending_tc_id)
 
         orphan_result_indices = [
-            i for i, m in enumerate(state.messages)
+            i
+            for i, m in enumerate(state.messages)
             if m.get("role") == "tool" and m.get("tool_call_id", "") not in tc_ids
         ]
 
@@ -773,6 +852,7 @@ class AgentLoop:
 
         Ollama and some local models emit lone surrogates.
         """
+
         def _clean(obj: Any) -> Any:
             if isinstance(obj, str):
                 return _SURROGATE_RE.sub("\ufffd", obj)
@@ -796,6 +876,7 @@ class AgentLoop:
 
         if self._config:
             from src.tools.policy import apply_tool_policy
+
             sender_id = state.sender_id
             user = self._resolve_user(sender_id)
             tools = apply_tool_policy(tools, sender_id, self._config, user=user)
@@ -813,6 +894,7 @@ class AgentLoop:
             return None
         try:
             from src.auth.rbac import get_rbac
+
             rbac = get_rbac()
             if rbac:
                 return rbac.resolve_user(sender_id)
@@ -823,9 +905,14 @@ class AgentLoop:
     def _cache_prompt_sections(self, tools: list[ToolDef], skills_prompt: str) -> None:
         from pathlib import Path
         from src.prompt import (
-            _load_soul_md, _build_environment_hints, _build_tooling_rules,
-            _build_tool_guidance, _build_safety, _build_skills_section,
-            _build_workspace, _build_bootstrap_context,
+            _load_soul_md,
+            _build_environment_hints,
+            _build_tooling_rules,
+            _build_tool_guidance,
+            _build_safety,
+            _build_skills_section,
+            _build_workspace,
+            _build_bootstrap_context,
         )
 
         workspace_dir = "."
@@ -847,18 +934,22 @@ class AgentLoop:
 
         logger.info(
             "System prompt sections cached (soul=%d, env=%d, guidance=%d, skills=%d, bootstrap=%d chars)",
-            len(self._prompt_soul), len(self._prompt_env),
-            len(self._prompt_tool_guidance), len(self._prompt_skills),
+            len(self._prompt_soul),
+            len(self._prompt_env),
+            len(self._prompt_tool_guidance),
+            len(self._prompt_skills),
             len(self._prompt_bootstrap),
         )
 
     async def _fetch_memory_summary(self) -> str:
         import time
+
         now = time.monotonic()
         if self._memory_summary_cache and now - self._memory_summary_ts < 300:
             return self._memory_summary_cache
         try:
             from src.tools.memory_tools import get_memory_store
+
             store = await get_memory_store()
             items = await store.list_all(limit=20)
             if not items:
@@ -869,7 +960,9 @@ class AgentLoop:
                 cat = item.get("category", "fact")
                 content = item.get("content", "")[:80]
                 lines.append(f"- [{cat}] {content}")
-            lines.append('以上是已加载的主要部分的记忆，直接基于这些信息回答即可，除非用户表示不足或要求更多回忆，否则无需再次搜索。如果需要修改或补充，使用 memory 工具。')
+            lines.append(
+                "以上是已加载的主要部分的记忆，直接基于这些信息回答即可，除非用户表示不足或要求更多回忆，否则无需再次搜索。如果需要修改或补充，使用 memory 工具。"
+            )
             result = "\n".join(lines)
             self._memory_summary_cache = result
             self._memory_summary_ts = now
@@ -901,6 +994,7 @@ class AgentLoop:
 
         # Sandbox hints — dynamically read current state (not cached, since /sandbox toggles at runtime)
         from pathlib import Path as _Path
+
         workspace_dir = "."
         if self._config:
             agents_cfg = getattr(self._config, "agents", None)
@@ -933,14 +1027,16 @@ class AgentLoop:
                 repaired = _repair_tool_args(args_str)
                 if repaired != args_str:
                     logger.warning("Repaired arguments for %s", tc.function.name)
-                fixed_calls.append({
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": repaired,
-                    },
-                })
+                fixed_calls.append(
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": repaired,
+                        },
+                    }
+                )
             msg["tool_calls"] = fixed_calls
         return msg
 
@@ -951,6 +1047,7 @@ class AgentLoop:
         if last.get("role") == "assistant" and isinstance(last.get("content"), str):
             try:
                 from src.security.redact import redact
+
                 last["content"] = redact(last["content"])
             except Exception as exc:
                 logger.debug("redact failed: %s", exc)
@@ -977,7 +1074,9 @@ class AgentLoop:
             available = sorted(self._tool_map.keys())
             logger.warning(
                 "Unknown tool '%s'. Available (%d): %s",
-                tool_name, len(available), available,
+                tool_name,
+                len(available),
+                available,
             )
             hint = ", ".join(available[:10])
             return f"[error] Unknown tool: {tool_name}. Available: {hint}{'...' if len(available) > 10 else ''}"
@@ -987,6 +1086,7 @@ class AgentLoop:
             return guard.synthetic_result
 
         import time as _time
+
         start = _time.monotonic()
         args_preview = json.dumps(args, ensure_ascii=False)[:200] if args else ""
 
@@ -994,22 +1094,26 @@ class AgentLoop:
             "tool.exec_started",
             thread_id=thread_id,
             tool_name=tool_name,
-            tool_call_id=getattr(tc, 'id', '') if not isinstance(tc, dict) else tc.get("id", ""),
+            tool_call_id=getattr(tc, "id", "") if not isinstance(tc, dict) else tc.get("id", ""),
             args_preview=args_preview,
         )
 
         from src.tools.exec import _current_agent_context
-        _ctx_token = _current_agent_context.set({
-            "sender_id": state.sender_id,
-            "chat_id": state.chat_id,
-            "channel": state.channel,
-            "parent_thread_id": thread_id,
-        })
+
+        _ctx_token = _current_agent_context.set(
+            {
+                "sender_id": state.sender_id,
+                "chat_id": state.chat_id,
+                "channel": state.channel,
+                "parent_thread_id": thread_id,
+            }
+        )
         try:
             result = await tool_def.execute(args)
             duration_ms = (_time.monotonic() - start) * 1000
             try:
                 from src.security.redact import redact
+
                 result = redact(result)
             except Exception:
                 pass
@@ -1026,8 +1130,8 @@ class AgentLoop:
                 duration_ms=duration_ms,
                 result_length=len(result) if isinstance(result, str) else 0,
                 args_preview=args_preview,
-                sender_id=getattr(state, 'sender_id', ''),
-                channel=getattr(state, 'channel', ''),
+                sender_id=getattr(state, "sender_id", ""),
+                channel=getattr(state, "channel", ""),
             )
             if not result:
                 result = "[interrupted] 工具执行被打断"
@@ -1037,6 +1141,7 @@ class AgentLoop:
             from src.tools.exec import ApprovalNeededError
             from src.tools.exceptions import ToolExecutionError
             from src.tools.memory_tools import MemoryDeleteNeedsApproval
+
             if isinstance(e, (ApprovalNeededError, MemoryDeleteNeedsApproval)):
                 await emit_async(
                     "tool.approval_pending",
@@ -1058,8 +1163,8 @@ class AgentLoop:
                 error=str(e)[:500],
                 error_type=type(e).__name__,
                 args_preview=args_preview,
-                sender_id=getattr(state, 'sender_id', ''),
-                channel=getattr(state, 'channel', ''),
+                sender_id=getattr(state, "sender_id", ""),
+                channel=getattr(state, "channel", ""),
             )
             if isinstance(e, ToolExecutionError):
                 return f"[error] {e}"
@@ -1068,7 +1173,9 @@ class AgentLoop:
         finally:
             _current_agent_context.reset(_ctx_token)
 
-    async def _execute_tools_parallel(self, tool_calls: list[Any], state: AgentState, thread_id: str, interrupt_event: asyncio.Event | None = None) -> list[tuple[str, str]]:
+    async def _execute_tools_parallel(
+        self, tool_calls: list[Any], state: AgentState, thread_id: str, interrupt_event: asyncio.Event | None = None
+    ) -> list[tuple[str, str]]:
         results: list[tuple[str, str] | BaseException] = [NotImplemented] * len(tool_calls)
 
         async def _run_one(idx: int, tc: Any) -> None:
@@ -1097,6 +1204,7 @@ class AgentLoop:
                         results[i] = (tc_id, "[interrupted] 工具执行被打断")
                     elif isinstance(r, ApprovalPending):
                         from src.tools.approval import get_approval_manager
+
                         get_approval_manager().cancel_pending(r.request_id)
                         results[i] = (tc_id, "[interrupted] 工具执行被打断（审批已取消）")
                 if state.pending_approval is not None:
@@ -1109,6 +1217,7 @@ class AgentLoop:
             tc_id = tool_calls[i].id if hasattr(tool_calls[i], "id") else tool_calls[i].get("id", "")
             if isinstance(r, ApprovalPending):
                 from src.tools.approval import get_approval_manager
+
                 mgr = get_approval_manager()
                 for j in range(i + 1, len(results)):
                     if results[j] is NotImplemented:
@@ -1122,14 +1231,7 @@ class AgentLoop:
                         mgr.cancel_pending(results[j].request_id)
                     elif not isinstance(results[j], BaseException):
                         final.append(results[j])
-                state.pending_approval = {
-                    "request_id": r.request_id,
-                    "tool_name": r.tool_name,
-                    "command_preview": r.command_preview[:200],
-                    "tool_call_id": tc_id,
-                }
-                if r.keys:
-                    state.pending_approval["memory_keys"] = r.keys
+                state.pending_approval = r.to_pending_data()
                 r.partial_results = list(final)
                 raise r
             if isinstance(r, BaseException):
@@ -1140,13 +1242,14 @@ class AgentLoop:
 
     async def _handle_approval(self, error: Exception, tc: Any, state: AgentState, thread_id: str) -> str:
         """Handle approval-needed error by saving state and raising ApprovalPending."""
-        if getattr(self, '_auto_deny_approval', False):
+        if getattr(self, "_auto_deny_approval", False):
             tool_name = getattr(error, "tool_name", "exec_command")
             cmd = getattr(error, "command_preview", "") or getattr(error, "command", "")
             logger.info("Auto-denying approval in sub-agent for %s: %s", tool_name, cmd[:80])
             return "[denied] 此操作需要用户审批，子代理模式下自动拒绝。请使用其他方式完成任务。"
 
         from src.tools.approval import get_approval_manager
+
         mgr = get_approval_manager()
         cmd = getattr(error, "command_preview", "") or getattr(error, "command", "")
         denylisted = getattr(error, "denylisted", False)
@@ -1167,19 +1270,6 @@ class AgentLoop:
             timeout_seconds=getattr(error, "timeout", None) or 120,
         )
 
-        pending_data = {
-            "request_id": req.id,
-            "tool_name": tool_name,
-            "command_preview": cmd[:200],
-            "tool_call_id": tc_id,
-        }
-        memory_keys = getattr(error, "keys", None)
-        if memory_keys:
-            pending_data["memory_keys"] = memory_keys
-
-        state.pending_approval = pending_data
-        await self._store.save(thread_id, state)
-
         raise ApprovalPending(
             thread_id=thread_id,
             request_id=req.id,
@@ -1189,4 +1279,5 @@ class AgentLoop:
             timeout=getattr(error, "timeout", None),
             auto_deny=getattr(error, "auto_deny", False),
             keys=getattr(error, "keys", None),
+            tc_id=tc_id,
         )

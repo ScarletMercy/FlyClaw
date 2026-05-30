@@ -22,18 +22,23 @@ logger = logging.getLogger("flyclaw.gateway")
 
 router = APIRouter()
 
-_SENSITIVE_KEYS = frozenset({
-    "api_key", "app_secret", "client_secret", "auth_token",
-    "token", "password", "secret", "memory_judge_api_key",
-})
+_SENSITIVE_KEYS = frozenset(
+    {
+        "api_key",
+        "app_secret",
+        "client_secret",
+        "auth_token",
+        "token",
+        "password",
+        "secret",
+        "memory_judge_api_key",
+    }
+)
 
 
 def _redact_sensitive(obj):
     if isinstance(obj, dict):
-        return {
-            k: "***" if k in _SENSITIVE_KEYS else _redact_sensitive(v)
-            for k, v in obj.items()
-        }
+        return {k: "***" if k in _SENSITIVE_KEYS else _redact_sensitive(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [_redact_sensitive(item) for item in obj]
     return obj
@@ -66,42 +71,49 @@ async def acp_websocket(ws: WebSocket):
             msg_id = raw.get("id")
 
             if method == "initialize":
-                await ws.send_json({
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {
-                        "protocolVersion": "0.2",
-                        "agentCapabilities": {"streaming": True, "tools": True},
-                        "configOptions": [],
-                        "modes": ["default"],
-                    },
-                })
+                await ws.send_json(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "result": {
+                            "protocolVersion": "0.2",
+                            "agentCapabilities": {"streaming": True, "tools": True},
+                            "configOptions": [],
+                            "modes": ["default"],
+                        },
+                    }
+                )
             elif method == "newSession":
                 params = raw.get("params", {})
                 sid = sessions.create("default", cwd=params.get("cwd", ""))
-                await ws.send_json({
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {"sessionId": sid, "configOptions": [], "modes": ["default"]},
-                })
+                await ws.send_json(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "result": {"sessionId": sid, "configOptions": [], "modes": ["default"]},
+                    }
+                )
             elif method == "prompt":
                 params = raw.get("params", {})
                 sid = params.get("sessionId", "")
                 content = params.get("content", [])
-                prompt = " ".join(
-                    b.get("text", "") for b in content if b.get("type") == "text"
-                )
+                prompt = " ".join(b.get("text", "") for b in content if b.get("type") == "text")
                 stop_reason = "end_turn"
                 async for event in runtime.run_turn(session_id=sid, prompt=prompt):
                     if event.type == "text_delta" and event.text:
-                        await ws.send_json({
-                            "jsonrpc": "2.0",
-                            "method": "sessionUpdate",
-                            "params": {
-                                "sessionId": sid,
-                                "update": {"type": "agent_message_chunk", "content": {"type": "text", "text": event.text}},
-                            },
-                        })
+                        await ws.send_json(
+                            {
+                                "jsonrpc": "2.0",
+                                "method": "sessionUpdate",
+                                "params": {
+                                    "sessionId": sid,
+                                    "update": {
+                                        "type": "agent_message_chunk",
+                                        "content": {"type": "text", "text": event.text},
+                                    },
+                                },
+                            }
+                        )
                     elif event.type == "done":
                         stop_reason = event.stop_reason or "end_turn"
                 await ws.send_json({"jsonrpc": "2.0", "id": msg_id, "result": {"stopReason": stop_reason, "usage": {}}})
@@ -110,13 +122,17 @@ async def acp_websocket(ws: WebSocket):
                 await ws.send_json({"jsonrpc": "2.0", "id": msg_id, "result": {"cancelled": True}})
             elif method == "listSessions":
                 s_list = sessions.list_sessions()
-                await ws.send_json({
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {"sessions": [{"sessionId": s.session_id, "agentId": s.agent_id} for s in s_list]},
-                })
+                await ws.send_json(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "result": {"sessions": [{"sessionId": s.session_id, "agentId": s.agent_id} for s in s_list]},
+                    }
+                )
             else:
-                await ws.send_json({"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": f"Unknown method: {method}"}})
+                await ws.send_json(
+                    {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32601, "message": f"Unknown method: {method}"}}
+                )
     except WebSocketDisconnect:
         pass
 
@@ -174,7 +190,13 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         app.include_router(canvas_router)
     app.include_router(router)
     cors_origins = getattr(app_config.gateway, "cors_origins", []) or []
-    app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_credentials=bool(cors_origins), allow_methods=["*"], allow_headers=["*"])
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=bool(cors_origins),
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     @app.get("/healthz")
     async def healthz():
@@ -188,7 +210,9 @@ def create_gateway(app_config, agent_loop, cron_service=None):
     async def openai_chat_completions(request: Request):
         content_type = request.headers.get("content-type", "")
         if "application/json" not in content_type.lower():
-            return JSONResponse({"error": "unsupported_media_type", "message": "Content-Type must be application/json"}, status_code=415)
+            return JSONResponse(
+                {"error": "unsupported_media_type", "message": "Content-Type must be application/json"}, status_code=415
+            )
         try:
             body = await request.json()
         except json.JSONDecodeError:
@@ -200,18 +224,35 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         client_ip = request.client.host if request.client else "unknown"
         if not await _rate_limiter.acquire(client_ip):
             wait = await _rate_limiter.wait_time(client_ip)
-            return JSONResponse({"error": "rate_limit_exceeded", "retry_after": wait}, status_code=429, headers={"Retry-After": str(int(wait))})
+            return JSONResponse(
+                {"error": "rate_limit_exceeded", "retry_after": wait},
+                status_code=429,
+                headers={"Retry-After": str(int(wait))},
+            )
         messages = body.get("messages", [])
         model_name = body.get("model", "flyclaw")
         stream = body.get("stream", False)
         thread_id = body.get("user", str(uuid.uuid4()))
         from src.agent.state import AgentState
+
         chat_messages = []
         for m in messages:
             chat_messages.append({"role": m.get("role", "user"), "content": m.get("content", "")})
-        input_state = AgentState(messages=chat_messages, system_prompt=app_config.agents.system_prompt, sender_id="openai-api", chat_id="openai-api", chat_type="p2p", message_id=str(uuid.uuid4()), channel="api")
+        input_state = AgentState(
+            messages=chat_messages,
+            system_prompt=app_config.agents.system_prompt,
+            sender_id="openai-api",
+            chat_id="openai-api",
+            chat_type="p2p",
+            message_id=str(uuid.uuid4()),
+            channel="api",
+        )
         if stream:
-            return StreamingResponse(_stream_response(agent_loop, input_state, thread_id), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
+            return StreamingResponse(
+                _stream_response(agent_loop, input_state, thread_id),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+            )
         try:
             result_state = await agent_loop.run(input_state, thread_id)
         except Exception as e:
@@ -221,7 +262,16 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             if msg.get("role") == "assistant" and msg.get("content"):
                 assistant_text = msg["content"]
                 break
-        return {"id": f"chatcmpl-{uuid.uuid4().hex[:12]}", "object": "chat.completion", "created": int(time.time()), "model": model_name, "choices": [{"index": 0, "message": {"role": "assistant", "content": assistant_text}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}}
+        return {
+            "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model_name,
+            "choices": [
+                {"index": 0, "message": {"role": "assistant", "content": assistant_text}, "finish_reason": "stop"}
+            ],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }
 
     _STREAM_CHUNK_SIZE = 16
 
@@ -237,7 +287,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
                     assistant_text = msg["content"]
                     break
             for i in range(0, len(assistant_text), _STREAM_CHUNK_SIZE):
-                chunk = assistant_text[i:i + _STREAM_CHUNK_SIZE]
+                chunk = assistant_text[i : i + _STREAM_CHUNK_SIZE]
                 yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'flyclaw', 'choices': [{'index': 0, 'delta': {'content': chunk}, 'finish_reason': None}]})}\n\n"
                 await asyncio.sleep(0.01)
         except Exception as e:
@@ -311,9 +361,18 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         elif method == "chat.send":
             try:
                 from src.agent.state import AgentState
+
                 text = params.get("text", "")
                 thread_id = params.get("thread_id", "ws-default")
-                input_state = AgentState(messages=[{"role": "user", "content": text}], system_prompt=app_config.agents.system_prompt, sender_id="ws", chat_id="ws", chat_type="p2p", message_id=str(uuid.uuid4()), channel="ws")
+                input_state = AgentState(
+                    messages=[{"role": "user", "content": text}],
+                    system_prompt=app_config.agents.system_prompt,
+                    sender_id="ws",
+                    chat_id="ws",
+                    chat_type="p2p",
+                    message_id=str(uuid.uuid4()),
+                    channel="ws",
+                )
                 store = loop.get_store()
                 existing = await store.aload(thread_id)
                 if existing:
@@ -330,7 +389,9 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             except Exception as e:
                 logger.warning("WS chat.send error: %s", e, exc_info=True)
                 try:
-                    await ws.send_json({"type": "res", "id": frame_id, "ok": False, "error": {"code": "CHAT_ERROR", "message": str(e)}})
+                    await ws.send_json(
+                        {"type": "res", "id": frame_id, "ok": False, "error": {"code": "CHAT_ERROR", "message": str(e)}}
+                    )
                 except Exception:
                     pass
         elif method == "sessions.list":
@@ -338,19 +399,33 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         elif method == "health":
             await ws.send_json({"type": "res", "id": frame_id, "ok": True, "payload": {"status": "ok"}})
         elif method == "cron.list" and cron_service:
-            await ws.send_json({"type": "res", "id": frame_id, "ok": True, "payload": [j.model_dump() for j in cron_service.list_jobs()]})
+            await ws.send_json(
+                {
+                    "type": "res",
+                    "id": frame_id,
+                    "ok": True,
+                    "payload": [j.model_dump() for j in cron_service.list_jobs()],
+                }
+            )
         elif method == "cron.add" and cron_service:
             try:
                 from src.cron.types import CronJobCreate
+
                 job = await cron_service.add_job(CronJobCreate(**params))
                 await ws.send_json({"type": "res", "id": frame_id, "ok": True, "payload": job.model_dump()})
             except Exception as e:
-                await ws.send_json({"type": "res", "id": frame_id, "ok": False, "error": {"code": "INVALID_PARAMS", "message": str(e)}})
+                await ws.send_json(
+                    {"type": "res", "id": frame_id, "ok": False, "error": {"code": "INVALID_PARAMS", "message": str(e)}}
+                )
         elif method == "cron.run" and cron_service:
             result = await cron_service.run_job_now(params.get("job_id", ""))
-            await ws.send_json({"type": "res", "id": frame_id, "ok": True, "payload": result.model_dump() if result else None})
+            await ws.send_json(
+                {"type": "res", "id": frame_id, "ok": True, "payload": result.model_dump() if result else None}
+            )
         else:
-            await ws.send_json({"type": "res", "id": frame_id, "ok": False, "error": {"code": "UNKNOWN_METHOD", "message": method}})
+            await ws.send_json(
+                {"type": "res", "id": frame_id, "ok": False, "error": {"code": "UNKNOWN_METHOD", "message": method}}
+            )
 
     async def require_auth(request: Request) -> None:
         if not app_config.gateway.auth_token:
@@ -365,6 +440,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         if not app_config.auth.enabled:
             raise HTTPException(status_code=400, detail="auth not enabled")
         from src.auth.rbac import get_rbac
+
         rbac = get_rbac()
         if rbac is None:
             raise HTTPException(status_code=500, detail="RBAC not initialized")
@@ -376,12 +452,15 @@ def create_gateway(app_config, agent_loop, cron_service=None):
 
     if cron_service:
         from src.cron.types import CronJobCreate, CronJobPatch
+
         @app.get("/api/cron/status")
         async def cron_status(request: Request, _auth=Depends(require_auth)):
             return cron_service.status()
+
         @app.get("/api/cron/jobs")
         async def cron_list_jobs(request: Request, _auth=Depends(require_auth)):
             return [j.model_dump() for j in cron_service.list_jobs()]
+
         @app.post("/api/cron/jobs")
         async def cron_add_job(request: Request, _auth=Depends(require_auth)):
             try:
@@ -389,10 +468,12 @@ def create_gateway(app_config, agent_loop, cron_service=None):
                 return (await cron_service.add_job(CronJobCreate(**body))).model_dump()
             except Exception as e:
                 return JSONResponse({"error": str(e)}, status_code=422)
+
         @app.get("/api/cron/jobs/{job_id}")
         async def cron_get_job(job_id: str, request: Request, _auth=Depends(require_auth)):
             job = cron_service.get_job(job_id)
             return job.model_dump() if job else JSONResponse({"error": "not found"}, status_code=404)
+
         @app.patch("/api/cron/jobs/{job_id}")
         async def cron_update_job(job_id: str, request: Request, _auth=Depends(require_auth)):
             try:
@@ -400,9 +481,11 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             except Exception as e:
                 return JSONResponse({"error": str(e)}, status_code=422)
             return job.model_dump() if job else JSONResponse({"error": "not found"}, status_code=404)
+
         @app.delete("/api/cron/jobs/{job_id}")
         async def cron_delete_job(job_id: str, request: Request, _auth=Depends(require_auth)):
             return {"removed": await cron_service.remove_job(job_id)}
+
         @app.post("/api/cron/jobs/{job_id}/run")
         async def cron_run_job(job_id: str, request: Request, _auth=Depends(require_auth)):
             result = await cron_service.run_job_now(job_id)
@@ -411,21 +494,28 @@ def create_gateway(app_config, agent_loop, cron_service=None):
     @app.post("/api/approval/{request_id}/resolve")
     async def resolve_approval(request_id: str, request: Request, _auth=Depends(require_auth)):
         from src.tools.approval import get_approval_manager
+
         body = await request.json()
         decision = body.get("decision", "deny")
         mgr = get_approval_manager()
         ok = mgr.resolve(request_id, decision)
-        return {"resolved": True, "request_id": request_id, "decision": decision} if ok else JSONResponse({"error": "not found or already resolved"}, status_code=404)
+        return (
+            {"resolved": True, "request_id": request_id, "decision": decision}
+            if ok
+            else JSONResponse({"error": "not found or already resolved"}, status_code=404)
+        )
 
     @app.get("/api/approval/pending")
     async def list_pending_approvals(request: Request, _auth=Depends(require_auth)):
         from src.tools.approval import get_approval_manager
+
         return [r.model_dump() for r in get_approval_manager().list_pending()]
 
     @app.get("/api/plugins")
     async def list_plugins(request: Request, _auth=Depends(require_auth)):
         try:
             from src.plugins.registry import get_plugin_registry
+
             return get_plugin_registry().list_plugins()
         except Exception:
             return []
@@ -434,6 +524,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
     async def list_commands(request: Request, _auth=Depends(require_auth)):
         try:
             from src.commands.dispatcher import get_dispatcher
+
             d = get_dispatcher()
             return {"commands": d.list_commands()} if d else {"commands": []}
         except Exception:
@@ -445,8 +536,14 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             body = await request.json()
             if not body.get("code") or not body.get("device_id"):
                 return JSONResponse({"error": "code and device_id required"}, status_code=400)
-            user = rbac.store.verify_pairing(body["code"], body["device_id"], platform=body.get("platform", "web"), name=body.get("name", ""))
-            return {"paired": True, "user_id": user.user_id, "role": user.role.value} if user else JSONResponse({"error": "invalid or expired pairing code"}, status_code=404)
+            user = rbac.store.verify_pairing(
+                body["code"], body["device_id"], platform=body.get("platform", "web"), name=body.get("name", "")
+            )
+            return (
+                {"paired": True, "user_id": user.user_id, "role": user.role.value}
+                if user
+                else JSONResponse({"error": "invalid or expired pairing code"}, status_code=404)
+            )
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -464,11 +561,14 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             if body.get("role"):
                 try:
                     from src.auth.models import UserRole
+
                     rbac.store.update_user_role(user_id, UserRole(body["role"]))
                 except ValueError:
                     return JSONResponse({"error": f"invalid role: {body['role']}"}, status_code=400)
             if body.get("allowed_tools") is not None or body.get("denied_tools") is not None:
-                rbac.store.update_user_tools(user_id, allowed_tools=body.get("allowed_tools"), denied_tools=body.get("denied_tools"))
+                rbac.store.update_user_tools(
+                    user_id, allowed_tools=body.get("allowed_tools"), denied_tools=body.get("denied_tools")
+                )
             user = rbac.store.get_user(user_id)
             return user.model_dump() if user else JSONResponse({"error": "user not found"}, status_code=404)
         except Exception as e:
@@ -498,14 +598,18 @@ def create_gateway(app_config, agent_loop, cron_service=None):
     @app.get("/api/sessions/search")
     async def session_search_api(request: Request, _auth=Depends(require_auth)):
         from src.session_index.store import get_session_index
+
         store = get_session_index()
         if not store:
             return JSONResponse({"error": "session search not enabled"}, status_code=503)
-        return JSONResponse(await store.search(request.query_params.get("q", ""), limit=int(request.query_params.get("limit", "10"))))
+        return JSONResponse(
+            await store.search(request.query_params.get("q", ""), limit=int(request.query_params.get("limit", "10")))
+        )
 
     @app.get("/api/sessions")
     async def session_list_api(request: Request, _auth=Depends(require_auth)):
         from src.session_index.store import get_session_index
+
         store = get_session_index()
         if not store:
             return JSONResponse({"error": "session search not enabled"}, status_code=503)
@@ -514,6 +618,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
     @app.get("/api/sessions/{thread_id}/messages")
     async def session_messages_api(thread_id: str, request: Request, _auth=Depends(require_auth)):
         from src.session_index.store import get_session_index
+
         store = get_session_index()
         if not store:
             return JSONResponse({"error": "session search not enabled"}, status_code=503)
@@ -542,6 +647,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
     @app.patch("/api/config")
     async def patch_config(request: Request):
         import yaml as _yaml
+
         app = _get_app(request)
         if not app:
             raise HTTPException(503, "Application not ready")

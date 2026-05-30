@@ -28,6 +28,7 @@ def _validate_url(url: str) -> None:
 
 def _get_runner():
     from src._container import get_container
+
     return get_container().media_understanding_runner
 
 

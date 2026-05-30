@@ -41,6 +41,7 @@ class BrowserManager:
     def _load_config(self):
         if self._config is None:
             from src.config import load_config
+
             self._config = load_config().tools.browser
         return self._config
 
@@ -48,6 +49,7 @@ class BrowserManager:
         if self._playwright is not None:
             return self._playwright
         from playwright.async_api import async_playwright
+
         self._playwright = await async_playwright().start()
         if self._cleanup_task is None:
             self._cleanup_task = asyncio.create_task(self._idle_cleanup_loop())
@@ -60,7 +62,8 @@ class BrowserManager:
 
         if sys.platform == "win32":
             _default_base = os.path.join(
-                os.environ.get("LOCALAPPDATA", ""), "ms-playwright",
+                os.environ.get("LOCALAPPDATA", ""),
+                "ms-playwright",
             )
         elif sys.platform == "darwin":
             _default_base = os.path.expanduser("~/Library/Caches/ms-playwright")
@@ -73,7 +76,9 @@ class BrowserManager:
             if sys.platform == "win32":
                 pattern = os.path.join(base, "chromium-*", "chrome-win64", "chrome.exe")
             elif sys.platform == "darwin":
-                pattern = os.path.join(base, "chromium-*", "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium")
+                pattern = os.path.join(
+                    base, "chromium-*", "chrome-mac", "Chromium.app", "Contents", "MacOS", "Chromium"
+                )
             else:
                 pattern = os.path.join(base, "chromium-*", "chrome-linux", "chrome")
         elif browser_name == "firefox":
@@ -113,8 +118,12 @@ class BrowserManager:
 
             if config.cdp_url:
                 browser = await pw.chromium.connect_over_cdp(config.cdp_url)
-                context = browser.contexts[0] if browser.contexts else await browser.new_context(
-                    viewport={"width": config.viewport_width, "height": config.viewport_height},
+                context = (
+                    browser.contexts[0]
+                    if browser.contexts
+                    else await browser.new_context(
+                        viewport={"width": config.viewport_width, "height": config.viewport_height},
+                    )
                 )
             else:
                 launch_args = []
@@ -154,6 +163,7 @@ class BrowserManager:
 
             if config.stealth:
                 from src.tools.browser.stealth import apply_stealth
+
                 await apply_stealth(page)
 
             self._sessions[session_id] = BrowserSession(
@@ -162,8 +172,7 @@ class BrowserManager:
                 page=page,
                 last_used=time.time(),
             )
-            logger.info("Browser session created: %s (%s)", session_id,
-                        "CDP" if config.cdp_url else config.browser)
+            logger.info("Browser session created: %s (%s)", session_id, "CDP" if config.cdp_url else config.browser)
             return page
 
     async def _close_session(self, session_id: str):

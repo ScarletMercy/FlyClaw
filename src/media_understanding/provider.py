@@ -229,7 +229,11 @@ class MediaProviderClient:
         """Fallback: send audio as base64 to chat completions for transcription."""
         # Audio too large for base64 chat payload (>5MB raw ≈ >7MB base64)
         if len(audio_data) > 5 * 1024 * 1024:
-            return {"text": "", "model": self.model, "error": "Audio too large for chat-based transcription (>5MB). Use a smaller file or a provider with /audio/transcriptions support."}
+            return {
+                "text": "",
+                "model": self.model,
+                "error": "Audio too large for chat-based transcription (>5MB). Use a smaller file or a provider with /audio/transcriptions support.",
+            }
 
         b64 = base64.b64encode(audio_data).decode("ascii")
         fmt = mime_type.split("/")[-1] if "/" in mime_type else "wav"
@@ -238,7 +242,10 @@ class MediaProviderClient:
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Please transcribe the following audio. Output only the transcribed text, nothing else."},
+                    {
+                        "type": "text",
+                        "text": "Please transcribe the following audio. Output only the transcribed text, nothing else.",
+                    },
                     {"type": "input_audio", "input_audio": {"data": b64, "format": fmt}},
                 ],
             }
@@ -259,7 +266,11 @@ class MediaProviderClient:
             resp.raise_for_status()
         except httpx.HTTPStatusError as e:
             logger.error("Audio chat transcription failed: %s %s", e.response.status_code, e.response.text[:200])
-            return {"text": "", "model": self.model, "error": f"Audio transcription via chat failed: {e.response.status_code}. The model may not support audio input."}
+            return {
+                "text": "",
+                "model": self.model,
+                "error": f"Audio transcription via chat failed: {e.response.status_code}. The model may not support audio input.",
+            }
 
         data = resp.json()
         text = ""
@@ -278,7 +289,11 @@ class MediaProviderClient:
                         text += block.get("text", "")
 
         if not text.strip():
-            return {"text": "", "model": self.model, "error": "Audio transcription returned empty result. The model may not support audio input."}
+            return {
+                "text": "",
+                "model": self.model,
+                "error": "Audio transcription returned empty result. The model may not support audio input.",
+            }
 
         return {"text": text.strip(), "model": data.get("model", self.model)}
 

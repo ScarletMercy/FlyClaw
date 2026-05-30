@@ -31,7 +31,11 @@ async def kill_process_tree(proc: asyncio.subprocess.Process) -> None:
     if os.name == "nt":
         try:
             t = await asyncio.create_subprocess_exec(
-                "taskkill", "/T", "/F", "/PID", str(pid),
+                "taskkill",
+                "/T",
+                "/F",
+                "/PID",
+                str(pid),
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
             )
@@ -52,6 +56,7 @@ async def kill_process_tree(proc: asyncio.subprocess.Process) -> None:
 
 
 # ── Existing supervised execution ──
+
 
 @dataclass
 class ProcessResult:
@@ -170,7 +175,11 @@ class ProcessSupervisor:
         else:
             try:
                 t = await asyncio.create_subprocess_exec(
-                    "taskkill", "/T", "/F", "/PID", str(pid),
+                    "taskkill",
+                    "/T",
+                    "/F",
+                    "/PID",
+                    str(pid),
                     stdout=asyncio.subprocess.DEVNULL,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
@@ -189,6 +198,7 @@ class ProcessSupervisor:
 
 
 # ── Background process management ──
+
 
 @dataclass
 class BackgroundSession:
@@ -258,16 +268,16 @@ class ProcessRegistry:
         )
 
         # Start background reader
-        session._reader_task = asyncio.create_task(
-            self._read_output(session)
-        )
+        session._reader_task = asyncio.create_task(self._read_output(session))
 
         self._sessions[session_id] = session
         self._evict()
 
         logger.info(
             "[bg-process] spawned session=%s pid=%d cmd=%.200s",
-            session_id, proc.pid, command,
+            session_id,
+            proc.pid,
+            command,
         )
         return session_id
 
@@ -305,7 +315,9 @@ class ProcessRegistry:
         session.finished_at = time.monotonic()
         logger.info(
             "[bg-process] exited session=%s pid=%d exit=%d",
-            session.id, session.pid, session.exit_code,
+            session.id,
+            session.pid,
+            session.exit_code,
         )
 
     async def poll(self, session_id: str) -> dict:
@@ -389,9 +401,11 @@ class ProcessRegistry:
 
         lines = session.output_buffer.splitlines()
         total = len(lines)
-        selected = lines[offset:offset + limit]
+        selected = lines[offset : offset + limit]
 
-        header = f"Session {session_id} ({session.status}, lines {offset + 1}-{min(offset + limit, total)} of {total})\n"
+        header = (
+            f"Session {session_id} ({session.status}, lines {offset + 1}-{min(offset + limit, total)} of {total})\n"
+        )
         return header + "\n".join(selected)
 
     def list_sessions(self) -> list[dict]:
@@ -401,15 +415,17 @@ class ProcessRegistry:
         for s in self._sessions.values():
             status = s.status
             elapsed = round(now - s.started_at, 1)
-            result.append({
-                "id": s.id,
-                "command": s.command[:100],
-                "pid": s.pid,
-                "status": status,
-                "exit_code": s.exit_code,
-                "elapsed": elapsed,
-                "started_at": s.started_at,
-            })
+            result.append(
+                {
+                    "id": s.id,
+                    "command": s.command[:100],
+                    "pid": s.pid,
+                    "status": status,
+                    "exit_code": s.exit_code,
+                    "elapsed": elapsed,
+                    "started_at": s.started_at,
+                }
+            )
         return sorted(result, key=lambda x: x["started_at"], reverse=True)
 
     def _evict(self):
@@ -417,8 +433,7 @@ class ProcessRegistry:
         now = time.monotonic()
         # Remove sessions past TTL
         expired = [
-            sid for sid, s in self._sessions.items()
-            if s.finished_at and (now - s.finished_at) > self._finished_ttl
+            sid for sid, s in self._sessions.items() if s.finished_at and (now - s.finished_at) > self._finished_ttl
         ]
         for sid in expired:
             s = self._sessions.pop(sid, None)

@@ -36,6 +36,7 @@ class ReloadExecutor:
 
     async def _do_reload_model(self):
         from src.agent.client import create_chain
+
         new_client = create_chain(self._app.config)
         if self._app.agent_loop:
             self._app.agent_loop._client = new_client
@@ -46,6 +47,7 @@ class ReloadExecutor:
         from src.cron.service import CronService
         from src.cron.store import CronStore
         from src.cron.executor import execute_cron_job
+
         if self._app.cron_service:
             await self._app.cron_service.stop()
         store = CronStore(self._app.config.cron.store_path)
@@ -59,6 +61,7 @@ class ReloadExecutor:
 
     async def _do_reload_tools(self):
         from src.tools.exec import reset_config_cache
+
         reset_config_cache()
         tools = self._app._collect_builtin_tools()
         registry = self._app.tool_registry
@@ -81,12 +84,15 @@ class ReloadExecutor:
             self._app.agent_loop._skills_prompt = build_skills_prompt(skills)
 
             from src.prompt import _build_skills_section
-            self._app.agent_loop._prompt_skills = "\n".join(
-                _build_skills_section(self._app.agent_loop._skills_prompt)
-            ) if self._app.agent_loop._skills_prompt else ""
+
+            self._app.agent_loop._prompt_skills = (
+                "\n".join(_build_skills_section(self._app.agent_loop._skills_prompt))
+                if self._app.agent_loop._skills_prompt
+                else ""
+            )
 
             # Update CommandDispatcher with new skills
-            if hasattr(self._app, 'dispatcher'):
+            if hasattr(self._app, "dispatcher"):
                 self._app.dispatcher._reload_skills(skills)
 
     async def _do_reload_memory(self):
@@ -96,6 +102,7 @@ class ReloadExecutor:
         try:
             from src.auth.rbac import RBAC
             from src.auth.store import AuthStore
+
             store = AuthStore(self._app.config.auth.db_path)
             self._app.rbac = RBAC(store, self._app.config)
         except Exception as e:

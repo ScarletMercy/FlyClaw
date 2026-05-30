@@ -43,11 +43,13 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
 
     if channel == "qq":
         from src.channels.qq import _qq_channel
+
         if _qq_channel and await _qq_channel.send_audio(chat_id, audio_bytes):
             return f"Voice sent ({len(audio_bytes)} bytes, voice={voice})"
 
     if channel == "weixin":
         from src.channels.weixin import _weixin_channel
+
         if _weixin_channel:
             try:
                 with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
@@ -66,6 +68,7 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
 
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef
+
     return [
         ToolDef.from_function(text_to_speech),
     ]

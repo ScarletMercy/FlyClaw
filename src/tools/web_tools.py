@@ -50,6 +50,7 @@ def _get_api_key() -> str:
         return _cached_api_key
     try:
         from src.config import load_config
+
         cfg = load_config()
         _cached_api_key = cfg.tools.web_search.api_key or ""
     except Exception as e:
@@ -79,6 +80,7 @@ def _unescape_unicode(s: str) -> str:
 def _html_to_markdown(html: str) -> str:
     try:
         from markdownify import markdownify as md
+
         return md(html)
     except ImportError:
         # Fallback: strip tags manually
@@ -109,9 +111,7 @@ async def _bing_search(query: str, max_results: int = 5) -> str:
 
         html = response.text
 
-        algo_blocks = re.findall(
-            r'<li\s+class="b_algo"[^>]*>(.*?)</li>', html, re.DOTALL
-        )
+        algo_blocks = re.findall(r'<li\s+class="b_algo"[^>]*>(.*?)</li>', html, re.DOTALL)
 
         results: list[str] = []
         for block in algo_blocks[:max_results]:
@@ -173,6 +173,7 @@ async def web_fetch(url: str) -> str:
 
     # SSRF protection
     from src.security.url_safety import is_safe_url
+
     safe, reason = is_safe_url(url)
     if not safe:
         logger.warning("Blocked URL fetch (SSRF): %s — %s", url, reason)
@@ -198,10 +199,7 @@ async def web_fetch(url: str) -> str:
         raw_bytes = len(response.content)
 
         if _is_binary_content_type(content_type):
-            return (
-                f"Binary content ({content_type}, {raw_bytes} bytes). "
-                f"Cannot extract text."
-            )
+            return f"Binary content ({content_type}, {raw_bytes} bytes). Cannot extract text."
 
         if "text/html" in content_type:
             markdown_content = _html_to_markdown(response.text)
@@ -209,16 +207,10 @@ async def web_fetch(url: str) -> str:
             markdown_content = response.text
 
         if len(markdown_content) > MAX_MARKDOWN_LENGTH:
-            markdown_content = (
-                markdown_content[:MAX_MARKDOWN_LENGTH]
-                + "\n\n[Content truncated due to length...]"
-            )
+            markdown_content = markdown_content[:MAX_MARKDOWN_LENGTH] + "\n\n[Content truncated due to length...]"
 
         elapsed_ms = int((time.time() - start) * 1000)
-        return (
-            f"Content from {url} ({raw_bytes} bytes, {elapsed_ms}ms):\n\n"
-            f"{markdown_content}\n\n---"
-        )
+        return f"Content from {url} ({raw_bytes} bytes, {elapsed_ms}ms):\n\n{markdown_content}\n\n---"
 
     except httpx.TimeoutException:
         return f"Request timed out after {FETCH_TIMEOUT}s"

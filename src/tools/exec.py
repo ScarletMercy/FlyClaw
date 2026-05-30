@@ -16,9 +16,7 @@ logger = logging.getLogger("flyclaw.exec")
 
 _current_thread_id: ContextVar[str] = ContextVar("_current_thread_id", default="")
 
-_current_agent_context: ContextVar[dict] = ContextVar(
-    "_current_agent_context", default={}
-)
+_current_agent_context: ContextVar[dict] = ContextVar("_current_agent_context", default={})
 
 _cached_config = None
 
@@ -379,13 +377,13 @@ def _get_first_token(command: str) -> str:
 def _is_denylisted(command: str, deny_patterns: list[str]) -> tuple[bool, str]:
     import re
 
-    cmd_normalized = re.sub(r'\s+', ' ', command.strip()).lower()
+    cmd_normalized = re.sub(r"\s+", " ", command.strip()).lower()
     for pattern in deny_patterns:
         pattern_lower = pattern.lower()
         if fnmatch.fnmatch(cmd_normalized, pattern_lower):
             return True, pattern
-        start_boundary = r'\b' if pattern_lower[0:1].isalnum() or pattern_lower[0:1] == '_' else ''
-        end_boundary = r'\b' if pattern_lower[-1:].isalnum() or pattern_lower[-1:] == '_' else ''
+        start_boundary = r"\b" if pattern_lower[0:1].isalnum() or pattern_lower[0:1] == "_" else ""
+        end_boundary = r"\b" if pattern_lower[-1:].isalnum() or pattern_lower[-1:] == "_" else ""
         try:
             if re.search(start_boundary + re.escape(pattern_lower) + end_boundary, cmd_normalized):
                 return True, pattern
@@ -465,7 +463,13 @@ async def exec_command(
         else:
             wd = workspace
 
-        allowed = [workspace.resolve()] + [Path(d).expanduser().resolve() for d in sandbox_allowed_dirs] + _collect_skill_dirs(cfg) + [(Path.home() / ".flyclaw" / "temp").resolve()]
+        allowed = (
+            [workspace.resolve()]
+            + [Path(d).expanduser().resolve() for d in sandbox_allowed_dirs]
+            + _collect_skill_dirs(cfg)
+            + [(Path.home() / ".flyclaw" / "temp").resolve()]
+        )
+
         def _is_under(child: Path, parent: Path) -> bool:
             try:
                 child.relative_to(parent)
@@ -487,15 +491,18 @@ async def exec_command(
         env = None
         if sandbox_enabled:
             import os
+
             env = {k: os.environ[k] for k in sandbox_env_whitelist if k in os.environ}
 
         registry = get_process_registry()
         session_id = await registry.spawn(command, workdir=workdir, env=env)
-        return json.dumps({
-            "session_id": session_id,
-            "status": "running",
-            "command": command[:200],
-        })
+        return json.dumps(
+            {
+                "session_id": session_id,
+                "status": "running",
+                "command": command[:200],
+            }
+        )
 
     blocked, matched = _is_denylisted(command, deny_patterns)
 
@@ -514,7 +521,9 @@ async def exec_command(
             mgr = get_approval_manager()
             if not mgr.has_durable_approval("exec_command", command):
                 if not mgr.has_session_approval(_current_thread_id.get(""), "exec_command", command):
-                    logger.info("[exec-audit] Delete operation requires approval ('%s'): %.200s", delete_pattern, command)
+                    logger.info(
+                        "[exec-audit] Delete operation requires approval ('%s'): %.200s", delete_pattern, command
+                    )
                     raise ApprovalNeededError(command, False, timeout=30, auto_deny=True)
 
     # Unparseable shell constructs ($(), backticks, | sh, | bash) — always blocked.
@@ -526,9 +535,7 @@ async def exec_command(
             unparseable_detail,
             command,
         )
-        raise ToolExecutionError(
-            f"Command uses unparseable shell construct ('{unparseable_detail}')"
-        )
+        raise ToolExecutionError(f"Command uses unparseable shell construct ('{unparseable_detail}')")
 
     # Shell executor patterns (sh -c, cmd /c, powershell -command, etc.).
     # These are safe to pass through — the denylist already checked the full command
@@ -593,9 +600,7 @@ async def exec_command(
 
             if len(output.encode("utf-8", errors="replace")) > max_output:
                 encoded = output.encode("utf-8", errors="replace")[:max_output]
-                output = (
-                    encoded.decode("utf-8", errors="replace") + f"\n... [truncated at {max_output} bytes] ...\n"
-                )
+                output = encoded.decode("utf-8", errors="replace") + f"\n... [truncated at {max_output} bytes] ...\n"
 
             if exit_code != 0:
                 output += f"\n[exit code: {exit_code}]"
@@ -623,7 +628,13 @@ async def exec_command(
         raise ToolExecutionError(f"{type(e).__name__}: {e}")
 
 
-async def process_status(action: Literal["list", "poll", "wait", "kill", "log"], session_id: str = "", timeout: int = 300, offset: int = 0, limit: int = 200) -> str:
+async def process_status(
+    action: Literal["list", "poll", "wait", "kill", "log"],
+    session_id: str = "",
+    timeout: int = 300,
+    offset: int = 0,
+    limit: int = 200,
+) -> str:
     """Manage background processes started with exec_command(background=true).
 
     Args:
@@ -645,9 +656,7 @@ async def process_status(action: Literal["list", "poll", "wait", "kill", "log"],
         lines = []
         for s in sessions:
             status_icon = "\U0001f504" if s["status"] == "running" else "✅" if s["exit_code"] == 0 else "❌"
-            lines.append(
-                f"  {status_icon} [{s['id']}] pid={s['pid']} ({s['elapsed']}s) {s['command']}"
-            )
+            lines.append(f"  {status_icon} [{s['id']}] pid={s['pid']} ({s['elapsed']}s) {s['command']}")
         return "\n".join(lines)
 
     if normalized == "poll":
@@ -677,6 +686,7 @@ async def process_status(action: Literal["list", "poll", "wait", "kill", "log"],
 
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef
+
     return [
         ToolDef.from_function(exec_command),
         ToolDef.from_function(process_status),

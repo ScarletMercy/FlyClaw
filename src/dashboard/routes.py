@@ -137,10 +137,11 @@ def register_dashboard(app: FastAPI, application):
     async def dashboard_sessions(request: Request):
         _check_auth(request, app)
         import re as _re
+
         sessions = []
 
         # Only show chat sessions (channel:user:* or channel:group:* or channel:sN:*)
-        _chat_pattern = _re.compile(r'^(qq):(user|group|s\d+):')
+        _chat_pattern = _re.compile(r"^(qq):(user|group|s\d+):")
 
         # Active sessions from tracker (with idle time)
         active_ids = set()
@@ -158,12 +159,14 @@ def register_dashboard(app: FastAPI, application):
                     if tid not in active_ids and _chat_pattern.match(tid):
                         state = await _app_ref.state_store.aload(tid)
                         msg_count = len(state.messages) if state else 0
-                        sessions.append({
-                            "thread_id": tid,
-                            "last_active": None,
-                            "status": "idle",
-                            "checkpoint_count": msg_count,
-                        })
+                        sessions.append(
+                            {
+                                "thread_id": tid,
+                                "last_active": None,
+                                "status": "idle",
+                                "checkpoint_count": msg_count,
+                            }
+                        )
             except Exception:
                 pass
 
@@ -230,10 +233,7 @@ def register_dashboard(app: FastAPI, application):
                 "user_invocable": s.metadata.user_invocable,
                 "disable_model_invocation": s.metadata.disable_model_invocation,
                 "disabled": s.name in config.skills.disabled,
-                "channel_disabled": {
-                    ch: s.name in chans
-                    for ch, chans in config.skills.channel_disabled.items()
-                },
+                "channel_disabled": {ch: s.name in chans for ch, chans in config.skills.channel_disabled.items()},
             }
             for s in skills
         ]
@@ -389,6 +389,7 @@ def register_dashboard(app: FastAPI, application):
                     pass  # Drop events if client is too slow
 
             from src.events import subscribe_async
+
             sub = subscribe_async("*", _on_event, priority=999)
 
             try:
@@ -406,6 +407,7 @@ def register_dashboard(app: FastAPI, application):
                 pass
             finally:
                 from src.events import unsubscribe
+
                 unsubscribe("*", _on_event)
 
         return StreamingResponse(
@@ -431,7 +433,8 @@ def register_dashboard(app: FastAPI, application):
         }
         # Sessions (active + historical from checkpointer, chat only)
         import re as _re
-        _chat_pattern = _re.compile(r'^(qq):(user|group|s\d+):')
+
+        _chat_pattern = _re.compile(r"^(qq):(user|group|s\d+):")
         all_sessions = []
         active_ids = set()
         if _app_ref.session_tracker:
@@ -445,12 +448,14 @@ def register_dashboard(app: FastAPI, application):
                     if tid not in active_ids and _chat_pattern.match(tid):
                         state = await _app_ref.state_store.aload(tid)
                         msg_count = len(state.messages) if state else 0
-                        all_sessions.append({
-                            "thread_id": tid,
-                            "last_active": None,
-                            "status": "idle",
-                            "checkpoint_count": msg_count,
-                        })
+                        all_sessions.append(
+                            {
+                                "thread_id": tid,
+                                "last_active": None,
+                                "status": "idle",
+                                "checkpoint_count": msg_count,
+                            }
+                        )
             except Exception:
                 pass
         snapshot["sessions"] = all_sessions
@@ -458,6 +463,7 @@ def register_dashboard(app: FastAPI, application):
         # Pending approvals
         try:
             from src.tools.approval import get_approval_manager
+
             snapshot["pending_approvals"] = [r.model_dump() for r in get_approval_manager().list_pending()]
         except Exception:
             snapshot["pending_approvals"] = []
@@ -468,11 +474,15 @@ def register_dashboard(app: FastAPI, application):
         if getattr(cfg.auth, "enabled", False):
             try:
                 from src.auth.rbac import get_rbac
+
                 rbac = get_rbac()
                 if rbac:
                     snapshot["auth_users"] = [
-                        {**u.model_dump(), "device_count": len(rbac.store.list_user_devices(u.user_id)),
-                         "trusted_devices": sum(1 for d in rbac.store.list_user_devices(u.user_id) if d.trusted)}
+                        {
+                            **u.model_dump(),
+                            "device_count": len(rbac.store.list_user_devices(u.user_id)),
+                            "trusted_devices": sum(1 for d in rbac.store.list_user_devices(u.user_id) if d.trusted),
+                        }
                         for u in rbac.store.list_users()
                     ]
             except Exception:
@@ -480,6 +490,7 @@ def register_dashboard(app: FastAPI, application):
         # Beads
         try:
             from src.tools.memory_tools import get_memory_store
+
             store = await get_memory_store()
             snapshot["memories"] = await store.list_all()
         except Exception:
@@ -494,6 +505,7 @@ def register_dashboard(app: FastAPI, application):
         cfg = _app_ref.config
         active_model = _app_ref.model_ref.model if _app_ref.model_ref else None
         from src.agent.client import FallbackChain
+
         if isinstance(active_model, FallbackChain):
             idx = active_model._active_idx
             available = []
@@ -518,6 +530,7 @@ def register_dashboard(app: FastAPI, application):
 
         active_model = _app_ref.model_ref.model
         from src.agent.client import FallbackChain
+
         if isinstance(active_model, FallbackChain):
             all_clients = active_model._all
             old_idx = active_model._active_idx
@@ -535,6 +548,7 @@ def register_dashboard(app: FastAPI, application):
         else:
             # Single model (no chain) — create new model for switch
             from src.agent.client import create_client
+
             cfg = _app_ref.config
             fb_base_url = None
             fb_api_key = None
@@ -545,7 +559,8 @@ def register_dashboard(app: FastAPI, application):
                     break
             try:
                 new_model = create_client(
-                    provider, name,
+                    provider,
+                    name,
                     cfg.model.temperature,
                     base_url=fb_base_url or cfg.model.base_url,
                     api_key=fb_api_key or cfg.model.api_key,
@@ -653,6 +668,7 @@ def register_dashboard(app: FastAPI, application):
         _check_auth(request, app)
         try:
             from src.tools.memory_tools import get_memory_store
+
             store = await get_memory_store()
             items = await store.list_all()
             grouped = {}
@@ -669,6 +685,7 @@ def register_dashboard(app: FastAPI, application):
         try:
             from src.tools.memory_tools import get_memory_store
             import json
+
             store = await get_memory_store()
             return json.loads(await store.recall(key))
         except Exception as e:
@@ -680,6 +697,7 @@ def register_dashboard(app: FastAPI, application):
         try:
             from src.tools.memory_tools import get_memory_store
             import json
+
             store = await get_memory_store()
             return json.loads(await store.forget(key))
         except Exception as e:
@@ -697,6 +715,7 @@ def register_dashboard(app: FastAPI, application):
                 raise HTTPException(status_code=400, detail="content is required")
             from src.tools.memory_tools import save_memory
             import json
+
             result = json.loads(await save_memory(content, key, category=category))
             return result
         except HTTPException:
@@ -712,10 +731,12 @@ def register_dashboard(app: FastAPI, application):
         _check_auth(request, app)
         try:
             from src.config import load_config
+
             new_cfg = load_config()
             _app_ref.config = new_cfg
             if _app_ref.agent_loop:
                 from src.agent.client import create_chain
+
                 _app_ref.agent_loop._client = create_chain(new_cfg)
             return {"ok": True, "message": "Config reloaded"}
         except Exception as e:
@@ -729,6 +750,7 @@ def register_dashboard(app: FastAPI, application):
             return {"results": []}
         try:
             from src.session_index.store import get_session_index
+
             idx = get_session_index()
             if not idx:
                 return {"results": [], "error": "Session index not initialized"}
@@ -747,7 +769,7 @@ def register_dashboard(app: FastAPI, application):
             state = await _app_ref.state_store.aload(thread_id)
             if not state:
                 raise HTTPException(status_code=404, detail="Session not found")
-            messages = state.messages[offset:offset+limit]
+            messages = state.messages[offset : offset + limit]
             total = len(state.messages)
             return {
                 "thread_id": thread_id,
@@ -771,6 +793,7 @@ def register_dashboard(app: FastAPI, application):
             return {"enabled": False}
         try:
             from src.memory.search import get_memory_searcher
+
             searcher = get_memory_searcher()
             if not searcher:
                 return {"enabled": True, "error": "Memory searcher not initialized"}
@@ -785,6 +808,7 @@ def register_dashboard(app: FastAPI, application):
         _check_auth(request, app)
         try:
             from src.security.audit import run_security_audit
+
             results = run_security_audit(_app_ref.config)
             return {
                 "pass": results.get("pass", 0),
@@ -802,6 +826,7 @@ def register_dashboard(app: FastAPI, application):
         try:
             from src.skills.curator import SkillCurator
             from pathlib import Path
+
             curator = SkillCurator(Path.home() / ".flyclaw" / "skills")
             skills = _app_ref.skills_cache or []
             lifecycle_counts = {"active": 0, "stale": 0, "archived": 0}
@@ -828,6 +853,7 @@ def register_dashboard(app: FastAPI, application):
         try:
             from src.skills.curator import SkillCurator
             from pathlib import Path
+
             curator = SkillCurator(Path.home() / ".flyclaw" / "skills")
             result = await curator.review_skills(dry_run=dry_run)
             return result
@@ -853,6 +879,7 @@ def register_dashboard(app: FastAPI, application):
         _check_auth(request, app)
         try:
             from src.agent.learning import LearningLoop
+
             loop = LearningLoop(_app_ref.config)
             result = await loop.trigger_full_learning_cycle()
             return result
@@ -874,8 +901,9 @@ def register_dashboard(app: FastAPI, application):
         _check_auth(request, app)
         try:
             from src.analytics.audit_store import get_audit_store
+
             store = get_audit_store()
-            
+
             success_filter = None
             if status == "success":
                 success_filter = True
@@ -918,6 +946,7 @@ def register_dashboard(app: FastAPI, application):
         _check_auth(request, app)
         try:
             from src.analytics.audit_store import get_audit_store
+
             store = get_audit_store()
             return store.get_stats(days=days)
         except Exception as e:
@@ -930,7 +959,7 @@ def register_dashboard(app: FastAPI, application):
         try:
             body = await request.json()
             cfg = _app_ref.config
-            
+
             # Apply updates to config object
             for section, values in body.items():
                 if hasattr(cfg, section):
@@ -938,34 +967,36 @@ def register_dashboard(app: FastAPI, application):
                     for key, value in values.items():
                         if hasattr(section_obj, key):
                             setattr(section_obj, key, value)
-            
+
             # Save config to file using the app's config path
             from pathlib import Path as _Path
             from src.config import save_config
-            config_path = getattr(_app_ref, '_config_path', None) or str(Path.home() / ".flyclaw" / "config.yaml")
+
+            config_path = getattr(_app_ref, "_config_path", None) or str(Path.home() / ".flyclaw" / "config.yaml")
             # Ensure absolute path to avoid saving to wrong location
             config_path = str(_Path(config_path).resolve())
             save_config(cfg, config_path)
-            
+
             # Reload config in app
             _app_ref.config = cfg
-            
+
             # Hot-reload runtime components
             # 1. Update agent_loop client (model config changes)
             if _app_ref.agent_loop:
                 try:
                     from src.agent.client import create_chain
+
                     _app_ref.agent_loop._client = create_chain(cfg)
                 except Exception:
                     pass
-            
+
             # 2. Reload skills (skill config changes)
             # _reload_skills() already updates agent_loop._skills_prompt and dispatcher
             try:
                 _app_ref._reload_skills()
             except Exception:
                 pass
-            
+
             return {"ok": True, "message": "Configuration updated and saved"}
         except Exception as e:
             return {"ok": False, "error": str(e)}

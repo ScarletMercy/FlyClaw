@@ -34,6 +34,7 @@ async def send_voice(file_path: str) -> str:
     if not p.is_absolute():
         try:
             from src.tools.file_tools import _resolve_path
+
             resolved = _resolve_path(file_path)
             rp = Path(resolved)
             if rp.exists() and rp.is_file():
@@ -46,6 +47,7 @@ async def send_voice(file_path: str) -> str:
             audio = p.read_bytes()
         elif file_path.startswith(("http://", "https://")):
             import httpx
+
             try:
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     resp = await client.get(file_path)
@@ -61,6 +63,7 @@ async def send_voice(file_path: str) -> str:
 
     if channel == "qq":
         from src.channels.qq import _qq_channel
+
         if _qq_channel and await _qq_channel.send_audio(chat_id, audio):
             return f"Voice sent ({len(audio)} bytes)"
     return "[error] Failed to send voice"
@@ -68,6 +71,7 @@ async def send_voice(file_path: str) -> str:
 
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef
+
     return [
         ToolDef.from_function(send_voice),
     ]

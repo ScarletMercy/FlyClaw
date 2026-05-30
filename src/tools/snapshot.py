@@ -26,9 +26,20 @@ from typing import Optional
 logger = logging.getLogger("flyclaw.snapshot")
 
 _EXCLUDE_PATTERNS = [
-    ".git", "__pycache__", "node_modules", ".venv", "venv",
-    ".idea", ".vscode", "*.pyc", ".DS_Store", "Thumbs.db",
-    "*.egg-info", ".mypy_cache", ".pytest_cache", ".ruff_cache",
+    ".git",
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    "venv",
+    ".idea",
+    ".vscode",
+    "*.pyc",
+    ".DS_Store",
+    "Thumbs.db",
+    "*.egg-info",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
 ]
 
 
@@ -42,7 +53,12 @@ def _git(*args: str, cwd: str, env: dict | None = None) -> subprocess.CompletedP
     if env:
         run_env.update(env)
     return subprocess.run(
-        cmd, cwd=cwd, capture_output=True, text=True, timeout=30, env=run_env,
+        cmd,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=run_env,
     )
 
 
@@ -100,8 +116,12 @@ class CheckpointManager:
         # Create an orphan commit (no parent) so directories are independent
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         r_commit = _git(
-            "commit-tree", tree_sha, "-m", f"snapshot: initial ({ts})",
-            cwd=str(self._store), env=env,
+            "commit-tree",
+            tree_sha,
+            "-m",
+            f"snapshot: initial ({ts})",
+            cwd=str(self._store),
+            env=env,
         )
         if r_commit.returncode != 0:
             logger.debug("commit-tree failed: %s", r_commit.stderr.strip())
@@ -194,8 +214,13 @@ class CheckpointManager:
 
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
         r_commit = _git(
-            "commit-tree", current_tree, *parent_args, "-m", f"snapshot: {ts}",
-            cwd=str(self._store), env=env,
+            "commit-tree",
+            current_tree,
+            *parent_args,
+            "-m",
+            f"snapshot: {ts}",
+            cwd=str(self._store),
+            env=env,
         )
         if r_commit.returncode != 0:
             logger.debug("commit-tree failed: %s", r_commit.stderr.strip())
@@ -231,11 +256,13 @@ class CheckpointManager:
                 continue
             parts = line.split(None, 2)
             if len(parts) >= 3:
-                results.append({
-                    "id": parts[0],
-                    "date": f"{parts[1]} {parts[2][:8]}",
-                    "message": parts[2][9:] if len(parts[2]) > 9 else parts[2],
-                })
+                results.append(
+                    {
+                        "id": parts[0],
+                        "date": f"{parts[1]} {parts[2][:8]}",
+                        "message": parts[2][9:] if len(parts[2]) > 9 else parts[2],
+                    }
+                )
         return results
 
     def diff(self, work_dir: str, snapshot_id: str) -> str:
@@ -328,6 +355,7 @@ def get_snapshot_manager() -> CheckpointManager | None:
         return _manager
     try:
         from src.config import load_config
+
         cfg = load_config()
         if not cfg.snapshot.enabled:
             return None

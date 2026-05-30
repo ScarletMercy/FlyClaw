@@ -8,8 +8,10 @@ from typing import Any
 
 # ── Event Categories ──────────────────────────────────────────────
 
+
 class EventCategory:
     """Namespace for event categories."""
+
     APP = "app"
     AGENT = "agent"
     TOOL = "tool"
@@ -23,8 +25,10 @@ class EventCategory:
 
 # ── Event Names ───────────────────────────────────────────────────
 
+
 class Event:
     """All event names in the system."""
+
     # App lifecycle
     APP_STARTUP = "app.startup"
     APP_SHUTDOWN = "app.shutdown"
@@ -73,13 +77,32 @@ class Event:
 # Patterns for wildcard matching (e.g., "tool.*" matches all tool events)
 WILDCARD_PATTERNS = {
     f"{EventCategory.APP}.*": [Event.APP_STARTUP, Event.APP_SHUTDOWN, Event.CONFIG_RELOADED],
-    f"{EventCategory.AGENT}.*": [Event.AGENT_LOOP_STARTED, Event.AGENT_LOOP_COMPLETED, Event.AGENT_LOOP_RESUMED, Event.AGENT_ERROR],
-    f"{EventCategory.TOOL}.*": [Event.TOOL_EXEC_STARTED, Event.TOOL_EXEC_COMPLETED, Event.TOOL_EXEC_FAILED, Event.TOOL_APPROVAL_PENDING],
-    f"{EventCategory.SESSION}.*": [Event.SESSION_CREATED, Event.SESSION_RESET, Event.SESSION_SWITCHED, Event.SESSION_ENDED],
+    f"{EventCategory.AGENT}.*": [
+        Event.AGENT_LOOP_STARTED,
+        Event.AGENT_LOOP_COMPLETED,
+        Event.AGENT_LOOP_RESUMED,
+        Event.AGENT_ERROR,
+    ],
+    f"{EventCategory.TOOL}.*": [
+        Event.TOOL_EXEC_STARTED,
+        Event.TOOL_EXEC_COMPLETED,
+        Event.TOOL_EXEC_FAILED,
+        Event.TOOL_APPROVAL_PENDING,
+    ],
+    f"{EventCategory.SESSION}.*": [
+        Event.SESSION_CREATED,
+        Event.SESSION_RESET,
+        Event.SESSION_SWITCHED,
+        Event.SESSION_ENDED,
+    ],
     f"{EventCategory.MESSAGE}.*": [Event.MESSAGE_RECEIVED, Event.MESSAGE_REPLIED],
     f"{EventCategory.STATE}.*": [Event.STATE_SAVED, Event.STATE_LOADED, Event.STATE_DELETED],
     f"{EventCategory.COMMAND}.*": [Event.COMMAND_DISPATCHED, Event.COMMAND_COMPLETED, Event.COMMAND_FAILED],
-    f"{EventCategory.LEARNING}.*": [Event.LEARNING_SESSION_END, Event.LEARNING_MEMORY_EXTRACTED, Event.LEARNING_SKILL_CREATED],
+    f"{EventCategory.LEARNING}.*": [
+        Event.LEARNING_SESSION_END,
+        Event.LEARNING_MEMORY_EXTRACTED,
+        Event.LEARNING_SKILL_CREATED,
+    ],
     f"{EventCategory.CONFIG}.*": [Event.CONFIG_RELOADED],
 }
 
@@ -91,9 +114,11 @@ for events in WILDCARD_PATTERNS.values():
 
 # ── Event Context ─────────────────────────────────────────────────
 
+
 @dataclass
 class EventContext:
     """Context data for an event emission."""
+
     event: str
     timestamp: float = 0.0
     context: dict[str, Any] = field(default_factory=dict)
@@ -110,9 +135,11 @@ class EventContext:
 
 # ── Subscription ──────────────────────────────────────────────────
 
+
 @dataclass
 class Subscription:
     """A single event subscription."""
+
     event: str
     handler: Any  # Callable
     is_async: bool = False

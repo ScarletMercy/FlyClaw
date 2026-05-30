@@ -34,9 +34,7 @@ class ToolDef:
     def __post_init__(self):
         if not self._valid_params:
             sig = inspect.signature(self.fn)
-            self.__dict__['_valid_params'] = frozenset(
-                p for p in sig.parameters if p not in ("self", "cls")
-            )
+            self.__dict__["_valid_params"] = frozenset(p for p in sig.parameters if p not in ("self", "cls"))
 
     def to_openai_tool(self) -> dict:
         return {
@@ -50,6 +48,7 @@ class ToolDef:
 
     async def execute(self, args: dict) -> str:
         import inspect as _inspect
+
         filtered = {k: v for k, v in args.items() if k in self._valid_params}
         result = self.fn(**filtered)
         if _inspect.isawaitable(result):
@@ -116,7 +115,7 @@ def _parse_args_doc(fn: Callable) -> dict[str, str]:
             if current_name:
                 result[current_name] = " ".join(current_desc).strip()
             current_name = stripped[:colon_pos].strip()
-            current_desc = [stripped[colon_pos + 1:].strip()]
+            current_desc = [stripped[colon_pos + 1 :].strip()]
         elif current_name:
             current_desc.append(stripped)
     if current_name:

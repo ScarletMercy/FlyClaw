@@ -52,10 +52,6 @@ class AcpSessionManager:
 
     def _evict_idle(self) -> None:
         now = time.time()
-        expired = [
-            sid
-            for sid, s in self._sessions.items()
-            if now - s.last_active > self._idle_ttl
-        ]
+        expired = [sid for sid, s in self._sessions.items() if now - s.last_active > self._idle_ttl]
         for sid in expired:
             del self._sessions[sid]

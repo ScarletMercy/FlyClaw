@@ -1,5 +1,7 @@
 """Tests for the gateway HTTP API."""
+
 import os, sys, pytest
+
 
 def _make_gateway(tmp_path):
     from src.config import AppConfig
@@ -26,6 +28,7 @@ def _make_gateway(tmp_path):
     client = AsyncClient(transport=transport, base_url="http://test")
     return client, config
 
+
 @pytest.mark.asyncio
 async def test_healthz(tmp_path):
     client, _ = _make_gateway(tmp_path)
@@ -34,11 +37,13 @@ async def test_healthz(tmp_path):
     assert resp.json()["status"] == "ok"
     await client.aclose()
 
+
 @pytest.mark.asyncio
 async def test_readyz(tmp_path):
     client, _ = _make_gateway(tmp_path)
     assert (await client.get("/readyz")).status_code == 200
     await client.aclose()
+
 
 @pytest.mark.asyncio
 async def test_chat_completions_invalid_json(tmp_path):
@@ -47,12 +52,14 @@ async def test_chat_completions_invalid_json(tmp_path):
     assert resp.status_code == 400
     await client.aclose()
 
+
 @pytest.mark.asyncio
 async def test_chat_completions_wrong_content_type(tmp_path):
     client, _ = _make_gateway(tmp_path)
     resp = await client.post("/v1/chat/completions", content="data", headers={"Content-Type": "text/plain"})
     assert resp.status_code == 415
     await client.aclose()
+
 
 @pytest.mark.asyncio
 async def test_auth_endpoints_disabled_when_auth_off(tmp_path):
@@ -61,6 +68,7 @@ async def test_auth_endpoints_disabled_when_auth_off(tmp_path):
     assert (await client.post("/api/pair", json={"code": "123456", "device_id": "d1"})).status_code == 400
     await client.aclose()
 
+
 @pytest.mark.asyncio
 async def test_list_users_without_rbac(tmp_path):
     client, _ = _make_gateway(tmp_path)
@@ -68,6 +76,7 @@ async def test_list_users_without_rbac(tmp_path):
     assert resp.status_code == 500
     assert "error" in resp.json()
     await client.aclose()
+
 
 @pytest.mark.asyncio
 async def test_pending_approvals(tmp_path):

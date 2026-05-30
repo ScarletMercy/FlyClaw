@@ -15,9 +15,7 @@ from typing import Optional
 
 logger = logging.getLogger("flyclaw.channels.qq_audio")
 
-_VOICE_EXTENSIONS = frozenset(
-    {".silk", ".amr", ".mp3", ".wav", ".ogg", ".m4a", ".aac", ".speex", ".flac"}
-)
+_VOICE_EXTENSIONS = frozenset({".silk", ".amr", ".mp3", ".wav", ".ogg", ".m4a", ".aac", ".speex", ".flac"})
 
 
 def guess_audio_ext(data: bytes) -> str:
@@ -99,6 +97,7 @@ async def _silk_to_wav(src_path: str, wav_path: str) -> Optional[str]:
         pass
 
     import shutil
+
     silk_path = src_path.rsplit(".", 1)[0] + ".silk"
     try:
         shutil.copy2(src_path, silk_path)
@@ -119,8 +118,15 @@ async def _silk_to_wav(src_path: str, wav_path: str) -> Optional[str]:
 async def _ffmpeg_to_wav(src_path: str, wav_path: str) -> Optional[str]:
     try:
         proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-y", "-i", src_path,
-            "-ar", "16000", "-ac", "1", wav_path,
+            "ffmpeg",
+            "-y",
+            "-i",
+            src_path,
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            wav_path,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )

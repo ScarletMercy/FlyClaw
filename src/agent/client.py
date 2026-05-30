@@ -110,9 +110,7 @@ class FallbackChain:
     ) -> ChatResponse:
         now = time.time()
         errors: list[tuple[int, Exception]] = []
-        order = [self._active_idx] + [
-            i for i in range(len(self._all)) if i != self._active_idx
-        ]
+        order = [self._active_idx] + [i for i in range(len(self._all)) if i != self._active_idx]
         for i in order:
             client = self._all[i]
             if now < self._cooldowns.get(id(client), 0):
@@ -182,11 +180,13 @@ def create_chain(config) -> FallbackChain:
     )
     fallbacks = []
     for fb in config.model.fallbacks or []:
-        fallbacks.append(create_client(
-            fb.provider,
-            fb.name,
-            getattr(fb, "temperature", config.model.temperature),
-            base_url=fb.base_url or config.model.base_url,
-            api_key=fb.api_key or config.model.api_key,
-        ))
+        fallbacks.append(
+            create_client(
+                fb.provider,
+                fb.name,
+                getattr(fb, "temperature", config.model.temperature),
+                base_url=fb.base_url or config.model.base_url,
+                api_key=fb.api_key or config.model.api_key,
+            )
+        )
     return FallbackChain(primary, fallbacks)

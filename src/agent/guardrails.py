@@ -38,6 +38,7 @@ class GuardrailResult:
 
 def _args_signature(args: dict) -> str:
     import json
+
     raw = json.dumps(args, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
@@ -58,12 +59,14 @@ class ToolLoopGuardrails:
     _history: deque[_ToolAttempt] = field(default_factory=lambda: deque(maxlen=64), repr=False)
 
     def record(self, tool_name: str, args: dict, success: bool, result: str = "") -> None:
-        self._history.append(_ToolAttempt(
-            tool_name=tool_name,
-            args_sig=_args_signature(args),
-            success=success,
-            result_sig=_result_signature(result) if result else "",
-        ))
+        self._history.append(
+            _ToolAttempt(
+                tool_name=tool_name,
+                args_sig=_args_signature(args),
+                success=success,
+                result_sig=_result_signature(result) if result else "",
+            )
+        )
 
     def check(self, tool_name: str, args: dict) -> GuardrailResult | None:
         """Check whether to allow this tool call.

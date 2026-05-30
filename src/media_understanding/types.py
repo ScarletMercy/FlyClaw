@@ -26,14 +26,21 @@ class MediaResult(BaseModel):
 def _media_error(capability: MediaCapability, client, mime_type: str, error: str) -> MediaResult:
     """Construct an error MediaResult."""
     return MediaResult(
-        capability=capability, text="", provider=client.provider,
-        model=client.model, mime_type=mime_type, error=error,
+        capability=capability,
+        text="",
+        provider=client.provider,
+        model=client.model,
+        mime_type=mime_type,
+        error=error,
     )
 
 
 def _media_ok(capability: MediaCapability, text: str, client, mime_type: str, model: str = "") -> MediaResult:
     """Construct a success MediaResult."""
     return MediaResult(
-        capability=capability, text=text, provider=client.provider,
-        model=model or client.model, mime_type=mime_type,
+        capability=capability,
+        text=text,
+        provider=client.provider,
+        model=model or client.model,
+        mime_type=mime_type,
     )

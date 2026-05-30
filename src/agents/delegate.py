@@ -14,13 +14,21 @@ logger = logging.getLogger("flyclaw.agents.delegate")
 _HEARTBEAT_INTERVAL = 30
 _HEARTBEAT_STALE_IDLE_SECONDS = 450
 
-_ESSENTIAL_TOOLS = frozenset([
-    "write_file", "edit_file", "read_file", "grep", "glob", "list_dir",
-])
+_ESSENTIAL_TOOLS = frozenset(
+    [
+        "write_file",
+        "edit_file",
+        "read_file",
+        "grep",
+        "glob",
+        "list_dir",
+    ]
+)
 
 
 def _register_builtin_tools(config) -> list[ToolDef]:
     from src._container import get_container
+
     container = get_container()
     if container.agent_loop and container.agent_loop._tools:
         return list(container.agent_loop._tools)
@@ -103,6 +111,7 @@ async def _run_single(
 
         try:
             from src.events import emit_async
+
             await emit_async("delegate.child_started", agent_name=agent_name, task=task[:100], run_id=run_id)
         except Exception:
             pass
@@ -120,6 +129,7 @@ async def _run_single(
 
         if agent_config.model:
             from src.agent.client import create_client
+
             client = create_client(
                 config.model.provider,
                 agent_config.model,
@@ -133,6 +143,7 @@ async def _run_single(
         skills_prompt = ""
         try:
             from src._container import get_container
+
             container = get_container()
             if container.agent_loop:
                 skills_prompt = container.agent_loop._skills_prompt
@@ -178,6 +189,7 @@ async def _run_single(
         # Background monitors
         monitor_task: asyncio.Task | None = None
         if run_id:
+
             async def _monitor(
                 _run_id: str,
                 _loop: AgentLoop,
@@ -200,13 +212,12 @@ async def _run_single(
                         run_registry.touch(_run_id)
                         last_touch = now
 
-            monitor_task = asyncio.create_task(
-                _monitor(run_id, agent_loop, child_thread_id)
-            )
+            monitor_task = asyncio.create_task(_monitor(run_id, agent_loop, child_thread_id))
 
         # Stale detection heartbeat
         stale_task: asyncio.Task | None = None
         if run_id:
+
             async def _stale_detector(_run_id: str):
                 while True:
                     await asyncio.sleep(_HEARTBEAT_INTERVAL)
@@ -218,7 +229,8 @@ async def _run_single(
                     if idle > _HEARTBEAT_STALE_IDLE_SECONDS:
                         logger.warning(
                             "Sub-agent run '%s' appears stale: no activity for %.0fs",
-                            _run_id, idle,
+                            _run_id,
+                            idle,
                         )
 
             stale_task = asyncio.create_task(_stale_detector(run_id))
@@ -233,7 +245,9 @@ async def _run_single(
                     if kwargs.get("thread_id") != child_tid:
                         return
                     from src.events import emit_async
+
                     await emit_async(event, **{**kwargs, "thread_id": parent_tid, "_delegated": True})
+
                 return _forward
 
             for evt in ("tool.exec_started", "tool.exec_completed", "tool.exec_failed"):
@@ -242,6 +256,7 @@ async def _run_single(
                 event_unsubs.append(unsub)
 
         from src.tools.exec import _current_thread_id
+
         _child_tid_token = _current_thread_id.set(child_thread_id)
         try:
             result_state = await asyncio.wait_for(
@@ -331,13 +346,13 @@ async def _run_single(
     finally:
         try:
             from src.events import emit_async
+
             await emit_async("delegate.child_completed", agent_name=agent_name)
         except Exception:
             pass
 
 
-async def delegate_task(agent_name: str, task: str, context: str = "",
-                       timeout: int | None = None) -> str:
+async def delegate_task(agent_name: str, task: str, context: str = "", timeout: int | None = None) -> str:
     """Delegate a task to a specialized sub-agent. Use for tasks requiring specific expertise.
 
     Args:
@@ -425,27 +440,33 @@ async def delegate_batch(tasks: str) -> str:
         final_results = []
         for i, r in enumerate(results):
             if isinstance(r, Exception):
-                final_results.append({
-                    "agent_name": parsed[i]["agent_name"],
-                    "status": "error",
-                    "result": f"{type(r).__name__}: {r}",
-                    "duration_seconds": 0,
-                })
+                final_results.append(
+                    {
+                        "agent_name": parsed[i]["agent_name"],
+                        "status": "error",
+                        "result": f"{type(r).__name__}: {r}",
+                        "duration_seconds": 0,
+                    }
+                )
             else:
                 final_results.append(r)
 
         total_duration = round(time.monotonic() - overall_start, 2)
-        return json.dumps({
-            "results": final_results,
-            "total_duration_seconds": total_duration,
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "results": final_results,
+                "total_duration_seconds": total_duration,
+            },
+            ensure_ascii=False,
+        )
 
     finally:
         set_current_depth(current_depth)
 
 
-async def _delegate_unified(agent_name: str = "", task: str = "", context: str = "",
-                            tasks: str = "", timeout: int | None = None) -> str:
+async def _delegate_unified(
+    agent_name: str = "", task: str = "", context: str = "", tasks: str = "", timeout: int | None = None
+) -> str:
     if tasks:
         return await delegate_batch(tasks)
     if not agent_name or not task:
@@ -460,7 +481,7 @@ def get_tools() -> list[ToolDef]:
             description=(
                 "将子任务委派给专业代理。支持单个和批量模式。\n\n"
                 "单个任务: 提供 agent_name + task，可选 context。\n"
-                "批量并行: 提供 tasks JSON 数组，每个元素: {\"agent_name\": \"...\", \"task\": \"...\", \"context\": \"...\"}\n\n"
+                '批量并行: 提供 tasks JSON 数组，每个元素: {"agent_name": "...", "task": "...", "context": "..."}\n\n'
                 "可用代理: research, coder, reviewer（用 agent_name 指定）。"
             ),
             parameters={
@@ -480,7 +501,7 @@ def get_tools() -> list[ToolDef]:
                     },
                     "tasks": {
                         "type": "string",
-                        "description": "批量任务的 JSON 数组，每个元素: {\"agent_name\": \"...\", \"task\": \"...\", \"context\": \"...\"}（批量模式时必填）",
+                        "description": '批量任务的 JSON 数组，每个元素: {"agent_name": "...", "task": "...", "context": "..."}（批量模式时必填）',
                     },
                     "timeout": {
                         "type": "integer",

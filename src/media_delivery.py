@@ -80,6 +80,7 @@ async def deliver_media(text: str, chat_id: str, channel_prefix: str, channel) -
         p = Path(file_path).resolve()
         # Path traversal protection: reject paths outside workspace
         from src.tools.file_tools import _resolve_path, _BASE_DIR
+
         try:
             _resolve_path(file_path)
         except ValueError:
@@ -106,4 +107,3 @@ async def _deliver_qq(channel, chat_id: str, p: Path, media_type: str):
     else:
         # image, video, file — all use send_file to preserve filename
         await channel.send_file(chat_id, str(p))
-

@@ -90,9 +90,14 @@ class TestHubLockFile:
     def test_record_install(self, tmp_path):
         lock = self._make_lock(tmp_path)
         lock.record_install(
-            name="my-skill", source="skills-sh", identifier="skills-sh/foo/bar",
-            trust_level="community", scan_verdict="safe", skill_hash="sha256:abc",
-            install_path="my-skill", files=["SKILL.md"],
+            name="my-skill",
+            source="skills-sh",
+            identifier="skills-sh/foo/bar",
+            trust_level="community",
+            scan_verdict="safe",
+            skill_hash="sha256:abc",
+            install_path="my-skill",
+            files=["SKILL.md"],
         )
         entry = lock.get_installed("my-skill")
         assert entry is not None
@@ -103,9 +108,14 @@ class TestHubLockFile:
     def test_record_uninstall(self, tmp_path):
         lock = self._make_lock(tmp_path)
         lock.record_install(
-            name="my-skill", source="test", identifier="x",
-            trust_level="community", scan_verdict="safe", skill_hash="h",
-            install_path="my-skill", files=["SKILL.md"],
+            name="my-skill",
+            source="test",
+            identifier="x",
+            trust_level="community",
+            scan_verdict="safe",
+            skill_hash="h",
+            install_path="my-skill",
+            files=["SKILL.md"],
         )
         assert lock.get_installed("my-skill") is not None
         lock.record_uninstall("my-skill")
@@ -118,14 +128,24 @@ class TestHubLockFile:
     def test_list_installed(self, tmp_path):
         lock = self._make_lock(tmp_path)
         lock.record_install(
-            name="a", source="s1", identifier="x",
-            trust_level="community", scan_verdict="safe", skill_hash="h",
-            install_path="a", files=["SKILL.md"],
+            name="a",
+            source="s1",
+            identifier="x",
+            trust_level="community",
+            scan_verdict="safe",
+            skill_hash="h",
+            install_path="a",
+            files=["SKILL.md"],
         )
         lock.record_install(
-            name="b", source="s2", identifier="y",
-            trust_level="trusted", scan_verdict="safe", skill_hash="h2",
-            install_path="b", files=["SKILL.md"],
+            name="b",
+            source="s2",
+            identifier="y",
+            trust_level="trusted",
+            scan_verdict="safe",
+            skill_hash="h2",
+            install_path="b",
+            files=["SKILL.md"],
         )
         installed = lock.list_installed()
         names = {e["name"] for e in installed}
@@ -185,15 +205,23 @@ class TestParallelSearch:
         return src
 
     def test_merges_results(self):
-        s1 = self._mock_source("a", [SkillMeta(name="x", description="d", source="a", identifier="a/x", trust_level="community")])
-        s2 = self._mock_source("b", [SkillMeta(name="y", description="d", source="b", identifier="b/y", trust_level="community")])
+        s1 = self._mock_source(
+            "a", [SkillMeta(name="x", description="d", source="a", identifier="a/x", trust_level="community")]
+        )
+        s2 = self._mock_source(
+            "b", [SkillMeta(name="y", description="d", source="b", identifier="b/y", trust_level="community")]
+        )
         results = parallel_search([s1, s2], "test")
         names = {r.name for r in results}
         assert names == {"x", "y"}
 
     def test_source_filter(self):
-        s1 = self._mock_source("a", [SkillMeta(name="x", description="d", source="a", identifier="a/x", trust_level="community")])
-        s2 = self._mock_source("b", [SkillMeta(name="y", description="d", source="b", identifier="b/y", trust_level="community")])
+        s1 = self._mock_source(
+            "a", [SkillMeta(name="x", description="d", source="a", identifier="a/x", trust_level="community")]
+        )
+        s2 = self._mock_source(
+            "b", [SkillMeta(name="y", description="d", source="b", identifier="b/y", trust_level="community")]
+        )
         results = parallel_search([s1, s2], "test", source_filter="a")
         assert all(r.source == "a" for r in results)
 
@@ -211,11 +239,14 @@ class TestParallelSearch:
 class TestQuarantineBundle:
     def test_creates_files(self, tmp_path):
         import shutil
+
         bundle = SkillBundle(
             name="test-skill",
             files={"SKILL.md": "# Hello", "refs/a.md": "ref content"},
-            source="test", identifier="test/x",
-            trust_level="community", metadata={},
+            source="test",
+            identifier="test/x",
+            trust_level="community",
+            metadata={},
         )
         with patch("src.skills.hub.QUARANTINE_DIR", tmp_path / "q"):
             dest = quarantine_bundle(bundle)
@@ -224,9 +255,12 @@ class TestQuarantineBundle:
 
     def test_rejects_bad_name(self):
         bundle = SkillBundle(
-            name="../evil", files={"SKILL.md": "x"},
-            source="test", identifier="test/x",
-            trust_level="community", metadata={},
+            name="../evil",
+            files={"SKILL.md": "x"},
+            source="test",
+            identifier="test/x",
+            trust_level="community",
+            metadata={},
         )
         with pytest.raises(ValueError):
             quarantine_bundle(bundle)
@@ -243,20 +277,29 @@ class TestInstallFromQuarantine:
         lock_path = skills_dir / "lock.json"
 
         bundle = SkillBundle(
-            name="my-skill", files={"SKILL.md": "# Hi"},
-            source="test", identifier="test/x",
-            trust_level="community", metadata={},
+            name="my-skill",
+            files={"SKILL.md": "# Hi"},
+            source="test",
+            identifier="test/x",
+            trust_level="community",
+            metadata={},
         )
         scan_result = ScanResult(
-            skill_name="my-skill", source="test",
-            trust_level="community", verdict="safe",
-            findings=[], scanned_at="", summary="",
+            skill_name="my-skill",
+            source="test",
+            trust_level="community",
+            verdict="safe",
+            findings=[],
+            scanned_at="",
+            summary="",
         )
 
-        with patch("src.skills.hub.SKILLS_DIR", skills_dir), \
-             patch("src.skills.hub.QUARANTINE_DIR", tmp_path / "quarantine"), \
-             patch("src.skills.hub.append_audit_log"), \
-             patch("src.skills.hub.HubLockFile") as MockLock:
+        with (
+            patch("src.skills.hub.SKILLS_DIR", skills_dir),
+            patch("src.skills.hub.QUARANTINE_DIR", tmp_path / "quarantine"),
+            patch("src.skills.hub.append_audit_log"),
+            patch("src.skills.hub.HubLockFile") as MockLock,
+        ):
             mock_lock = MagicMock()
             MockLock.return_value = mock_lock
             result = install_from_quarantine(q_dir, "my-skill", bundle, scan_result)
@@ -279,12 +322,15 @@ class TestAuditLog:
 class TestEnsureHubDirs:
     def test_creates_structure(self, tmp_path):
         hub_dir = tmp_path / "hub"
-        with patch("src.skills.hub.HUB_DIR", hub_dir), \
-             patch("src.skills.hub.QUARANTINE_DIR", hub_dir / "quarantine"), \
-             patch("src.skills.hub.INDEX_CACHE_DIR", hub_dir / "cache"), \
-             patch("src.skills.hub.LOCK_FILE", hub_dir / "lock.json"), \
-             patch("src.skills.hub.AUDIT_LOG", hub_dir / "audit.log"):
+        with (
+            patch("src.skills.hub.HUB_DIR", hub_dir),
+            patch("src.skills.hub.QUARANTINE_DIR", hub_dir / "quarantine"),
+            patch("src.skills.hub.INDEX_CACHE_DIR", hub_dir / "cache"),
+            patch("src.skills.hub.LOCK_FILE", hub_dir / "lock.json"),
+            patch("src.skills.hub.AUDIT_LOG", hub_dir / "audit.log"),
+        ):
             from src.skills.hub import ensure_hub_dirs as _ensure
+
             _ensure()
             assert (hub_dir / "quarantine").is_dir()
             assert (hub_dir / "cache").is_dir()

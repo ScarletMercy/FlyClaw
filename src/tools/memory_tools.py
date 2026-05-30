@@ -31,36 +31,52 @@ class MemoryDeleteNeedsApproval(Exception):
         self.thread_id = ""
         super().__init__(f"记忆删除需要审批: {len(keys)} 条")
 
+
 _MEMORY_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("preference", re.compile(
-        r"请?记住|别忘了|以后(?:要|不要|请|别)|"
-        r"不要用|不要做|别用|别做|我的风格|"
-        r"我(?:偏好|习惯|喜欢)(?:是|:|：|用|写)?",
-        re.IGNORECASE,
-    )),
-    ("identity", re.compile(
-        r"我(?:的)?(?:名字|姓|号|昵称|网名|ID|身份)(?:是|叫)|"
-        r"叫我|我叫|我是(?![a-z\s])|"
-        r"我的(?:生日|年龄|地址|家乡|学校|公司|职位|职业|专业)",
-        re.IGNORECASE,
-    )),
-    ("contact", re.compile(
-        r"(?:邮箱|email|邮件|电话|手机号?|微信号?|QQ|Telegram|discord|github)(?:是|:|：|=)|"
-        r"(?:@|邮箱|email).*?(?:是|:|：)|"
-        r"1[3-9]\d{9}",
-        re.IGNORECASE,
-    )),
-    ("project", re.compile(
-        r"(?:我的|我们的)(?:项目|仓库|代码库|产品|系统|服务|网站|app|应用)|"
-        r"(?:用了|使用|技术栈|框架|部署在|跑在|运行在)|"
-        r"(?:公司|团队|组织|部门)",
-        re.IGNORECASE,
-    )),
-    ("service", re.compile(
-        r"(?:API|api|接口|地址|URL|url|域名|服务器|端口|数据库|redis|mysql|postgres|mongo)"
-        r"(?:是|:|：|=|地址)",
-        re.IGNORECASE,
-    )),
+    (
+        "preference",
+        re.compile(
+            r"请?记住|别忘了|以后(?:要|不要|请|别)|"
+            r"不要用|不要做|别用|别做|我的风格|"
+            r"我(?:偏好|习惯|喜欢)(?:是|:|：|用|写)?",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "identity",
+        re.compile(
+            r"我(?:的)?(?:名字|姓|号|昵称|网名|ID|身份)(?:是|叫)|"
+            r"叫我|我叫|我是(?![a-z\s])|"
+            r"我的(?:生日|年龄|地址|家乡|学校|公司|职位|职业|专业)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "contact",
+        re.compile(
+            r"(?:邮箱|email|邮件|电话|手机号?|微信号?|QQ|Telegram|discord|github)(?:是|:|：|=)|"
+            r"(?:@|邮箱|email).*?(?:是|:|：)|"
+            r"1[3-9]\d{9}",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "project",
+        re.compile(
+            r"(?:我的|我们的)(?:项目|仓库|代码库|产品|系统|服务|网站|app|应用)|"
+            r"(?:用了|使用|技术栈|框架|部署在|跑在|运行在)|"
+            r"(?:公司|团队|组织|部门)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "service",
+        re.compile(
+            r"(?:API|api|接口|地址|URL|url|域名|服务器|端口|数据库|redis|mysql|postgres|mongo)"
+            r"(?:是|:|：|=|地址)",
+            re.IGNORECASE,
+        ),
+    ),
 ]
 
 _CATEGORY_PREFIX_RE = re.compile(r"^\[(\w+)\]\s*")
@@ -99,8 +115,7 @@ class MemoryStore:
     async def _ensure_fts(self) -> None:
         try:
             cursor = await self._conn.execute(
-                "SELECT count(*) FROM sqlite_master "
-                "WHERE type='table' AND name='memories_fts'"
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='memories_fts'"
             )
             row = await cursor.fetchone()
             if row[0] > 0:
@@ -111,23 +126,15 @@ class MemoryStore:
                 except Exception:
                     await self._conn.execute("DROP TABLE IF EXISTS memories_fts")
 
-            await self._conn.execute(
-                "CREATE VIRTUAL TABLE memories_fts "
-                "USING fts5(key, content, tokenize='trigram')"
-            )
-            await self._conn.execute(
-                "INSERT INTO memories_fts (key, content) "
-                "SELECT key, content FROM memories"
-            )
+            await self._conn.execute("CREATE VIRTUAL TABLE memories_fts USING fts5(key, content, tokenize='trigram')")
+            await self._conn.execute("INSERT INTO memories_fts (key, content) SELECT key, content FROM memories")
             self._fts_available = True
         except Exception:
             logger.warning("FTS5 trigram not available, search will use LIKE fallback")
             self._fts_available = False
 
     async def _migrate_category_prefix(self) -> None:
-        cursor = await self._conn.execute(
-            "SELECT key, content, category FROM memories WHERE content LIKE '[%'"
-        )
+        cursor = await self._conn.execute("SELECT key, content, category FROM memories WHERE content LIKE '[%'")
         rows = await cursor.fetchall()
         if not rows:
             return
@@ -190,13 +197,16 @@ class MemoryStore:
         )
         row = await cursor.fetchone()
         if row:
-            return json.dumps({
-                "key": row["key"],
-                "content": row["content"],
-                "category": row["category"],
-                "created_at": row["created_at"],
-                "updated_at": row["updated_at"],
-            }, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "key": row["key"],
+                    "content": row["content"],
+                    "category": row["category"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                },
+                ensure_ascii=False,
+            )
         return json.dumps({"error": f"Memory '{key}' not found"}, ensure_ascii=False)
 
     async def list_all(self, query: str = "", limit: int = 200) -> list[dict]:
@@ -211,8 +221,7 @@ class MemoryStore:
                     )
                     rows = await cursor.fetchall()
                     if rows:
-                        return [{"key": r["key"], "content": r["content"],
-                                 "category": r["category"]} for r in rows]
+                        return [{"key": r["key"], "content": r["content"], "category": r["category"]} for r in rows]
                 except Exception:
                     pass
             cursor = await self._conn.execute(
@@ -222,13 +231,11 @@ class MemoryStore:
             )
         else:
             cursor = await self._conn.execute(
-                "SELECT key, content, category, updated_at FROM memories "
-                "ORDER BY updated_at DESC LIMIT ?",
+                "SELECT key, content, category, updated_at FROM memories ORDER BY updated_at DESC LIMIT ?",
                 (limit,),
             )
         rows = await cursor.fetchall()
-        return [{"key": r["key"], "content": r["content"],
-                 "category": r["category"]} for r in rows]
+        return [{"key": r["key"], "content": r["content"], "category": r["category"]} for r in rows]
 
     async def forget(self, key: str) -> str:
         await self._conn.execute("DELETE FROM memories WHERE key = ?", (key,))
@@ -254,6 +261,7 @@ async def get_memory_store(db_path: str = "~/.flyclaw/data/memories.db") -> Memo
 # ---------------------------------------------------------------------------
 # Auto-extract & LLM judge
 # ---------------------------------------------------------------------------
+
 
 def auto_extract_memory(user_input: str, ai_response: str) -> Optional[tuple[str, str]]:
     if not user_input or len(user_input.strip()) < 4:
@@ -311,9 +319,11 @@ async def judge_memory_with_llm(
         ai=ai_response[:200],
     )
     try:
-        resp = await model.chat([
-            {"role": "user", "content": prompt},
-        ])
+        resp = await model.chat(
+            [
+                {"role": "user", "content": prompt},
+            ]
+        )
         text = resp.content.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
@@ -395,6 +405,7 @@ async def extract_session_end_memories(
     )
 
     from src.agent.client import ChatClient
+
     model = ChatClient(
         base_url=base_url,
         api_key=api_key,
@@ -404,9 +415,11 @@ async def extract_session_end_memories(
 
     extracted_count = 0
     try:
-        resp = await model.chat([
-            {"role": "user", "content": prompt},
-        ])
+        resp = await model.chat(
+            [
+                {"role": "user", "content": prompt},
+            ]
+        )
         text = resp.content.strip()
         if text.startswith("```"):
             text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
@@ -429,6 +442,7 @@ async def extract_session_end_memories(
 # Passive save helper
 # ---------------------------------------------------------------------------
 
+
 async def save_memory(content: str, key: str = "", category: str = "fact") -> str:
     s = await get_memory_store()
     return await s.remember(content, key, category)
@@ -441,7 +455,7 @@ async def save_memory(content: str, key: str = "", category: str = "fact") -> st
 _MEMORY_TOOL_DESCRIPTION = (
     "管理持久记忆（跨会话保存）。用 action 参数指定操作。\n\n"
     "WHEN TO SAVE（主动保存，不要等用户要求）:\n"
-    "- 用户纠正你或说\"记住这个\"\"以后别这样\"\n"
+    '- 用户纠正你或说"记住这个""以后别这样"\n'
     "- 用户分享偏好、习惯、个人细节（名字、角色、时区、编码风格）\n"
     "- 你发现了环境信息（OS、工具、项目结构）\n"
     "- 你学到了约定、API 怪癖、工作流\n\n"
@@ -454,8 +468,15 @@ _MEMORY_TOOL_DESCRIPTION = (
 )
 
 
-async def memory(action: str, content: str = "", key: str = "", category: str = "fact",
-                 query: str = "", keys: list = None, verbose: bool = False) -> str:
+async def memory(
+    action: str,
+    content: str = "",
+    key: str = "",
+    category: str = "fact",
+    query: str = "",
+    keys: list = None,
+    verbose: bool = False,
+) -> str:
     """Manage persistent memories that survive across sessions.
 
     Args:

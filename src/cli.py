@@ -49,6 +49,7 @@ def cmd_doctor(args):
         print("验证模型可用性中...")
         try:
             from src.agent.client import ChatClient
+
             async def _test_model():
                 client = ChatClient(
                     base_url=config.model.base_url or "",
@@ -57,6 +58,7 @@ def cmd_doctor(args):
                 )
                 resp = await client.chat_simple([{"role": "user", "content": "你好"}])
                 return True, resp
+
             success, msg = asyncio.run(_test_model())
             if success:
                 print(f"[通过] 模型验证成功")
@@ -162,17 +164,24 @@ def cmd_sessions(args):
 def cmd_model(args):
     config = _load_config()
     model_list = [
-        {"provider": config.model.provider, "name": config.model.name,
-         "base_url": config.model.base_url, "api_key": config.model.api_key,
-         "context_window": config.model.context_window},
+        {
+            "provider": config.model.provider,
+            "name": config.model.name,
+            "base_url": config.model.base_url,
+            "api_key": config.model.api_key,
+            "context_window": config.model.context_window,
+        },
     ]
     for fb in config.model.fallbacks or []:
-        model_list.append({
-            "provider": fb.provider, "name": fb.name,
-            "base_url": fb.base_url or config.model.base_url,
-            "api_key": fb.api_key or config.model.api_key,
-            "context_window": fb.context_window,
-        })
+        model_list.append(
+            {
+                "provider": fb.provider,
+                "name": fb.name,
+                "base_url": fb.base_url or config.model.base_url,
+                "api_key": fb.api_key or config.model.api_key,
+                "context_window": fb.context_window,
+            }
+        )
 
     sub = getattr(args, "model_command", None)
 
@@ -201,7 +210,7 @@ def cmd_model(args):
     if sub == "switch":
         idx = getattr(args, "id", None)
         if idx is None or idx < 0 or idx >= len(model_list):
-            print(f"无效 ID。使用 flyclaw model list 查看可用模型 (0-{len(model_list)-1})。")
+            print(f"无效 ID。使用 flyclaw model list 查看可用模型 (0-{len(model_list) - 1})。")
             return 1
         m = model_list[idx]
         config.model.provider = m["provider"]
@@ -210,6 +219,7 @@ def cmd_model(args):
         config.model.api_key = m["api_key"]
         config.model.context_window = m["context_window"]
         from src.config import save_config
+
         save_config(config)
         print(f"已切换到 [{idx}] {m['provider']}/{m['name']}")
         return 0
@@ -219,6 +229,7 @@ def cmd_model(args):
         print("测试当前模型中...")
         try:
             from src.agent.client import ChatClient
+
             async def _test():
                 client = ChatClient(
                     base_url=config.model.base_url or "",
@@ -227,6 +238,7 @@ def cmd_model(args):
                 )
                 resp = await client.chat_simple([{"role": "user", "content": "你好"}])
                 return True, resp
+
             success, msg = asyncio.run(_test())
             if success:
                 print(f"[通过] 模型验证成功")
@@ -242,6 +254,7 @@ def cmd_model(args):
     # flyclaw model add
     if sub == "add":
         from src.setup import run_wizard
+
         run_wizard()
         return 0
 
@@ -275,7 +288,9 @@ def cmd_model(args):
             config.model.api_key = _ask_required("  新 API 密钥", default="")
             # 验证 API Key
             print("  验证 API Key 中...")
-            success, msg = _verify_api_key(config.model.provider, config.model.name, config.model.base_url, config.model.api_key)
+            success, msg = _verify_api_key(
+                config.model.provider, config.model.name, config.model.base_url, config.model.api_key
+            )
             if success:
                 print("  [通过] API Key 验证成功")
             else:
@@ -285,6 +300,7 @@ def cmd_model(args):
 
         # 保存配置
         from src.config import save_config
+
         save_config(config)
         print("\n  配置已保存")
         return 0

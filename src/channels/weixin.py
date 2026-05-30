@@ -255,7 +255,9 @@ def _parse_aes_key(aes_key_b64: str) -> bytes:
 def _guess_chat_type(message: dict[str, Any], account_id: str) -> tuple[str, str]:
     room_id = str(message.get("room_id") or message.get("chat_room_id") or "").strip()
     to_user_id = str(message.get("to_user_id") or "").strip()
-    is_group = bool(room_id) or (to_user_id and account_id and to_user_id != account_id and message.get("msg_type") == 1)
+    is_group = bool(room_id) or (
+        to_user_id and account_id and to_user_id != account_id and message.get("msg_type") == 1
+    )
     if is_group:
         effective_id = room_id or to_user_id
         if not effective_id:
@@ -569,7 +571,9 @@ async def _upload_ciphertext(
     upload_url: str,
 ) -> str:
     async def _do_upload() -> str:
-        async with session.post(upload_url, data=ciphertext, headers={"Content-Type": "application/octet-stream"}) as response:
+        async with session.post(
+            upload_url, data=ciphertext, headers={"Content-Type": "application/octet-stream"}
+        ) as response:
             if response.status == 200:
                 encrypted_param = response.headers.get("x-encrypted-param")
                 if encrypted_param:
@@ -871,9 +875,7 @@ def _split_text_for_delivery(content: str, max_length: int, split_per_line: bool
         return [c for c in chunks if c] or [content]
     if len(content) <= max_length:
         return (
-            [u for u in _split_delivery_units(content) if u]
-            if _should_split_short_chat_block(content)
-            else [content]
+            [u for u in _split_delivery_units(content) if u] if _should_split_short_chat_block(content) else [content]
         )
     return _pack_markdown_blocks(content, max_length) or [content]
 
@@ -924,11 +926,7 @@ class ContextTokenStore:
 
     def _persist(self, account_id: str) -> None:
         prefix = f"{account_id}:"
-        payload = {
-            key[len(prefix):]: value
-            for key, value in self._cache.items()
-            if key.startswith(prefix)
-        }
+        payload = {key[len(prefix) :]: value for key, value in self._cache.items() if key.startswith(prefix)}
         try:
             _atomic_json_write(self._path(account_id), payload)
         except Exception as exc:
@@ -977,7 +975,9 @@ class WeixinChannel(Channel):
         self._account_id = str(getattr(config, "account_id", "") or "").strip()
         self._token = str(getattr(config, "token", "") or "").strip()
         self._base_url = str(getattr(config, "base_url", ILINK_BASE_URL) or ILINK_BASE_URL).strip().rstrip("/")
-        self._cdn_base_url = str(getattr(config, "cdn_base_url", WEIXIN_CDN_BASE_URL) or WEIXIN_CDN_BASE_URL).strip().rstrip("/")
+        self._cdn_base_url = (
+            str(getattr(config, "cdn_base_url", WEIXIN_CDN_BASE_URL) or WEIXIN_CDN_BASE_URL).strip().rstrip("/")
+        )
         self._dm_policy = str(getattr(config, "dm_policy", "open") or "open").strip().lower()
         self._group_policy = str(getattr(config, "group_policy", "disabled") or "disabled").strip().lower()
         self._allow_from: list[str] = list(getattr(config, "allowed_users", []) or [])
@@ -1059,11 +1059,19 @@ class WeixinChannel(Channel):
             return None
         try:
             context_token = self._token_store.get(self._account_id, chat_id)
-            chunks = [c for c in _split_text_for_delivery(format_message(text), self.MAX_MESSAGE_LENGTH, self._split_multiline_messages) if c and c.strip()]
+            chunks = [
+                c
+                for c in _split_text_for_delivery(
+                    format_message(text), self.MAX_MESSAGE_LENGTH, self._split_multiline_messages
+                )
+                if c and c.strip()
+            ]
             last_id = None
             for idx, chunk in enumerate(chunks):
                 client_id = f"flyclaw-weixin-{uuid.uuid4().hex}"
-                await self._send_text_chunk(chat_id=chat_id, chunk=chunk, context_token=context_token, client_id=client_id)
+                await self._send_text_chunk(
+                    chat_id=chat_id, chunk=chunk, context_token=context_token, client_id=client_id
+                )
                 last_id = client_id
                 if idx < len(chunks) - 1 and self._send_chunk_delay_seconds > 0:
                     await asyncio.sleep(self._send_chunk_delay_seconds)
@@ -1193,8 +1201,7 @@ class WeixinChannel(Channel):
                         session_expired_count += 1
                         if session_expired_count > 3:
                             logger.error(
-                                "weixin: Session expired %d times, stopping poll loop. "
-                                "Please re-login via setup.",
+                                "weixin: Session expired %d times, stopping poll loop. Please re-login via setup.",
                                 session_expired_count,
                             )
                             break
@@ -1208,11 +1215,16 @@ class WeixinChannel(Channel):
                     consecutive_failures += 1
                     logger.warning(
                         "weixin: getUpdates failed ret=%s errcode=%s errmsg=%s (%d/%d)",
-                        ret, errcode, response.get("errmsg", ""),
-                        consecutive_failures, MAX_CONSECUTIVE_FAILURES,
+                        ret,
+                        errcode,
+                        response.get("errmsg", ""),
+                        consecutive_failures,
+                        MAX_CONSECUTIVE_FAILURES,
                     )
                     await asyncio.sleep(
-                        BACKOFF_DELAY_SECONDS if consecutive_failures >= MAX_CONSECUTIVE_FAILURES else RETRY_DELAY_SECONDS
+                        BACKOFF_DELAY_SECONDS
+                        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES
+                        else RETRY_DELAY_SECONDS
                     )
                     if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
                         consecutive_failures = 0
@@ -1242,7 +1254,9 @@ class WeixinChannel(Channel):
         try:
             await self._process_message(message)
         except Exception as exc:
-            logger.error("weixin: unhandled inbound error from=%s: %s", _safe_id(message.get("from_user_id")), exc, exc_info=True)
+            logger.error(
+                "weixin: unhandled inbound error from=%s: %s", _safe_id(message.get("from_user_id")), exc, exc_info=True
+            )
 
     async def _process_message(self, message: dict[str, Any]) -> None:
         assert self._poll_session is not None
@@ -1261,16 +1275,16 @@ class WeixinChannel(Channel):
         if text:
             now = time.time()
             content_key = f"content:{sender_id}:{hashlib.md5(text.encode()).hexdigest()}"
-            if content_key in self._content_dedup and (now - self._content_dedup[content_key]) < MESSAGE_DEDUP_TTL_SECONDS:
+            if (
+                content_key in self._content_dedup
+                and (now - self._content_dedup[content_key]) < MESSAGE_DEDUP_TTL_SECONDS
+            ):
                 return
             self._content_dedup[content_key] = now
             now_mono = time.monotonic()
             if len(self._content_dedup) > 1000 or now_mono - self._dedup_last_cleanup > 60:
                 cutoff = now - MESSAGE_DEDUP_TTL_SECONDS
-                self._content_dedup = {
-                    k: v for k, v in self._content_dedup.items()
-                    if v >= cutoff
-                }
+                self._content_dedup = {k: v for k, v in self._content_dedup.items() if v >= cutoff}
                 self._dedup_last_cleanup = now_mono
 
         chat_type, effective_chat_id = _guess_chat_type(message, self._account_id)
@@ -1318,6 +1332,7 @@ class WeixinChannel(Channel):
         # Inject chat context for send tools
         try:
             from src.tools.chat_tools import set_current_chat_context
+
             set_current_chat_context("weixin", effective_chat_id)
         except ImportError:
             pass
@@ -1384,7 +1399,9 @@ class WeixinChannel(Channel):
                 encrypted_query_param=media.get("encrypt_query_param"),
                 aes_key_b64=(
                     (item.get("image_item") or {}).get("aeskey")
-                    and base64.b64encode(bytes.fromhex(str((item.get("image_item") or {}).get("aeskey")))).decode("ascii")
+                    and base64.b64encode(bytes.fromhex(str((item.get("image_item") or {}).get("aeskey")))).decode(
+                        "ascii"
+                    )
                     or media.get("aes_key")
                 ),
                 full_url=media.get("full_url"),
@@ -1484,7 +1501,9 @@ class WeixinChannel(Channel):
                         if is_session_expired and not retried_without_token and context_token:
                             retried_without_token = True
                             context_token = None
-                            logger.warning("weixin: session expired for %s; retrying without context_token", _safe_id(chat_id))
+                            logger.warning(
+                                "weixin: session expired for %s; retrying without context_token", _safe_id(chat_id)
+                            )
                             continue
                         is_rate_limited = ret == RATE_LIMIT_ERRCODE or errcode == RATE_LIMIT_ERRCODE
                         if is_rate_limited:
@@ -1494,7 +1513,9 @@ class WeixinChannel(Channel):
                             wait = _BACKOFF_SCHEDULE[min(attempt, len(_BACKOFF_SCHEDULE) - 1)]
                             logger.warning(
                                 "weixin: rate limited, backing off %.1fs (attempt %d/%d)",
-                                wait, attempt + 1, self._send_chunk_retries + 1,
+                                wait,
+                                attempt + 1,
+                                self._send_chunk_retries + 1,
                             )
                             await asyncio.sleep(wait)
                             continue
@@ -1506,7 +1527,13 @@ class WeixinChannel(Channel):
                 if attempt >= self._send_chunk_retries:
                     break
                 wait = self._send_chunk_retry_delay_seconds * (attempt + 1)
-                logger.warning("weixin: send chunk failed to=%s attempt=%d/%d: %s", _safe_id(chat_id), attempt + 1, self._send_chunk_retries + 1, exc)
+                logger.warning(
+                    "weixin: send chunk failed to=%s attempt=%d/%d: %s",
+                    _safe_id(chat_id),
+                    attempt + 1,
+                    self._send_chunk_retries + 1,
+                    exc,
+                )
                 if wait > 0:
                     await asyncio.sleep(wait)
         if last_error:
@@ -1530,7 +1557,9 @@ class WeixinChannel(Channel):
 
         try:
             plaintext = file_path.read_bytes()
-            media_type, item_builder = self._outbound_media_builder(str(file_path), force_file_attachment=force_file_attachment)
+            media_type, item_builder = self._outbound_media_builder(
+                str(file_path), force_file_attachment=force_file_attachment
+            )
             filekey = secrets.token_hex(16)
             aes_key = secrets.token_bytes(16)
             rawsize = len(plaintext)
@@ -1558,7 +1587,9 @@ class WeixinChannel(Channel):
             else:
                 raise RuntimeError(f"getUploadUrl returned neither upload_param nor upload_full_url")
 
-            encrypted_query_param = await _upload_ciphertext(self._send_session, ciphertext=ciphertext, upload_url=upload_url)
+            encrypted_query_param = await _upload_ciphertext(
+                self._send_session, ciphertext=ciphertext, upload_url=upload_url
+            )
             context_token = self._token_store.get(self._account_id, chat_id)
             aes_key_for_api = base64.b64encode(aes_key.hex().encode("ascii")).decode("ascii")
             item_kwargs = {
@@ -1620,7 +1651,9 @@ class WeixinChannel(Channel):
                                 wait = _BACKOFF_SCHEDULE[min(attempt, len(_BACKOFF_SCHEDULE) - 1)]
                                 logger.warning(
                                     "weixin: rate limited on media send, backing off %.1fs (attempt %d/%d)",
-                                    wait, attempt + 1, self._send_chunk_retries + 1,
+                                    wait,
+                                    attempt + 1,
+                                    self._send_chunk_retries + 1,
                                 )
                                 await asyncio.sleep(wait)
                                 continue
@@ -1633,7 +1666,10 @@ class WeixinChannel(Channel):
                     wait = _BACKOFF_SCHEDULE[min(attempt, len(_BACKOFF_SCHEDULE) - 1)]
                     logger.warning(
                         "weixin: media send failed, retrying in %.1fs (attempt %d/%d): %s",
-                        wait, attempt + 1, self._send_chunk_retries + 1, exc,
+                        wait,
+                        attempt + 1,
+                        self._send_chunk_retries + 1,
+                        exc,
                     )
                     await asyncio.sleep(wait)
             if last_send_error:

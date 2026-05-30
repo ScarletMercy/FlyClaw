@@ -46,6 +46,3 @@ class TestSessionKeyResolution:
         from src.message import MessageHandler
 
         assert MessageHandler._resolve_session_key("user1", "p2p", "chat1", "global") == "global"
-
-
-

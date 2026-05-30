@@ -68,6 +68,7 @@ class SessionTracker:
                             # Emit session reset event — subscribers load messages from checkpointer.db
                             try:
                                 from src.events import emit_async
+
                                 await emit_async(
                                     "session.reset",
                                     thread_id=tid,
@@ -116,10 +117,10 @@ class SessionTracker:
 
 @dataclass
 class SessionEntry:
-    session_id: str       # short display id (s1, s2, ...)
-    thread_id: str        # full thread_id for state store
-    created_at: float     # unix timestamp
-    summary: str = ""     # first user message excerpt
+    session_id: str  # short display id (s1, s2, ...)
+    thread_id: str  # full thread_id for state store
+    created_at: float  # unix timestamp
+    summary: str = ""  # first user message excerpt
 
 
 @dataclass
@@ -178,7 +179,8 @@ class SessionRegistry:
         with self._lock:
             try:
                 fd, tmp_path = tempfile.mkstemp(
-                    dir=os.path.dirname(self._store_path), suffix=".tmp",
+                    dir=os.path.dirname(self._store_path),
+                    suffix=".tmp",
                 )
                 try:
                     with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -210,12 +212,14 @@ class SessionRegistry:
         us = self._get_user(user_key)
         sid = us._alloc_id()
         thread_id = f"{channel_prefix}:{sid}:{user_hash}"
-        us.sessions.append(SessionEntry(
-            session_id=sid,
-            thread_id=thread_id,
-            created_at=time.time(),
-            summary="(new)",
-        ))
+        us.sessions.append(
+            SessionEntry(
+                session_id=sid,
+                thread_id=thread_id,
+                created_at=time.time(),
+                summary="(new)",
+            )
+        )
         us.current_id = sid
         self._save()
         logger.info("New session %s for user %s: %s", sid, user_key, thread_id)
@@ -228,13 +232,15 @@ class SessionRegistry:
             return []
         result = []
         for s in us.sessions:
-            result.append({
-                "session_id": s.session_id,
-                "thread_id": s.thread_id,
-                "created_at": s.created_at,
-                "summary": s.summary,
-                "is_current": s.session_id == us.current_id,
-            })
+            result.append(
+                {
+                    "session_id": s.session_id,
+                    "thread_id": s.thread_id,
+                    "created_at": s.created_at,
+                    "summary": s.summary,
+                    "is_current": s.session_id == us.current_id,
+                }
+            )
         return result
 
     def switch_to(self, user_key: str, session_id: str) -> Optional[str]:
@@ -276,11 +282,7 @@ class SessionRegistry:
             if tid in registered:
                 continue
             t_parts = tid.split(":")
-            if (
-                len(t_parts) == 3
-                and t_parts[0] == channel_prefix
-                and t_parts[-1] == user_hash
-            ):
+            if len(t_parts) == 3 and t_parts[0] == channel_prefix and t_parts[-1] == user_hash:
                 orphaned.append(tid)
         return orphaned
 
@@ -317,12 +319,14 @@ class SessionRegistry:
         count = 0
         for tid in sorted(thread_ids):
             sid = us._alloc_id()
-            us.sessions.append(SessionEntry(
-                session_id=sid,
-                thread_id=tid,
-                created_at=time.time(),
-                summary="(recovered)",
-            ))
+            us.sessions.append(
+                SessionEntry(
+                    session_id=sid,
+                    thread_id=tid,
+                    created_at=time.time(),
+                    summary="(recovered)",
+                )
+            )
             count += 1
         if count:
             self._save()

@@ -27,11 +27,7 @@ def register_auth_commands(dispatcher, container):
         )
         minutes = container.config.auth.pairing_ttl_seconds // 60
         if zh:
-            return (
-                f"配对码：`{pairing.code}`\n"
-                f"有效期 {minutes} 分钟。\n"
-                f"请在 Dashboard 或通过 API 提交以完成配对。"
-            )
+            return f"配对码：`{pairing.code}`\n有效期 {minutes} 分钟。\n请在 Dashboard 或通过 API 提交以完成配对。"
         return (
             f"Your pairing code: `{pairing.code}`\n"
             f"Valid for {minutes} minutes.\n"
@@ -73,7 +69,11 @@ def register_auth_commands(dispatcher, container):
             return "权限不足，需要管理员权限。" if zh else "Permission denied. Admin access required."
         parts = args.strip().split()
         if len(parts) < 2:
-            return "用法: /role <用户ID> <owner|admin|user|guest>" if zh else "Usage: /role <user_id> <owner|admin|user|guest>"
+            return (
+                "用法: /role <用户ID> <owner|admin|user|guest>"
+                if zh
+                else "Usage: /role <user_id> <owner|admin|user|guest>"
+            )
         target_id, role_str = parts[0], parts[1]
         try:
             target_role = UserRole(role_str)
@@ -305,15 +305,18 @@ def register_builtin_commands(dispatcher, container, tools, skills):
 
         if not reg_sessions:
             orphaned = container.session_registry.find_orphaned_threads(
-                user_key, container.state_store,
+                user_key,
+                container.state_store,
             )
             if not orphaned:
                 orphaned = container.session_registry.find_all_channel_threads(
-                    user_key, container.state_store,
+                    user_key,
+                    container.state_store,
                 )
             if orphaned:
                 recovered = container.session_registry.recover_sessions(
-                    user_key, orphaned,
+                    user_key,
+                    orphaned,
                 )
                 if recovered:
                     reg_sessions = container.session_registry.list_sessions(user_key)
@@ -330,7 +333,11 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 if m.get("role") == "user":
                     default_summary = str(m.get("content", ""))[:50]
                     break
-        current_marker = " [当前]" if zh and current_override is None else (" [current]" if not zh and current_override is None else "")
+        current_marker = (
+            " [当前]"
+            if zh and current_override is None
+            else (" [current]" if not zh and current_override is None else "")
+        )
         empty_label = "(空)" if zh else "(empty)"
         no_history = "(无历史)" if zh else "(no history)"
         if has_default:
@@ -465,7 +472,11 @@ def register_builtin_commands(dispatcher, container, tools, skills):
 
         if arg in ("on", "enable", "1", "true"):
             set_sandbox_enabled(True)
-            return "Sandbox 已开启 — 工作目录限制已启用。" if zh else "Sandbox ON — working directory restrictions enabled."
+            return (
+                "Sandbox 已开启 — 工作目录限制已启用。"
+                if zh
+                else "Sandbox ON — working directory restrictions enabled."
+            )
         if arg in ("off", "disable", "0", "false"):
             set_sandbox_enabled(False)
             return "Sandbox 已关闭 — 无目录限制。" if zh else "Sandbox OFF — no directory restrictions."
@@ -480,6 +491,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
     def _save_config():
         try:
             from src.config import save_config
+
             save_config(container.config)
         except Exception as e:
             logger.warning("Failed to persist config: %s", e)
@@ -495,17 +507,24 @@ def register_builtin_commands(dispatcher, container, tools, skills):
 
         # Build model list from config
         model_list = [
-            {"provider": cfg.model.provider, "name": cfg.model.name,
-             "base_url": cfg.model.base_url, "api_key": cfg.model.api_key,
-             "context_window": cfg.model.context_window},
+            {
+                "provider": cfg.model.provider,
+                "name": cfg.model.name,
+                "base_url": cfg.model.base_url,
+                "api_key": cfg.model.api_key,
+                "context_window": cfg.model.context_window,
+            },
         ]
         for fb in cfg.model.fallbacks or []:
-            model_list.append({
-                "provider": fb.provider, "name": fb.name,
-                "base_url": fb.base_url or cfg.model.base_url,
-                "api_key": fb.api_key or cfg.model.api_key,
-                "context_window": fb.context_window,
-            })
+            model_list.append(
+                {
+                    "provider": fb.provider,
+                    "name": fb.name,
+                    "base_url": fb.base_url or cfg.model.base_url,
+                    "api_key": fb.api_key or cfg.model.api_key,
+                    "context_window": fb.context_window,
+                }
+            )
 
         client = container.agent_loop._client if container.agent_loop else None
         active_idx = client._active_idx if isinstance(client, FallbackChain) else 0
@@ -518,7 +537,11 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 lines = [f"Available models ({len(model_list)}):"]
             for i, m in enumerate(model_list):
                 marker = " *" if i == active_idx else ""
-                key_status = "(有密钥)" if zh and m.get("api_key") else ("(has key)" if m.get("api_key") else "(无密钥)" if zh else "(no key)")
+                key_status = (
+                    "(有密钥)"
+                    if zh and m.get("api_key")
+                    else ("(has key)" if m.get("api_key") else "(无密钥)" if zh else "(no key)")
+                )
                 lines.append(f"  [{i}] {m['provider']}/{m['name']} {key_status}{marker}")
             lines.append("")
             if zh:
@@ -541,8 +564,8 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 return f"Invalid ID: {val}. Use /model list to see IDs."
             if idx < 0 or idx >= len(model_list):
                 if zh:
-                    return f"ID 超出范围 (0-{len(model_list)-1})。使用 /model list 查看。"
-                return f"ID out of range (0-{len(model_list)-1}). Use /model list."
+                    return f"ID 超出范围 (0-{len(model_list) - 1})。使用 /model list 查看。"
+                return f"ID out of range (0-{len(model_list) - 1}). Use /model list."
             if isinstance(client, FallbackChain):
                 client.switch_to(idx)
             m = model_list[idx]
@@ -570,7 +593,11 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         # /model name <name>
         if sub == "name":
             if not val:
-                return f"模型: {cfg.model.provider}/{cfg.model.name}" if zh else f"Model: {cfg.model.provider}/{cfg.model.name}"
+                return (
+                    f"模型: {cfg.model.provider}/{cfg.model.name}"
+                    if zh
+                    else f"Model: {cfg.model.provider}/{cfg.model.name}"
+                )
             cfg.model.name = val
             if isinstance(client, FallbackChain):
                 client._all[0].model = val
@@ -640,6 +667,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         if arg in valid:
             cfg.tools.exec.approval_mode = arg
             from src.tools.exec import reset_config_cache
+
             reset_config_cache()
             _save_config()
             if zh:
@@ -716,6 +744,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         if arg:
             try:
                 import zoneinfo
+
                 zoneinfo.ZoneInfo(arg)
             except Exception:
                 return f"无效时区: {arg}" if zh else f"Invalid timezone: {arg}"
@@ -747,12 +776,14 @@ def register_builtin_commands(dispatcher, container, tools, skills):
     async def cmd_snapshots(args: str, ctx: dict) -> str:
         zh = container.config.agents.language == "zh"
         from src.tools.snapshot import get_snapshot_manager
+
         mgr = get_snapshot_manager()
         if mgr is None:
             return "快照功能未启用。" if zh else "Snapshots not enabled."
 
         import os
         from src.tools.file_tools import _BASE_DIR
+
         work_dir = _BASE_DIR
 
         arg = args.strip()
@@ -800,12 +831,14 @@ def register_builtin_commands(dispatcher, container, tools, skills):
             return "Usage: /rollback <snapshot_id> [file_path]"
 
         from src.tools.snapshot import get_snapshot_manager
+
         mgr = get_snapshot_manager()
         if mgr is None:
             return "快照功能未启用。" if zh else "Snapshots not enabled."
 
         import os
         from src.tools.file_tools import _BASE_DIR
+
         work_dir = _BASE_DIR
 
         snap_id = parts[0]
@@ -833,6 +866,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
     async def cmd_agents(args: str, ctx: dict) -> str:
         zh = container.config.agents.language == "zh"
         from src.agents.run_registry import get_run_registry
+
         run_registry = get_run_registry()
 
         parts = args.strip().split(None, 1)
@@ -858,7 +892,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 interrupt_tag = " [中断中]" if a.get("interrupt_requested") else ""
                 lines.append(
                     f"  {status_icon} [{a['id']}] {a['agent_name']} — "
-                    f"\"{a['task'][:50]}\" ({a['elapsed']}s){interrupt_tag}"
+                    f'"{a["task"][:50]}" ({a["elapsed"]}s){interrupt_tag}'
                 )
         else:
             lines.append("  " + ("（无运行中）" if zh else "(none running)"))
@@ -893,6 +927,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
     async def cmd_ps(args: str, ctx: dict) -> str:
         zh = container.config.agents.language == "zh"
         from src.tools.process import get_process_registry
+
         registry = get_process_registry()
 
         parts = args.strip().split(None, 1)
@@ -947,9 +982,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 icon = "✅"
             else:
                 icon = "❌"
-            lines.append(
-                f"  {icon} [{s['id']}] pid={s['pid']} ({s['elapsed']}s) {s['command']}"
-            )
+            lines.append(f"  {icon} [{s['id']}] pid={s['pid']} ({s['elapsed']}s) {s['command']}")
         lines.append("")
         if zh:
             lines.append("用法: /ps <id> — 查看详情 | /ps kill <id> — 终止")
@@ -964,10 +997,13 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         arg = args.strip().lower()
         if arg in ("on", "开启", "开"):
             container.config.task.enabled = True
-            return "✅ 自主工作模式已开启。我会为复杂任务制定计划并自动检查进度。" if zh else "✅ Autonomous mode enabled."
+            return (
+                "✅ 自主工作模式已开启。我会为复杂任务制定计划并自动检查进度。" if zh else "✅ Autonomous mode enabled."
+            )
         elif arg in ("off", "关闭", "关"):
             container.config.task.enabled = False
             from src.task.store import get_task_store
+
             store = get_task_store(container.config.task.db_path)
             runs = await store.list_by_status("running", "planning")
             cancelled = 0
@@ -981,11 +1017,19 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                             pass
                 await store.save(r)
                 cancelled += 1
-            msg = f"❌ 自主工作模式已关闭。已取消 {cancelled} 个活跃任务。" if zh else f"❌ Autonomous mode disabled. {cancelled} tasks cancelled."
+            msg = (
+                f"❌ 自主工作模式已关闭。已取消 {cancelled} 个活跃任务。"
+                if zh
+                else f"❌ Autonomous mode disabled. {cancelled} tasks cancelled."
+            )
             return msg
         else:
             status = "已开启" if container.config.task.enabled else "已关闭"
-            return f"自主工作模式当前: {status}。用法: /auto on 或 /auto off" if zh else f"Autonomous mode: {status}. Usage: /auto on or /auto off"
+            return (
+                f"自主工作模式当前: {status}。用法: /auto on 或 /auto off"
+                if zh
+                else f"Autonomous mode: {status}. Usage: /auto on or /auto off"
+            )
 
     dispatcher.register_builtin("auto", cmd_auto)
 

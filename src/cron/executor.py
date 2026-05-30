@@ -111,7 +111,10 @@ async def execute_cron_job(
             if agent_loop.is_thread_busy(thread_id):
                 defer_minutes = getattr(config.task, "defer_minutes", 5)
                 from datetime import datetime, timedelta, timezone
-                new_at = (datetime.now(timezone(timedelta(hours=8))) + timedelta(minutes=defer_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+
+                new_at = (datetime.now(timezone(timedelta(hours=8))) + timedelta(minutes=defer_minutes)).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
                 logger.info("Task checkpoint deferred: thread '%s' is busy, rescheduling to %s", thread_id, new_at)
                 return CronRunResult(
                     job_id=job.id,
@@ -126,8 +129,8 @@ async def execute_cron_job(
 
         task_context = (
             "\n\n## 自主任务检查点\n"
-            "这是一个自主任务的检查点触发。请先调用 task_manage(action=\"status\") 查看当前任务进度，"
-            "然后继续执行下一步。完成后调用 task_manage(action=\"advance\") 标记步骤完成。"
+            '这是一个自主任务的检查点触发。请先调用 task_manage(action="status") 查看当前任务进度，'
+            '然后继续执行下一步。完成后调用 task_manage(action="advance") 标记步骤完成。'
         )
         system_prompt += task_context
 
@@ -137,6 +140,7 @@ async def execute_cron_job(
                 run_id = parts[1]
                 cp_id = parts[3]
                 from src.task.store import get_task_store
+
                 task_store = get_task_store(getattr(config.task, "db_path", "~/.flyclaw/data/task_runs.db"))
                 run = await task_store.get(run_id)
                 if run:
@@ -196,6 +200,7 @@ async def execute_cron_job(
         )
 
     from src.tools.exec import _current_thread_id as _exec_thread_id
+
     _tid_token = _exec_thread_id.set(thread_id)
     try:
         result = await asyncio.wait_for(

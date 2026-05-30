@@ -20,8 +20,13 @@ from src.skills.types import Finding, ScanResult
 
 def _finding(severity="low"):
     return Finding(
-        pattern_id="test_p", severity=severity, category="test",
-        file="f.txt", line=1, match="x", description="test",
+        pattern_id="test_p",
+        severity=severity,
+        category="test",
+        file="f.txt",
+        line=1,
+        match="x",
+        description="test",
     )
 
 
@@ -82,9 +87,13 @@ class TestResolveTrustLevel:
 class TestShouldAllowInstall:
     def _make_result(self, trust_level="community", verdict="safe"):
         return ScanResult(
-            skill_name="test", source="community",
-            trust_level=trust_level, verdict=verdict,
-            findings=[], scanned_at="", summary="",
+            skill_name="test",
+            source="community",
+            trust_level=trust_level,
+            verdict=verdict,
+            findings=[],
+            scanned_at="",
+            summary="",
         )
 
     def test_builtin_safe(self):
@@ -351,6 +360,7 @@ class TestThreatPatterns:
     def test_all_patterns_compile(self):
         for pattern, pid, severity, category, desc in THREAT_PATTERNS:
             import re
+
             re.compile(pattern, re.IGNORECASE)
 
     def test_severity_values(self):
@@ -366,9 +376,13 @@ class TestThreatPatterns:
 class TestFormatScanReport:
     def test_clean_report(self):
         result = ScanResult(
-            skill_name="test", source="community",
-            trust_level="community", verdict="safe",
-            findings=[], scanned_at="", summary="clean",
+            skill_name="test",
+            source="community",
+            trust_level="community",
+            verdict="safe",
+            findings=[],
+            scanned_at="",
+            summary="clean",
         )
         report = format_scan_report(result)
         assert "clean" in report.lower() or "no threats" in report.lower() or "ALLOWED" in report
@@ -376,9 +390,13 @@ class TestFormatScanReport:
     def test_with_findings(self):
         findings = [_finding("high")]
         result = ScanResult(
-            skill_name="test", source="community",
-            trust_level="community", verdict="caution",
-            findings=findings, scanned_at="", summary="issues found",
+            skill_name="test",
+            source="community",
+            trust_level="community",
+            verdict="caution",
+            findings=findings,
+            scanned_at="",
+            summary="issues found",
         )
         report = format_scan_report(result)
         assert "HIGH" in report or "ALLOWED" in report

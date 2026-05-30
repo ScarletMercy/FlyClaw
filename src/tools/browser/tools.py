@@ -89,12 +89,16 @@ async def browser_click(ref: str) -> str:
         url_after = page.url
         if url_after != url_before:
             snap = await get_snapshot(page)
-            return (f"Clicked {ref} — page navigated to {url_after}\n"
-                    f"{build_page_info(snap['url'], snap['title'], snap['snapshot'], snap['element_count'])}")
+            return (
+                f"Clicked {ref} — page navigated to {url_after}\n"
+                f"{build_page_info(snap['url'], snap['title'], snap['snapshot'], snap['element_count'])}"
+            )
         if "timeout" in str(e).lower():
-            return (f"Error clicking {ref}: timed out. "
-                    f"The element may have triggered a slow page load or no action occurred. "
-                    f"Take a new snapshot with browser_snapshot.")
+            return (
+                f"Error clicking {ref}: timed out. "
+                f"The element may have triggered a slow page load or no action occurred. "
+                f"Take a new snapshot with browser_snapshot."
+            )
         return f"Error clicking {ref}: {e}"
 
     snap = await get_snapshot(page)
@@ -134,12 +138,16 @@ async def browser_type(ref: str, text: str, submit: bool = False) -> str:
             url_after = page.url
             if url_after != url_before:
                 snap = await get_snapshot(page)
-                return (f"Typed '{text}' and submitted in {ref} — page navigated to {url_after}\n"
-                        f"{build_page_info(snap['url'], snap['title'], snap['snapshot'], snap['element_count'])}")
+                return (
+                    f"Typed '{text}' and submitted in {ref} — page navigated to {url_after}\n"
+                    f"{build_page_info(snap['url'], snap['title'], snap['snapshot'], snap['element_count'])}"
+                )
             if "timeout" in str(e).lower():
-                return (f"Error typing into {ref}: timed out after submit. "
-                        f"The form may have triggered a slow page load. "
-                        f"Take a new snapshot with browser_snapshot.")
+                return (
+                    f"Error typing into {ref}: timed out after submit. "
+                    f"The form may have triggered a slow page load. "
+                    f"Take a new snapshot with browser_snapshot."
+                )
         return f"Error typing into {ref}: {e}"
 
     if submit:
@@ -221,11 +229,12 @@ async def browser_press(key: str) -> str:
         url_after = page.url
         if url_after != url_before:
             snap = await get_snapshot(page)
-            return (f"Pressed {key} — page navigated to {url_after}\n"
-                    f"{build_page_info(snap['url'], snap['title'], snap['snapshot'], snap['element_count'])}")
+            return (
+                f"Pressed {key} — page navigated to {url_after}\n"
+                f"{build_page_info(snap['url'], snap['title'], snap['snapshot'], snap['element_count'])}"
+            )
         if "timeout" in str(e).lower():
-            return (f"Error pressing {key}: timed out. "
-                    f"Take a new snapshot with browser_snapshot.")
+            return f"Error pressing {key}: timed out. Take a new snapshot with browser_snapshot."
         return f"Error pressing {key}: {e}"
 
     snap = await get_snapshot(page)
@@ -248,6 +257,7 @@ async def browser_screenshot(path: str = "") -> str:
 
     if not path:
         from src.config import load_config
+
         cfg = load_config()
         workspace = os.path.expanduser(cfg.agents.workspace)
         os.makedirs(workspace, exist_ok=True)
@@ -313,6 +323,7 @@ async def _ref_to_locator(page, ref: str):
         return None
 
     from src.tools.browser.snapshot import get_interactive_nodes
+
     nodes = result.get("nodes", [])
     interactive = get_interactive_nodes(nodes)
     if idx < 1 or idx > len(interactive):
@@ -336,6 +347,7 @@ async def _ref_to_locator(page, ref: str):
 
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef
+
     return [
         ToolDef.from_function(browser_navigate),
         ToolDef.from_function(browser_snapshot),
@@ -348,4 +360,3 @@ def get_tools() -> list:
         ToolDef.from_function(browser_console),
         ToolDef.from_function(browser_close),
     ]
-

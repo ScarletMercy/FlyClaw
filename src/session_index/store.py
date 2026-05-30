@@ -96,8 +96,8 @@ def _sanitize_fts5_query(query: str) -> str:
     query = query.strip()
     if not query:
         return '""'
-    query = query.replace('"', ' ')
-    tokens = re.findall(r'[一-鿿]+|[a-zA-Z0-9_]+', query)
+    query = query.replace('"', " ")
+    tokens = re.findall(r"[一-鿿]+|[a-zA-Z0-9_]+", query)
     if not tokens:
         return '""'
     return " OR ".join(tokens)
@@ -138,9 +138,7 @@ class SessionIndexStore:
         chat_type: str,
     ) -> None:
         db = self._require_db()
-        cursor = await db.execute(
-            "SELECT thread_id FROM sessions WHERE thread_id = ?", (thread_id,)
-        )
+        cursor = await db.execute("SELECT thread_id FROM sessions WHERE thread_id = ?", (thread_id,))
         existing = await cursor.fetchone()
         if existing:
             return
@@ -153,9 +151,7 @@ class SessionIndexStore:
 
     async def get_session(self, thread_id: str) -> Optional[dict]:
         db = self._require_db()
-        cursor = await db.execute(
-            "SELECT * FROM sessions WHERE thread_id = ?", (thread_id,)
-        )
+        cursor = await db.execute("SELECT * FROM sessions WHERE thread_id = ?", (thread_id,))
         row = await cursor.fetchone()
         return dict(row) if row else None
 
@@ -177,9 +173,7 @@ class SessionIndexStore:
                 ),
             )
         now = time.time()
-        cursor = await db.execute(
-            "SELECT COUNT(*) FROM messages WHERE thread_id = ?", (thread_id,)
-        )
+        cursor = await db.execute("SELECT COUNT(*) FROM messages WHERE thread_id = ?", (thread_id,))
         count = (await cursor.fetchone())[0]
         await db.execute(
             "UPDATE sessions SET message_count = ?, last_message_at = ? WHERE thread_id = ?",
@@ -189,9 +183,7 @@ class SessionIndexStore:
 
     async def mark_inactive(self, thread_id: str) -> None:
         db = self._require_db()
-        await db.execute(
-            "UPDATE sessions SET is_active = 0 WHERE thread_id = ?", (thread_id,)
-        )
+        await db.execute("UPDATE sessions SET is_active = 0 WHERE thread_id = ?", (thread_id,))
         await db.commit()
 
     async def search(
@@ -230,15 +222,17 @@ class SessionIndexStore:
         for row in rows:
             snippet = row["snippets"] or ""
             snippet_lines = snippet.split("\n")[:2]
-            results.append({
-                "thread_id": row["thread_id"],
-                "channel": row["channel"],
-                "chat_type": row["chat_type"],
-                "last_message_at": row["last_message_at"],
-                "message_count": row["message_count"],
-                "is_active": bool(row["is_active"]),
-                "snippet": "\n".join(snippet_lines),
-            })
+            results.append(
+                {
+                    "thread_id": row["thread_id"],
+                    "channel": row["channel"],
+                    "chat_type": row["chat_type"],
+                    "last_message_at": row["last_message_at"],
+                    "message_count": row["message_count"],
+                    "is_active": bool(row["is_active"]),
+                    "snippet": "\n".join(snippet_lines),
+                }
+            )
         return results
 
     async def _list_recent(self, limit: int) -> list[dict]:
@@ -253,21 +247,22 @@ class SessionIndexStore:
         results = []
         for row in rows:
             preview_cursor = await db.execute(
-                "SELECT content FROM messages WHERE thread_id = ? AND role = 'human' "
-                "ORDER BY timestamp ASC LIMIT 1",
+                "SELECT content FROM messages WHERE thread_id = ? AND role = 'human' ORDER BY timestamp ASC LIMIT 1",
                 (row["thread_id"],),
             )
             preview_row = await preview_cursor.fetchone()
             preview = (preview_row["content"] or "")[:80] if preview_row else ""
-            results.append({
-                "thread_id": row["thread_id"],
-                "channel": row["channel"],
-                "chat_type": row["chat_type"],
-                "last_message_at": row["last_message_at"],
-                "message_count": row["message_count"],
-                "is_active": bool(row["is_active"]),
-                "snippet": preview,
-            })
+            results.append(
+                {
+                    "thread_id": row["thread_id"],
+                    "channel": row["channel"],
+                    "chat_type": row["chat_type"],
+                    "last_message_at": row["last_message_at"],
+                    "message_count": row["message_count"],
+                    "is_active": bool(row["is_active"]),
+                    "snippet": preview,
+                }
+            )
         return results
 
     async def get_indexed_thread_ids(self) -> set[str]:

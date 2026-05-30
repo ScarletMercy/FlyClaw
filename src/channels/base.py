@@ -112,8 +112,10 @@ async def api_request_with_retry(
             if attempt >= max_retries:
                 logger.warning("%s: network error persisted after %d retries: %s", description, max_retries, e)
                 raise
-            wait = min(1.0 * (2 ** attempt), 8.0) + _random.uniform(0, 0.5)
-            logger.warning("%s: network error, retry %d/%d in %.1fs: %s", description, attempt + 1, max_retries, wait, e)
+            wait = min(1.0 * (2**attempt), 8.0) + _random.uniform(0, 0.5)
+            logger.warning(
+                "%s: network error, retry %d/%d in %.1fs: %s", description, attempt + 1, max_retries, wait, e
+            )
             await asyncio.sleep(wait)
             continue
 
@@ -136,10 +138,19 @@ async def api_request_with_retry(
 
         if retry_on_server_error and getattr(resp, "status_code", 0) >= 500:
             if attempt >= max_retries:
-                logger.warning("%s: server error %d persisted after %d retries", description, resp.status_code, max_retries)
+                logger.warning(
+                    "%s: server error %d persisted after %d retries", description, resp.status_code, max_retries
+                )
                 return resp
-            wait = min(1.0 * (2 ** attempt), 8.0) + _random.uniform(0, 0.5)
-            logger.warning("%s: server error %d, retry %d/%d in %.1fs", description, resp.status_code, attempt + 1, max_retries, wait)
+            wait = min(1.0 * (2**attempt), 8.0) + _random.uniform(0, 0.5)
+            logger.warning(
+                "%s: server error %d, retry %d/%d in %.1fs",
+                description,
+                resp.status_code,
+                attempt + 1,
+                max_retries,
+                wait,
+            )
             await asyncio.sleep(wait)
             continue
 

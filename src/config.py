@@ -78,32 +78,32 @@ class AgentConfig(BaseModel):
     system_prompt: str = "You are a helpful AI assistant."
     workspace: str = "~/.flyclaw/workspace"
     max_tool_rounds: int = 100
-    subagents: dict[str, AgentSubconfig] = Field(default_factory=lambda: {
-        "research": AgentSubconfig(
-            system_prompt="You are a research specialist. Find and synthesize information thoroughly.",
-            tools=["web_search", "web_fetch"],
-            description="Research specialist - finds and synthesizes information",
-        ),
-        "coder": AgentSubconfig(
-            system_prompt="You are a coding specialist. Write, analyze, and debug code.",
-            tools=["exec_command"],
-            description="Coding specialist - writes and analyzes code",
-        ),
-        "reviewer": AgentSubconfig(
-            system_prompt="You are a critical reviewer. Analyze content, code, or proposals.",
-            tools=["*"],
-            description="Critical reviewer - analyzes and provides feedback",
-        ),
-    })
+    subagents: dict[str, AgentSubconfig] = Field(
+        default_factory=lambda: {
+            "research": AgentSubconfig(
+                system_prompt="You are a research specialist. Find and synthesize information thoroughly.",
+                tools=["web_search", "web_fetch"],
+                description="Research specialist - finds and synthesizes information",
+            ),
+            "coder": AgentSubconfig(
+                system_prompt="You are a coding specialist. Write, analyze, and debug code.",
+                tools=["exec_command"],
+                description="Coding specialist - writes and analyzes code",
+            ),
+            "reviewer": AgentSubconfig(
+                system_prompt="You are a critical reviewer. Analyze content, code, or proposals.",
+                tools=["*"],
+                description="Critical reviewer - analyzes and provides feedback",
+            ),
+        }
+    )
     subagent_max_depth: int = 2
     timezone: str = "Asia/Shanghai"
     language: Literal["zh", "en"] = "zh"
     tool_progress_notifications: bool = False
     tool_output_cache_chars: int = 8000
     busy_input_mode: Literal["interrupt", "queue", "steer"] = "interrupt"
-    bootstrap_files: list[str] = Field(
-        default_factory=lambda: ["AGENTS.md", "IDENTITY.md", "USER.md"]
-    )
+    bootstrap_files: list[str] = Field(default_factory=lambda: ["AGENTS.md", "IDENTITY.md", "USER.md"])
 
 
 class QQConfig(BaseModel):
@@ -278,6 +278,7 @@ class ToolsConfig(BaseModel):
 
 class SnapshotConfig(BaseModel):
     """File snapshot/rollback configuration (shadow git store)."""
+
     enabled: bool = True
     store_path: str = "~/.flyclaw/data/snapshots"
     max_per_dir: int = 20
@@ -286,6 +287,7 @@ class SnapshotConfig(BaseModel):
 
 class VoiceConfig(BaseModel):
     """Voice mode configuration."""
+
     enabled: bool = False
     voice: str = "zh-CN-YunxiNeural"
     threshold: int = 20
@@ -293,14 +295,13 @@ class VoiceConfig(BaseModel):
 
 class DelegationConfig(BaseModel):
     """Sub-agent delegation configuration."""
+
     enabled: bool = True
     max_concurrent: int = 3
     child_timeout_seconds: int = 600
     child_timeout_floor: int = 30
     max_iterations: int = 50
-    blocked_tools: list[str] = Field(
-        default_factory=lambda: ["delegate_task", "delegate_batch"]
-    )
+    blocked_tools: list[str] = Field(default_factory=lambda: ["delegate_task", "delegate_batch"])
 
 
 class CheckpointerConfig(BaseModel):
@@ -411,6 +412,7 @@ class SessionSearchConfig(BaseModel):
 
 class CompressionConfig(BaseModel):
     """Context compression configuration."""
+
     enabled: bool = True
     threshold_percent: float = 0.6
     tail_messages: int = 20
@@ -425,6 +427,7 @@ class CanvasConfig(BaseModel):
 
 class HookConfig(BaseModel):
     """User-defined event hook configuration."""
+
     event: str = ""
     handler: str = ""
     enabled: bool = True
@@ -432,6 +435,7 @@ class HookConfig(BaseModel):
 
 class HooksConfig(BaseModel):
     """Event hooks configuration."""
+
     hooks: list[HookConfig] = Field(default_factory=list)
 
 
@@ -462,18 +466,17 @@ class AppConfig(BaseModel):
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
 
 
-
 def _expand_paths(config: AppConfig) -> AppConfig:
     """Expand ~ in all path fields to absolute paths."""
     # Checkpointer
     config.checkpointer.path = str(Path(config.checkpointer.path).expanduser().resolve())
-    
+
     # Cron
     config.cron.store_path = str(Path(config.cron.store_path).expanduser().resolve())
-    
+
     # Memory
     config.memory.db_path = str(Path(config.memory.db_path).expanduser().resolve())
-    
+
     # Auth
     config.auth.db_path = str(Path(config.auth.db_path).expanduser().resolve())
 
@@ -482,7 +485,7 @@ def _expand_paths(config: AppConfig) -> AppConfig:
 
     # Task
     config.task.db_path = str(Path(config.task.db_path).expanduser().resolve())
-    
+
     # Session search
     config.session_search.index_path = str(Path(config.session_search.index_path).expanduser().resolve())
 

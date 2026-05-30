@@ -115,6 +115,7 @@ async def _verify_api_key_async(provider: str, name: str, base_url: str, api_key
     """验证 API Key 是否可用。"""
     try:
         from src.agent.client import ChatClient
+
         client = ChatClient(base_url=base_url or "", api_key=api_key, model=name)
         resp = await client.chat_simple([{"role": "user", "content": "你好"}])
         return True, resp
@@ -279,7 +280,9 @@ def _step_model(config: dict) -> None:
             # 验证 API Key
             if model["api_key"]:
                 print("  验证 API Key 中...")
-                success, msg = _verify_api_key(model.get("provider", ""), model.get("name", ""), model.get("base_url", ""), model["api_key"])
+                success, msg = _verify_api_key(
+                    model.get("provider", ""), model.get("name", ""), model.get("base_url", ""), model["api_key"]
+                )
                 if success:
                     print("  [通过] API Key 验证成功")
                     ctx_default = str(model.get("context_window", 1000000))
@@ -302,7 +305,9 @@ def _step_model(config: dict) -> None:
         # 验证 API Key
         if model["api_key"]:
             print("  验证 API Key 中...")
-            success, msg = _verify_api_key(model.get("provider", ""), model.get("name", ""), model.get("base_url", ""), model["api_key"])
+            success, msg = _verify_api_key(
+                model.get("provider", ""), model.get("name", ""), model.get("base_url", ""), model["api_key"]
+            )
             if success:
                 print("  [通过] API Key 验证成功")
                 ctx_default = str(model.get("context_window", 1000000))
@@ -331,7 +336,6 @@ def _step_gateway(config: dict) -> None:
     gw["port"] = int(_ask("  监听端口", default=str(gw.get("port", 18080))))
     token = _ask("  认证令牌（留空则不启用认证）", default="")
     gw["auth_token"] = token
-
 
 
 def _step_channel(config: dict) -> None:
@@ -385,6 +389,7 @@ def _configure_qq(qq: dict) -> None:
         else:
             try:
                 from src.channels.qq_onboard import qr_register
+
                 result = qr_register()
             except Exception as exc:
                 print(f"  扫码配置失败: {exc}")
@@ -432,6 +437,7 @@ def _configure_weixin(weixin: dict) -> None:
         print("  正在获取微信二维码...")
         try:
             from src.channels.weixin_onboard import qr_login
+
             result = qr_login()
         except ImportError:
             print("  缺少 aiohttp 或 cryptography 库，请运行: pip install aiohttp cryptography")
@@ -455,7 +461,9 @@ def _configure_weixin(weixin: dict) -> None:
         weixin["account_id"] = _ask("  Account ID", default=weixin.get("account_id", ""))
         weixin["token"] = _ask("  Token", default=weixin.get("token", ""))
 
-    weixin["dm_policy"] = _ask_choice("  私聊策略", ["open", "allowlist", "disabled"], default=weixin.get("dm_policy", "open"))
+    weixin["dm_policy"] = _ask_choice(
+        "  私聊策略", ["open", "allowlist", "disabled"], default=weixin.get("dm_policy", "open")
+    )
     weixin["group_policy"] = _ask_choice(
         "  群聊策略", ["disabled", "allowlist", "open"], default=weixin.get("group_policy", "disabled")
     )
@@ -480,10 +488,13 @@ def _step_search(config: dict) -> None:
 def _check_chromium_installed() -> bool:
     """检查 Playwright Chromium 是否已安装。"""
     import subprocess
+
     try:
         ret = subprocess.run(
             [sys.executable, "-m", "playwright", "install", "--list"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True,
+            text=True,
+            timeout=15,
         )
         for line in ret.stdout.splitlines():
             stripped = line.strip().lower()
@@ -512,6 +523,7 @@ def _step_browser(config: dict) -> None:
         elif _ask_yn("  现在安装 Chromium 浏览器（Playwright）？", default=True):
             print("  正在安装 Chromium...")
             import subprocess
+
             # 设置国内镜像源加速下载
             env = os.environ.copy()
             env["PLAYWRIGHT_DOWNLOAD_HOST"] = "https://registry.npmmirror.com/-/binary/playwright"
