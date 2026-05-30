@@ -99,6 +99,7 @@ class AgentConfig(BaseModel):
     timezone: str = "Asia/Shanghai"
     language: Literal["zh", "en"] = "zh"
     tool_progress_notifications: bool = False
+    tool_output_cache_chars: int = 8000
     busy_input_mode: Literal["interrupt", "queue", "steer"] = "interrupt"
     bootstrap_files: list[str] = Field(
         default_factory=lambda: ["AGENTS.md", "IDENTITY.md", "USER.md"]

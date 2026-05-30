@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import tempfile
 from pathlib import Path
 
 logger = logging.getLogger("flyclaw.agent.tool_cache")
@@ -18,9 +17,13 @@ _DEFAULT_MAX_CHARS = 8000
 _DEFAULT_PREVIEW = 8000
 
 
+def cache_root() -> Path:
+    return (Path.home() / ".flyclaw" / "temp").resolve()
+
+
 def _cache_dir(thread_id: str) -> Path:
     safe_id = thread_id.replace(":", "_").replace("/", "_").replace("\\", "_")
-    base = Path(tempfile.gettempdir()) / "flyclaw" / "tool_cache" / safe_id
+    base = cache_root() / "tool_cache" / safe_id
     base.mkdir(parents=True, exist_ok=True)
     return base
 

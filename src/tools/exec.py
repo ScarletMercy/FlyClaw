@@ -465,7 +465,7 @@ async def exec_command(
         else:
             wd = workspace
 
-        allowed = [workspace.resolve()] + [Path(d).expanduser().resolve() for d in sandbox_allowed_dirs] + _collect_skill_dirs(cfg)
+        allowed = [workspace.resolve()] + [Path(d).expanduser().resolve() for d in sandbox_allowed_dirs] + _collect_skill_dirs(cfg) + [(Path.home() / ".flyclaw" / "temp").resolve()]
         def _is_under(child: Path, parent: Path) -> bool:
             try:
                 child.relative_to(parent)

@@ -31,14 +31,22 @@ def _resolve_path(path: str) -> str:
     except Exception:
         raise ValueError(f"Path '{path}' could not be resolved")
     from src.tools.exec import is_sandbox_enabled
+    from src.agent.tool_cache import cache_root as get_cache_root
     if not is_sandbox_enabled():
         return str(real)
     base = Path(_BASE_DIR).resolve()
-    try:
-        real.relative_to(base)
-    except ValueError:
-        raise ValueError(f"当前为沙盒模式，无法访问工作目录之外的路径：{path}（允许范围：{_BASE_DIR}）")
-    return str(real)
+    cache_root = get_cache_root()
+    allowed_roots = [base, cache_root]
+    for root in allowed_roots:
+        try:
+            real.relative_to(root)
+            return str(real)
+        except ValueError:
+            continue
+    raise ValueError(
+        f"当前为沙盒模式，无法访问工作目录之外的路径：{path}"
+        f"（允许范围：{_BASE_DIR}、{cache_root}）"
+    )
 
 
 def read_file(path: str, offset: int = 0, head_limit: int = 500) -> str:
