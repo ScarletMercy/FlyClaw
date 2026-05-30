@@ -64,15 +64,16 @@ class TestReloadTools:
         executor = ReloadExecutor(app)
         plan = ReloadPlan(actions=[ReloadAction(action="reload_tools")])
 
-        with patch("src.tools.registry.get_tool_registry") as mock_reg:
-            t1 = MagicMock()
-            t1.name = "tool_a"
-            t2 = MagicMock()
-            t2.name = "tool_b"
-            mock_reg.return_value.collect.return_value = [t1, t2]
-            await executor.execute(plan)
+        t1 = MagicMock()
+        t1.name = "tool_a"
+        t2 = MagicMock()
+        t2.name = "tool_b"
+        app._collect_builtin_tools.return_value = [t1, t2]
+        app.tool_registry = MagicMock()
 
-        assert len(app.agent_loop._tools) == 2
+        await executor.execute(plan)
+
+        assert list(app.agent_loop._tools) == [t1, t2]
         assert "tool_a" in app.agent_loop._tool_map
         assert "tool_b" in app.agent_loop._tool_map
 

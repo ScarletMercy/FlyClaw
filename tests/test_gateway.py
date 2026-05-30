@@ -1,6 +1,5 @@
 """Tests for the gateway HTTP API."""
 import os, sys, pytest
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 def _make_gateway(tmp_path):
     from src.config import AppConfig

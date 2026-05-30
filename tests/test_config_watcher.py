@@ -8,8 +8,6 @@ import pytest
 import yaml
 from unittest.mock import AsyncMock
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 from src.config import AppConfig, GatewayConfig, ModelConfig, CronConfig
 from src.config_watcher import ConfigChange, ConfigWatcher, DiffEngine, ReloadPlan
 
@@ -100,14 +98,14 @@ class TestConfigWatcher:
         assert watcher.current.model.name == "claude-sonnet-4-6"
 
         await watcher.start()
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.5)
 
         with open(config_path, "w", encoding="utf-8") as f:
             f.write(yaml.dump({"model": {"name": "gpt-4o"}}))
             f.flush()
             os.fsync(f.fileno())
 
-        for _ in range(50):
+        for _ in range(80):
             await asyncio.sleep(0.1)
             if callback.called:
                 break

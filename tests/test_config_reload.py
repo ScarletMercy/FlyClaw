@@ -24,11 +24,12 @@ class TestReloadExecutor:
         assert app.agent_loop._client == mock_chain.return_value
 
     @pytest.mark.asyncio
-    async def test_reload_cron_restarts_service(self):
+    async def test_reload_cron_restarts_service(self, tmp_path):
         app = MagicMock()
         old_service = AsyncMock()
         app.cron_service = old_service
         app.config = AppConfig()
+        app.config.cron.store_path = str(tmp_path / "cron.db")
         app.qq = MagicMock()
         executor = ReloadExecutor(app)
         plan = ReloadPlan(actions=[ReloadAction(action="reload_cron")])
@@ -49,12 +50,15 @@ class TestReloadExecutor:
         app.config = AppConfig()
         executor = ReloadExecutor(app)
         plan = ReloadPlan(actions=[ReloadAction(action="reload_tools")])
-        with patch("src.tools.registry.get_tool_registry") as mock_reg:
-            mock_tool = MagicMock()
-            mock_tool.name = "test"
-            mock_reg.return_value.collect.return_value = [mock_tool]
-            await executor.execute(plan)
-        assert app.agent_loop._tools == [mock_tool]
+
+        mock_tool = MagicMock()
+        mock_tool.name = "test"
+        app._collect_builtin_tools.return_value = [mock_tool]
+        app.tool_registry = MagicMock()
+
+        await executor.execute(plan)
+        assert list(app.agent_loop._tools) == [mock_tool]
+        assert app.agent_loop._tool_map == {"test": mock_tool}
 
     @pytest.mark.asyncio
     async def test_unknown_action_logs_warning(self):

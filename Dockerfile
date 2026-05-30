@@ -5,7 +5,7 @@ WORKDIR /app
 
 COPY pyproject.toml uv.lock* ./
 RUN pip install uv && \
-    uv sync --no-dev --frozen
+    UV_INDEX_URL=https://pypi.org/simple/ uv sync --no-dev
 
 # Runtime stage
 FROM python:3.12-slim

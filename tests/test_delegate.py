@@ -6,8 +6,6 @@ import time
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 
 class TestResolveChildTimeout:
     def _make_config(self, child_timeout_seconds=600, child_timeout_floor=30):

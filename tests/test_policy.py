@@ -6,8 +6,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 
 def _make_tool(name):
     t = MagicMock()

@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+import pytest
 
 
 def _create_checkpoints_db(db_path: str) -> None:

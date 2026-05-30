@@ -4,8 +4,6 @@ import os
 import sys
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 
 class TestLoadConfig:
     def test_default_config(self, tmp_path):

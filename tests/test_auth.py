@@ -6,8 +6,6 @@ import time
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 
 class TestUserModels:
     def test_user_defaults(self):

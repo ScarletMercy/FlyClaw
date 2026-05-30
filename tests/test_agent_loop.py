@@ -517,7 +517,7 @@ class TestInterruptInLoop:
         loop = _make_loop(store, config, tools=[tool], client=client)
 
         flag = store.get_interrupt_flag("int_during_model")
-        asyncio.get_event_loop().call_later(0.1, lambda: flag.interrupt("stop model"))
+        asyncio.get_running_loop().call_later(0.1, lambda: flag.interrupt("stop model"))
 
         state = AgentState(messages=[{"role": "user", "content": "go"}])
         result = await loop.run(state, "int_during_model")
@@ -546,7 +546,7 @@ class TestInterruptInLoop:
         loop = _make_loop(store, config, tools=[tool], client=client)
 
         flag = store.get_interrupt_flag("int_during_tool")
-        asyncio.get_event_loop().call_later(0.1, lambda: flag.interrupt("stop tool"))
+        asyncio.get_running_loop().call_later(0.1, lambda: flag.interrupt("stop tool"))
 
         state = AgentState(messages=[{"role": "user", "content": "go"}])
         result = await loop.run(state, "int_during_tool")
@@ -574,6 +574,7 @@ class TestToolCache:
     def test_small_content_not_truncated(self):
         from src.agent.loop import AgentLoop
         loop = AgentLoop.__new__(AgentLoop)
+        loop._config = None
         content = "short text"
         messages = [{"role": "tool", "tool_call_id": "tc1", "content": content}]
         loop._truncate_large_outputs(messages, "test_thread")
@@ -582,6 +583,7 @@ class TestToolCache:
     def test_large_content_truncated(self):
         from src.agent.loop import AgentLoop
         loop = AgentLoop.__new__(AgentLoop)
+        loop._config = None
         content = "x" * 10000
         messages = [{"role": "tool", "tool_call_id": "tc1", "content": content}]
         loop._truncate_large_outputs(messages, "test_thread")
@@ -591,6 +593,7 @@ class TestToolCache:
     def test_non_tool_messages_untouched(self):
         from src.agent.loop import AgentLoop
         loop = AgentLoop.__new__(AgentLoop)
+        loop._config = None
         content = "x" * 10000
         messages = [{"role": "user", "content": content}]
         loop._truncate_large_outputs(messages, "test_thread")
