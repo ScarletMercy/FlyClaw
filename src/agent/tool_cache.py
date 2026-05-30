@@ -9,12 +9,25 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from pathlib import Path
 
 logger = logging.getLogger("flyclaw.agent.tool_cache")
 
 _DEFAULT_MAX_CHARS = 8000
 _DEFAULT_PREVIEW = 8000
+
+# Regex for stripping cache file paths from truncated messages.
+# Lives here (next to the format string) so both stay in sync.
+_CACHE_PATH_RE = re.compile(r"\. Full content saved to: `[^`]+`")
+
+
+def strip_cache_path(content: str) -> str:
+    """Remove embedded cache file paths from truncated tool output.
+
+    Replaces ``. Full content saved to: `/path/...` ``` with ``.```.
+    """
+    return _CACHE_PATH_RE.sub(".", content)
 
 
 def cache_root() -> Path:

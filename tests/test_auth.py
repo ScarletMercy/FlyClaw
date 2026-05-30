@@ -157,8 +157,8 @@ class TestAuthStore:
         store.get_or_create_user("u1")
 
         code = store.create_pairing_code("u1", ttl_seconds=300)
-        assert len(code.code) == 6
-        assert code.code.isdigit()
+        assert len(code.code) == 32
+        assert code.code.isalnum()  # hex: 0-9 a-f
 
         user = store.verify_pairing(code.code, "dev1", platform="web")
         assert user is not None

@@ -230,6 +230,7 @@ class TestAgentLoopApproval:
                 request_id="r1",
                 tool_name="exec_command",
                 command_preview="rm -rf /",
+                tc_id="tc_123",
             )
             state = AgentState(messages=[{"role": "user", "content": "run"}])
             with pytest.raises(ApprovalPending):
@@ -637,39 +638,54 @@ class TestToolCache:
 
 
 class TestCleanTruncatedMarkers:
-    def test_removes_truncated_marker(self):
-        from src.agent.loop import AgentLoop
+    """Tests for _clean_for_summary (moved from loop._clean_truncated_markers)."""
 
-        loop = AgentLoop.__new__(AgentLoop)
+    def test_removes_truncated_marker(self):
+        from src.compressor.compressor import _clean_for_summary
+
         msgs = [{"role": "tool", "content": "result", "_truncated": True}]
-        loop._clean_truncated_markers(msgs)
-        assert "_truncated" not in msgs[0]
+        cleaned = _clean_for_summary(msgs)
+        assert "_truncated" not in cleaned[0]
 
     def test_removes_cache_file_path(self):
-        from src.agent.loop import AgentLoop
+        from src.compressor.compressor import _clean_for_summary
 
-        loop = AgentLoop.__new__(AgentLoop)
-        content = "x" * 8000 + "\n... [content truncated, 10000 chars total. Full content saved to: `/home/user/.flyclaw/temp/tool_cache/t/file.txt`]"
+        content = (
+            "x" * 8000
+            + "\n... [content truncated, 10000 chars total. Full content saved to: `/home/user/.flyclaw/temp/tool_cache/t/file.txt`]"
+        )
         msgs = [{"role": "tool", "content": content, "_truncated": True}]
-        loop._clean_truncated_markers(msgs)
-        assert "Full content saved to:" not in msgs[0]["content"]
-        assert "content truncated" in msgs[0]["content"]
+        cleaned = _clean_for_summary(msgs)
+        assert "Full content saved to:" not in cleaned[0]["content"]
+        assert "content truncated" in cleaned[0]["content"]
 
     def test_leaves_normal_content_unchanged(self):
-        from src.agent.loop import AgentLoop
+        from src.compressor.compressor import _clean_for_summary
 
-        loop = AgentLoop.__new__(AgentLoop)
         content = "hello world"
         msgs = [{"role": "user", "content": content}]
-        loop._clean_truncated_markers(msgs)
-        assert msgs[0]["content"] == content
+        cleaned = _clean_for_summary(msgs)
+        assert cleaned[0]["content"] == content
 
     def test_no_error_on_missing_keys(self):
-        from src.agent.loop import AgentLoop
+        from src.compressor.compressor import _clean_for_summary
 
-        loop = AgentLoop.__new__(AgentLoop)
         msgs = [{"role": "tool", "tool_call_id": "tc1"}]
-        loop._clean_truncated_markers(msgs)
+        cleaned = _clean_for_summary(msgs)
+        assert len(cleaned) == 1
+
+    def test_roundtrip_cache_and_strip(self):
+        """cache_large_output produces format that strip_cache_path can remove."""
+        from src.agent.tool_cache import cache_large_output, strip_cache_path
+
+        big = "abc" * 5000  # 15000 chars > default 8000
+        truncated, path = cache_large_output(big, "test_thread")
+        assert path is not None, "should have cached to file"
+        assert "Full content saved to:" in truncated
+
+        stripped = strip_cache_path(truncated)
+        assert "Full content saved to:" not in stripped
+        assert "content truncated" in stripped
 
 
 class TestFindSafeCut:
@@ -761,7 +777,7 @@ class TestFindSafeCut:
 
 class TestApprovalPendingPartialResults:
     def test_partial_results_default_empty(self):
-        exc = ApprovalPending("t1", "r1", "exec", "cmd")
+        exc = ApprovalPending("t1", "r1", "exec", "cmd", tc_id="")
         assert exc.partial_results == []
 
     def test_partial_results_stored(self):
@@ -777,7 +793,7 @@ class TestApprovalPendingPartialResults:
 
 class TestApprovalPendingData:
     def test_tc_id_default_empty(self):
-        exc = ApprovalPending("t1", "r1", "exec", "cmd")
+        exc = ApprovalPending("t1", "r1", "exec", "cmd", tc_id="")
         assert exc.tc_id == ""
 
     def test_tc_id_stored(self):

@@ -149,23 +149,23 @@ class ApprovalPending(Exception):
         request_id: str,
         tool_name: str,
         command_preview: str,
+        tc_id: str,
         denylisted: bool = False,
         timeout: int | None = None,
         auto_deny: bool = False,
         keys: list[str] | None = None,
         partial_results: list[tuple[str, str]] | None = None,
-        tc_id: str = "",
     ):
         self.thread_id = thread_id
         self.request_id = request_id
         self.tool_name = tool_name
         self.command_preview = command_preview
+        self.tc_id = tc_id
         self.denylisted = denylisted
         self.timeout = timeout
         self.auto_deny = auto_deny
         self.keys = keys or []
         self.partial_results: list[tuple[str, str]] = list(partial_results) if partial_results else []
-        self.tc_id = tc_id
         super().__init__(f"需要审批: {tool_name} — {command_preview[:80]}")
 
     def to_pending_data(self) -> dict:
@@ -411,21 +411,9 @@ class AgentLoop:
 
             # 6. Execute tool calls (always parallel)
             tool_round += 1
-            try:
-                parallel_results = await self._execute_tools_parallel(
-                    response.tool_calls, state, thread_id, interrupt_event=ie
-                )
-            except ApprovalPending as ap:
-                for tc_id, result in ap.partial_results:
-                    state.append_message(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tc_id,
-                            "content": result,
-                        }
-                    )
-                await self._store.save(thread_id, state)
-                raise
+            parallel_results = await self._execute_tools_parallel(
+                response.tool_calls, state, thread_id, interrupt_event=ie
+            )
             for tc_id, result in parallel_results:
                 state.append_message(
                     {
@@ -494,17 +482,11 @@ class AgentLoop:
         pending_tc_id = pending.get("tool_call_id", "")
 
         # Find the assistant message that contains the pending tool_call
-        # and collect ALL tool_call ids from it
         assistant_msg_idx = None
-        all_tc_ids: list[str] = []
         for i in range(len(state.messages) - 1, -1, -1):
             msg = state.messages[i]
             if msg.get("role") == "assistant" and msg.get("tool_calls"):
                 assistant_msg_idx = i
-                for tc in msg["tool_calls"]:
-                    tc_id = tc.get("id", "")
-                    if tc_id:
-                        all_tc_ids.append(tc_id)
                 break
 
         # Determine which tool_calls already have results
@@ -1218,6 +1200,13 @@ class AgentLoop:
                         final.append(results[j])
                 state.pending_approval = r.to_pending_data()
                 r.partial_results = list(final)
+                for tc_id, result in r.partial_results:
+                    state.append_message({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": result,
+                    })
+                await self._store.save(thread_id, state)
                 raise r
             if isinstance(r, BaseException):
                 final.append((tc_id, f"[error] {type(r).__name__}: {r}"))

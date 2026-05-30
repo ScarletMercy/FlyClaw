@@ -8,27 +8,9 @@ from __future__ import annotations
 
 import re
 
-# Known API key prefixes
-_PREFIX_PATTERNS = [
-    r"sk-[A-Za-z0-9_-]{10,}",  # OpenAI / Anthropic (sk-ant-*)
-    r"sk_[A-Za-z0-9_]{10,}",  # ElevenLabs / some providers
-    r"ghp_[A-Za-z0-9]{10,}",  # GitHub PAT (classic)
-    r"github_pat_[A-Za-z0-9_]{10,}",  # GitHub PAT (fine-grained)
-    r"gho_[A-Za-z0-9]{10,}",  # GitHub OAuth token
-    r"AIza[A-Za-z0-9_-]{30,}",  # Google API keys
-    r"xox[baprs]-[A-Za-z0-9-]{10,}",  # Slack tokens
-    r"AKIA[A-Z0-9]{16}",  # AWS Access Key ID
-    r"sk_live_[A-Za-z0-9]{10,}",  # Stripe secret key (live)
-    r"sk_test_[A-Za-z0-9]{10,}",  # Stripe secret key (test)
-    r"SG\.[A-Za-z0-9_-]{10,}",  # SendGrid API key
-    r"hf_[A-Za-z0-9]{10,}",  # HuggingFace token
-    r"gsk_[A-Za-z0-9]{10,}",  # Groq API key
-    r"tvly-[A-Za-z0-9]{10,}",  # Tavily API key
-    r"fal_[A-Za-z0-9_-]{10,}",  # Fal.ai
-    r"pplx-[A-Za-z0-9]{10,}",  # Perplexity
-    r"r8_[A-Za-z0-9]{10,}",  # Replicate API token
-    r"npm_[A-Za-z0-9]{10,}",  # npm access token
-]
+from src.security.credential_patterns import CREDENTIAL_PATTERNS
+
+_PREFIX_PATTERNS = [cp.pattern for cp in CREDENTIAL_PATTERNS]
 
 _PREFIX_RE = re.compile(r"(?<![A-Za-z0-9_-])(" + "|".join(_PREFIX_PATTERNS) + r")(?![A-Za-z0-9_-])")
 
@@ -62,8 +44,8 @@ _DB_CONNSTR_RE = re.compile(
     re.IGNORECASE,
 )
 
-# JWT tokens: eyJ... (base64-encoded JSON)
-_JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_=-]{4,}){0,2}")
+# JWT tokens: eyJ... (base64-encoded JSON) — require 3 dot-separated segments
+_JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{4,}")
 
 # URL userinfo: scheme://user:password@host (non-DB)
 _URL_USERINFO_RE = re.compile(

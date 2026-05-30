@@ -5,6 +5,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from src.security.credential_patterns import CREDENTIAL_PATTERNS
+
 from .types import Finding, ScanResult
 
 TRUSTED_REPOS = {"openai/skills", "anthropics/skills"}
@@ -548,34 +550,6 @@ THREAT_PATTERNS = [
         "embedded private key",
     ),
     (
-        r"ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{80,}",
-        "github_token_leaked",
-        "critical",
-        "credential_exposure",
-        "GitHub personal access token in skill content",
-    ),
-    (
-        r"sk-[A-Za-z0-9]{20,}",
-        "openai_key_leaked",
-        "critical",
-        "credential_exposure",
-        "possible OpenAI API key in skill content",
-    ),
-    (
-        r"sk-ant-[A-Za-z0-9_-]{90,}",
-        "anthropic_key_leaked",
-        "critical",
-        "credential_exposure",
-        "possible Anthropic API key in skill content",
-    ),
-    (
-        r"AKIA[0-9A-Z]{16}",
-        "aws_access_key_leaked",
-        "critical",
-        "credential_exposure",
-        "AWS access key ID in skill content",
-    ),
-    (
         r"\bDAN\s+mode\b|Do\s+Anything\s+Now",
         "jailbreak_dan",
         "critical",
@@ -638,6 +612,25 @@ THREAT_PATTERNS = [
         "exfiltration",
         "instructs agent to send data to a URL",
     ),
+]
+
+_CREDENTIAL_THREAT_ENTRIES: list[tuple[str, str, str, str, str]] = [
+    (
+        cp.pattern,
+        cp.guard_id,
+        "critical",
+        "credential_exposure",
+        cp.guard_description,
+    )
+    for cp in CREDENTIAL_PATTERNS
+]
+
+THREAT_PATTERNS.extend(_CREDENTIAL_THREAT_ENTRIES)
+
+# Pre-compile once at import time — avoids repeated re.compile per (pattern × line).
+_COMPILED_THREAT_PATTERNS: list[tuple[re.Pattern[str], str, str, str, str]] = [
+    (re.compile(p, re.IGNORECASE), pid, severity, category, description)
+    for p, pid, severity, category, description in THREAT_PATTERNS
 ]
 
 MAX_FILE_COUNT = 50
@@ -722,11 +715,11 @@ def scan_file(file_path: Path, rel_path: str = "") -> list[Finding]:
     lines = content.split("\n")
     seen: set[tuple[str, int]] = set()
 
-    for pattern, pid, severity, category, description in THREAT_PATTERNS:
+    for compiled, pid, severity, category, description in _COMPILED_THREAT_PATTERNS:
         for i, line in enumerate(lines, start=1):
             if (pid, i) in seen:
                 continue
-            if re.search(pattern, line, re.IGNORECASE):
+            if compiled.search(line):
                 seen.add((pid, i))
                 matched_text = line.strip()
                 if len(matched_text) > 120:
