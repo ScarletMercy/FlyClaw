@@ -86,12 +86,3 @@ from src._container import get_container
 
 def get_plugin_registry() -> PluginRegistry:
     return get_container().plugin_registry
-
-
-def init_plugin_registry(extra_dirs: list[str] | None = None) -> PluginRegistry:
-    container = get_container()
-    container.plugin_registry = PluginRegistry()
-    records = discover_plugins(extra_dirs)
-    for record in records:
-        container.plugin_registry.register_plugin(record)
-    return container.plugin_registry

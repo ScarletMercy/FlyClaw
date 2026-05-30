@@ -47,15 +47,3 @@ from src._container import get_container
 
 def get_agent_registry() -> AgentRegistry:
     return get_container().agent_registry
-
-
-def init_agent_registry(config) -> AgentRegistry:
-    container = get_container()
-    container.agent_registry = AgentRegistry()
-    subagents = getattr(config.agents, "subagents", None)
-    if subagents:
-        for name, cfg in subagents.items():
-            if isinstance(cfg, dict):
-                cfg = AgentSubconfig(**cfg)
-            container.agent_registry.register(name, cfg)
-    return container.agent_registry

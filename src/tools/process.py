@@ -448,20 +448,3 @@ def get_process_registry() -> ProcessRegistry:
     if _registry is None:
         _registry = ProcessRegistry()
     return _registry
-
-
-from src._container import get_container
-
-
-def get_supervisor(max_memory_mb: Optional[int] = None) -> ProcessSupervisor:
-    return get_container().process_supervisor
-
-
-async def run_supervised(
-    command: str,
-    timeout: Optional[int] = None,
-    workdir: Optional[str] = None,
-    max_output: int = 102400,
-) -> ProcessResult:
-    """Run a command with supervised process management."""
-    return await get_supervisor().run(command, timeout=timeout, workdir=workdir, max_output=max_output)

@@ -170,12 +170,6 @@ def get_run_registry() -> RunRegistry:
     return get_container().run_registry
 
 
-def init_run_registry() -> RunRegistry:
-    container = get_container()
-    container.run_registry = RunRegistry()
-    return container.run_registry
-
-
 def get_current_depth() -> int:
     return _current_depth.get(0)
 

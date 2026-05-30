@@ -340,22 +340,6 @@ class SessionRegistry:
                 return
 
 
-def get_session_summaries(state_store, thread_ids: list[str]) -> dict[str, str]:
-    """Read message count for each thread_id from state store.
-
-    Returns dict of thread_id -> summary string.
-    """
-    results = {}
-    for tid in thread_ids:
-        try:
-            state = state_store.load(tid)
-            msg_count = len(state.messages) if state else 0
-            results[tid] = f"({msg_count} messages)"
-        except Exception:
-            results[tid] = "(unknown)"
-    return results
-
-
 def get_threads_for_user(state_store, user_key: str) -> list[dict]:
     """Get all thread_ids from state store that belong to a user.
 

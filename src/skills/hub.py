@@ -1047,24 +1047,6 @@ def install_from_quarantine(
     return install_dir
 
 
-def uninstall_skill(skill_name: str) -> tuple[bool, str]:
-    lock = HubLockFile()
-    entry = lock.get_installed(skill_name)
-    if not entry:
-        return False, f"'{skill_name}' is not a hub-installed skill"
-
-    install_path = SKILLS_DIR / entry["install_path"]
-    if install_path.exists():
-        shutil.rmtree(install_path)
-
-    lock.record_uninstall(skill_name)
-    append_audit_log(
-        "UNINSTALL", skill_name, entry["source"],
-        entry["trust_level"], "n/a", "user_request",
-    )
-    return True, f"Uninstalled '{skill_name}' from {entry['install_path']}"
-
-
 def create_sources() -> list[SkillSource]:
     return [SkillsShSource(), ClawHubSource(), UrlSource()]
 

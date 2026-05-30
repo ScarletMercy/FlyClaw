@@ -27,11 +27,6 @@ def reset_current_write_origin(token: contextvars.Token[str]) -> None:
     _write_origin.reset(token)
 
 
-def get_current_write_origin() -> str:
-    """Return active write origin (default 'foreground')."""
-    return _write_origin.get()
-
-
 def is_background_review() -> bool:
     """True if current write origin is from background self-improvement review."""
     return _write_origin.get() == BACKGROUND_REVIEW
