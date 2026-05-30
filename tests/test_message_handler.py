@@ -182,6 +182,7 @@ class TestMessageCallbackApprovalViaQQ:
         mock_req = MagicMock()
         mock_req.chat_id = "c1"
         mock_mgr.list_pending.return_value = [mock_req]
+        mock_mgr.is_resolved.return_value = False
 
         handler = MessageHandler(container)
         callback = handler.create_callback("per_sender", channel_prefix="qq")

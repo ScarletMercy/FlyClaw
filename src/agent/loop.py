@@ -206,7 +206,7 @@ class AgentLoop:
         from src.config import CompressionConfig
 
         compression_config = config.compression if config else CompressionConfig()
-        self._compressor = ContextCompressor(compression_config, main_config=config, client=client)
+        self._compressor = ContextCompressor(compression_config, client=client)
 
         if config:
             from src.bootstrap import load_bootstrap_files
@@ -734,9 +734,6 @@ class AgentLoop:
 
         history = list(state.messages)
 
-        self._clean_truncated_markers(history)
-
-        # Proactive compression check
         if self._compressor.should_compress(history, self._ctx_window_tokens):
             history = await self._compressor.compress(history, self._ctx_window_tokens)
 
@@ -775,18 +772,6 @@ class AgentLoop:
                     truncated, _path = cache_large_output(content, thread_id, max_chars=threshold, preview=threshold)
                     m["content"] = truncated
                     m["_truncated"] = True
-
-    def _clean_truncated_markers(self, messages: list[dict]) -> None:
-        """Remove _truncated markers and cache file paths before compression."""
-        for m in messages:
-            m.pop("_truncated", None)
-            content = m.get("content", "")
-            if isinstance(content, str):
-                m["content"] = re.sub(
-                    r'\. Full content saved to: `[^`]+`',
-                    '.',
-                    content,
-                )
 
     # ------------------------------------------------------------------
     # Sanitization helpers

@@ -1,15 +1,14 @@
 """Context compressor — LLM-based conversation summarization.
 
 When a conversation grows too long, this module:
-1. Prunes old tool outputs (cheap, no LLM)
+1. Cleans internal markers from middle messages
 2. Protects recent messages (tail) and first exchange (head)
-3. Summarizes middle turns with a small LLM
+3. Summarizes middle turns with a small LLM (or static fallback)
 4. Returns: [SummaryMessage] + [protected tail messages]
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import TYPE_CHECKING, Optional
@@ -41,7 +40,23 @@ _SUMMARY_SYSTEM = """你是一个会话摘要助手。你需要将一段对话�
 ## 关键文件/路径
 - ..."""
 
-_PLACEHOLDER = "[旧工具输出已清除以节省上下文空间]"
+_CACHE_PATH_RE = re.compile(r'\. Full content saved to: `[^`]+`')
+
+
+def _clean_for_summary(messages: list[dict]) -> list[dict]:
+    cleaned = []
+    for m in messages:
+        if "_truncated" not in m:
+            content = m.get("content", "")
+            if not (isinstance(content, str) and _CACHE_PATH_RE.search(content)):
+                cleaned.append(m)
+                continue
+        new_m = {k: v for k, v in m.items() if k != "_truncated"}
+        content = new_m.get("content", "")
+        if isinstance(content, str):
+            new_m["content"] = _CACHE_PATH_RE.sub('.', content)
+        cleaned.append(new_m)
+    return cleaned
 
 
 def _find_safe_cut(non_system: list[dict], desired_tail_count: int) -> int:
@@ -119,35 +134,11 @@ def _estimate_tokens(messages: list[dict]) -> int:
     return total
 
 
-def _tool_result_summary(name: str, content: str) -> str:
-    content_len = len(content) if isinstance(content, str) else 0
-    line_count = content.count("\n") + 1 if isinstance(content, str) else 0
-
-    if name in ("exec_command", "terminal"):
-        preview = (content[:80] if isinstance(content, str) else "").replace("\n", " ")
-        return f"[{name}] {preview}... ({line_count} lines)"
-
-    if name in ("read_file",):
-        return f"[{name}] ({content_len} chars)"
-
-    if name in ("web_search", "web_fetch"):
-        return f"[{name}] ({content_len} chars)"
-
-    if name.startswith("feishu_"):
-        return f"[{name}] ({content_len} chars)"
-
-    if name.startswith("browser_"):
-        return f"[{name}] ({content_len} chars)"
-
-    return f"[{name}] ({content_len} chars)"
-
-
 class ContextCompressor:
     """Compresses long conversations using the current model for summarization."""
 
-    def __init__(self, config, main_config=None, client: ChatClient | FallbackChain | None = None):
+    def __init__(self, config, client: ChatClient | FallbackChain | None = None):
         self.config = config
-        self._main_config = main_config
         self._client = client
         self._previous_summary: Optional[str] = None
         self._compression_count = 0
@@ -191,9 +182,9 @@ class ContextCompressor:
         if not middle:
             return messages
 
-        pruned_middle = self._prune_tool_outputs(middle)
+        middle = _clean_for_summary(middle)
 
-        turns_text = self._format_turns(pruned_middle)
+        turns_text = self._format_turns(middle)
         if not turns_text.strip():
             return messages
 
@@ -222,34 +213,6 @@ class ContextCompressor:
             return result
 
         return self._compact(messages, context_window_tokens)
-
-    def _prune_tool_outputs(self, messages: list[dict]) -> list[dict]:
-        call_id_to_name: dict[str, str] = {}
-        for m in messages:
-            if m.get("role") == "assistant" and m.get("tool_calls"):
-                for tc in m["tool_calls"]:
-                    tc_id = tc.get("id", "")
-                    fn = tc.get("function", {})
-                    tc_name = fn.get("name", "unknown") if isinstance(fn, dict) else tc.get("name", "unknown")
-                    if tc_id:
-                        call_id_to_name[tc_id] = tc_name
-
-        result = []
-        for m in messages:
-            if m.get("role") == "tool":
-                content = m.get("content", "")
-                if isinstance(content, str) and len(content) > 300:
-                    tool_name = call_id_to_name.get(m.get("tool_call_id", ""), "unknown")
-                    if m.get("name"):
-                        tool_name = m["name"]
-                    summary = _tool_result_summary(tool_name, content)
-                    result.append({**m, "content": summary})
-                else:
-                    result.append(m)
-            else:
-                result.append(m)
-
-        return result
 
     def _format_turns(self, messages: list[dict]) -> str:
         lines = []
@@ -335,6 +298,7 @@ class ContextCompressor:
         if not pruned:
             return messages
 
+        pruned = _clean_for_summary(pruned)
         summaries = []
         for m in pruned:
             role = m.get("role", "")
