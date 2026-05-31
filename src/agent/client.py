@@ -149,12 +149,6 @@ class FallbackChain:
         return f"FallbackChain(active={active!r}, total={len(self._all)})"
 
 
-class ModelRef:
-    def __init__(self, model: ChatClient | FallbackChain):
-        self.model = model
-        self.ctx_window: dict | None = None
-
-
 def create_client(
     provider: str,
     name: str,

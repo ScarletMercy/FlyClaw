@@ -12,10 +12,6 @@ from .types import CronJob
 logger = logging.getLogger("flyclaw.cron.store")
 
 
-class ConcurrentUpdateError(Exception):
-    """Raised when a concurrent update conflict is detected."""
-
-
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS cron_jobs (
     id TEXT PRIMARY KEY,

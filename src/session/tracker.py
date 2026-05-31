@@ -343,25 +343,3 @@ class SessionRegistry:
                 self._save()
                 return
 
-
-def get_threads_for_user(state_store, user_key: str) -> list[dict]:
-    """Get all thread_ids from state store that belong to a user.
-
-    Matches threads starting with user_key prefix or containing the user hash.
-    """
-    try:
-        threads = state_store.list_threads()
-    except Exception as e:
-        logger.debug("Failed to list threads for user: %s", e)
-        return []
-
-    parts = user_key.split(":")
-    user_hash = parts[-1] if parts else ""
-
-    results = []
-    for tid in threads:
-        if tid == user_key or (user_hash and user_hash in tid):
-            state = state_store.load(tid)
-            msg_count = len(state.messages) if state else 0
-            results.append({"thread_id": tid, "checkpoint_count": msg_count})
-    return results

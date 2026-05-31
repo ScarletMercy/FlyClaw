@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from src.events.bus import EventBus
 from src.events.hooks import HookManager
-from src.events.types import Event, EventCategory, EventContext, Subscription
+from src.events.types import EventContext, Subscription
 
 # Module-level singleton
 _bus: EventBus | None = None
@@ -61,9 +61,7 @@ async def emit_async(event: str, **context):
 
 
 __all__ = [
-    "Event",
     "EventBus",
-    "EventCategory",
     "EventContext",
     "HookManager",
     "HookSpec",

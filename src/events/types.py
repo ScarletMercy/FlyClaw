@@ -6,110 +6,39 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-# ── Event Categories ──────────────────────────────────────────────
+# ── Wildcard Patterns ──────────────────────────────────────────────
 
-
-class EventCategory:
-    """Namespace for event categories."""
-
-    APP = "app"
-    AGENT = "agent"
-    TOOL = "tool"
-    SESSION = "session"
-    MESSAGE = "message"
-    STATE = "state"
-    COMMAND = "command"
-    LEARNING = "learning"
-    CONFIG = "config"
-
-
-# ── Event Names ───────────────────────────────────────────────────
-
-
-class Event:
-    """All event names in the system."""
-
-    # App lifecycle
-    APP_STARTUP = "app.startup"
-    APP_SHUTDOWN = "app.shutdown"
-    CONFIG_RELOADED = "config.reloaded"
-
-    # Agent lifecycle
-    AGENT_LOOP_STARTED = "agent_loop.started"
-    AGENT_LOOP_COMPLETED = "agent_loop.completed"
-    AGENT_LOOP_RESUMED = "agent_loop.resumed"
-    AGENT_ERROR = "agent.error"
-
-    # Tool execution
-    TOOL_EXEC_STARTED = "tool.exec_started"
-    TOOL_EXEC_COMPLETED = "tool.exec_completed"
-    TOOL_EXEC_FAILED = "tool.exec_failed"
-    TOOL_APPROVAL_PENDING = "tool.approval_pending"
-
-    # Session management
-    SESSION_CREATED = "session.created"
-    SESSION_RESET = "session.reset"
-    SESSION_SWITCHED = "session.switched"
-    SESSION_ENDED = "session.ended"
-
-    # Message flow
-    MESSAGE_RECEIVED = "message.received"
-    MESSAGE_REPLIED = "message.replied"
-
-    # State persistence
-    STATE_SAVED = "state.saved"
-    STATE_LOADED = "state.loaded"
-    STATE_DELETED = "state.deleted"
-
-    # Command dispatch
-    COMMAND_DISPATCHED = "command.dispatched"
-    COMMAND_COMPLETED = "command.completed"
-    COMMAND_FAILED = "command.failed"
-
-    # Learning loop
-    LEARNING_SESSION_END = "learning.session_end"
-    LEARNING_MEMORY_EXTRACTED = "learning.memory_extracted"
-    LEARNING_SKILL_CREATED = "learning.skill_created"
-
-
-# ── Wildcard Patterns ─────────────────────────────────────────────
-
-# Patterns for wildcard matching (e.g., "tool.*" matches all tool events)
-WILDCARD_PATTERNS = {
-    f"{EventCategory.APP}.*": [Event.APP_STARTUP, Event.APP_SHUTDOWN, Event.CONFIG_RELOADED],
-    f"{EventCategory.AGENT}.*": [
-        Event.AGENT_LOOP_STARTED,
-        Event.AGENT_LOOP_COMPLETED,
-        Event.AGENT_LOOP_RESUMED,
-        Event.AGENT_ERROR,
+# Maps wildcard patterns (e.g. "tool.*") to the concrete event names they match.
+WILDCARD_PATTERNS: dict[str, list[str]] = {
+    "app.*": ["app.startup", "app.shutdown", "config.reloaded"],
+    "agent.*": [
+        "agent_loop.started",
+        "agent_loop.completed",
+        "agent_loop.resumed",
+        "agent.error",
     ],
-    f"{EventCategory.TOOL}.*": [
-        Event.TOOL_EXEC_STARTED,
-        Event.TOOL_EXEC_COMPLETED,
-        Event.TOOL_EXEC_FAILED,
-        Event.TOOL_APPROVAL_PENDING,
+    "tool.*": [
+        "tool.exec_started",
+        "tool.exec_completed",
+        "tool.exec_failed",
+        "tool.approval_pending",
     ],
-    f"{EventCategory.SESSION}.*": [
-        Event.SESSION_CREATED,
-        Event.SESSION_RESET,
-        Event.SESSION_SWITCHED,
-        Event.SESSION_ENDED,
+    "session.*": [
+        "session.created",
+        "session.reset",
+        "session.switched",
+        "session.ended",
     ],
-    f"{EventCategory.MESSAGE}.*": [Event.MESSAGE_RECEIVED, Event.MESSAGE_REPLIED],
-    f"{EventCategory.STATE}.*": [Event.STATE_SAVED, Event.STATE_LOADED, Event.STATE_DELETED],
-    f"{EventCategory.COMMAND}.*": [Event.COMMAND_DISPATCHED, Event.COMMAND_COMPLETED, Event.COMMAND_FAILED],
-    f"{EventCategory.LEARNING}.*": [
-        Event.LEARNING_SESSION_END,
-        Event.LEARNING_MEMORY_EXTRACTED,
-        Event.LEARNING_SKILL_CREATED,
+    "message.*": ["message.received", "message.replied"],
+    "state.*": ["state.saved", "state.loaded", "state.deleted"],
+    "command.*": ["command.dispatched", "command.completed", "command.failed"],
+    "learning.*": [
+        "learning.session_end",
+        "learning.memory_extracted",
+        "learning.skill_created",
     ],
-    f"{EventCategory.CONFIG}.*": [Event.CONFIG_RELOADED],
+    "config.*": ["config.reloaded"],
 }
-
-# Catch-all pattern: "*" matches every known event
-ALL_EVENTS = []
-for events in WILDCARD_PATTERNS.values():
-    ALL_EVENTS.extend(events)
 
 
 # ── Event Context ─────────────────────────────────────────────────

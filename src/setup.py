@@ -69,19 +69,6 @@ PRESETS = {
     "custom": None,
 }
 
-PRESET_LABELS = {
-    "openai": "OpenAI (GPT)",
-    "deepseek": "DeepSeek",
-    "groq": "Groq (Llama)",
-    "together": "Together AI (Llama)",
-    "ollama": "Ollama (本地)",
-    "zhipu": "智谱 (GLM)",
-    "moonshot": "Moonshot (Kimi)",
-    "qwen": "通义千问 (Qwen)",
-    "custom": "自定义 OpenAI 兼容服务",
-}
-
-
 # ── Prompt helpers ──
 
 

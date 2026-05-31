@@ -45,12 +45,6 @@ class TestA2uiBuilder:
         assert "surfaceUpdate" in lines[0]
         assert "beginRendering" in lines[1]
 
-    def test_column_layout(self):
-        builder = A2uiBuilder()
-        builder.add_column(["comp1", "comp2"], surface_id="s1")
-        lines = builder.to_jsonl()
-        assert any("Column" in l for l in lines)
-
     def test_multiple_surfaces(self):
         builder = A2uiBuilder()
         builder.add_text("A", surface_id="s1")

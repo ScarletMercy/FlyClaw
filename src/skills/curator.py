@@ -274,21 +274,6 @@ class SkillCurator:
             logger.warning("Failed to archive skill %s: %s", skill_name, e)
             return False
 
-    def restore_skill(self, skill_name: str) -> tuple[bool, str]:
-        """Restore an archived skill back to active."""
-        archived = self.archive_dir / skill_name
-        if not archived.exists():
-            return False, f"Archived skill not found: {skill_name}"
-        dest = self.skills_dir / skill_name
-        if dest.exists():
-            return False, f"Skill already exists: {skill_name}"
-        try:
-            shutil.move(str(archived), str(dest))
-            self._update_skill_state(skill_name, "active")
-            return True, f"Restored {skill_name}"
-        except Exception as e:
-            return False, f"Failed to restore: {e}"
-
     def _write_report(self, auto_result: dict, llm_summary: str, dry_run: bool) -> None:
         self.reports_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")

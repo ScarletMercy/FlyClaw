@@ -4,7 +4,6 @@ import fnmatch
 import logging
 import os
 import threading
-import time
 from pathlib import Path
 from typing import Literal, Optional
 

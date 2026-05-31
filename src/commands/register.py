@@ -5,7 +5,6 @@ import logging
 import time
 
 from src.auth.models import UserRole
-from src.commands.dispatcher import build_builtin_help
 
 logger = logging.getLogger("flyclaw")
 

@@ -781,12 +781,12 @@ class TestApprovalPendingPartialResults:
         assert exc.partial_results == []
 
     def test_partial_results_stored(self):
-        exc = ApprovalPending("t1", "r1", "exec", "cmd", partial_results=[("tc1", "ok")])
+        exc = ApprovalPending("t1", "r1", "exec", "cmd", tc_id="", partial_results=[("tc1", "ok")])
         assert exc.partial_results == [("tc1", "ok")]
 
     def test_partial_results_is_independent_copy(self):
         data = [("tc1", "ok")]
-        exc = ApprovalPending("t1", "r1", "exec", "cmd", partial_results=data)
+        exc = ApprovalPending("t1", "r1", "exec", "cmd", tc_id="", partial_results=data)
         data.append(("tc2", "extra"))
         assert len(exc.partial_results) == 1
 

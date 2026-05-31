@@ -150,18 +150,6 @@ class TestStateStore:
         store = StateStore(str(tmp_path / "test.db"))
         assert store.load("nonexistent") is None
 
-    def test_load_messages(self, tmp_path):
-        store = StateStore(str(tmp_path / "test.db"))
-        state = AgentState(
-            messages=[
-                {"role": "user", "content": "a"},
-                {"role": "assistant", "content": "b"},
-            ]
-        )
-        asyncio.run(store.save("t1", state))
-        msgs = store.load_messages("t1")
-        assert len(msgs) == 2
-
     def test_delete(self, tmp_path):
         store = StateStore(str(tmp_path / "test.db"))
         state = AgentState(messages=[{"role": "user", "content": "x"}])

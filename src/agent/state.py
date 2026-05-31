@@ -149,16 +149,6 @@ class StateStore:
     async def aload(self, thread_id: str) -> AgentState | None:
         return await asyncio.to_thread(self.load, thread_id)
 
-    def load_messages(self, thread_id: str) -> list[dict]:
-        assert self._db is not None
-        row = self._db.execute(
-            "SELECT messages FROM sessions WHERE thread_id = ?",
-            (thread_id,),
-        ).fetchone()
-        if row is None:
-            return []
-        return json.loads(row[0])
-
     def delete(self, thread_id: str) -> bool:
         assert self._db is not None
         cursor = self._db.execute("DELETE FROM sessions WHERE thread_id = ?", (thread_id,))

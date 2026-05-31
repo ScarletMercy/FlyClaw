@@ -34,23 +34,6 @@ class A2uiBuilder:
         )
         return comp_id
 
-    def add_column(self, child_ids: list[str], surface_id: str = "main") -> str:
-        col_id = f"col.{uuid.uuid4().hex[:6]}"
-        self._lines.append(
-            json.dumps(
-                {
-                    "surfaceUpdate": {
-                        "surfaceId": surface_id,
-                        "components": [
-                            {"id": col_id, "component": {"Column": {"children": {"explicitList": child_ids}}}},
-                        ],
-                    }
-                },
-                ensure_ascii=False,
-            )
-        )
-        return col_id
-
     def add_markdown(self, text: str, surface_id: str = "main") -> str:
         comp_id = f"md.{uuid.uuid4().hex[:6]}"
         root_id = f"root.{uuid.uuid4().hex[:6]}"
@@ -76,5 +59,3 @@ class A2uiBuilder:
     def to_jsonl(self) -> list[str]:
         return list(self._lines)
 
-    def to_jsonl_string(self) -> str:
-        return "\n".join(self._lines)

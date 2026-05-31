@@ -89,14 +89,6 @@ def _esc(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _compact_path(p: Path) -> str:
-    s = str(p)
-    home = str(Path.home())
-    if s.startswith(home):
-        s = "~" + s[len(home) :]
-    return s
-
-
 def _sanitize_command_name(name: str) -> str:
     cleaned = name.lower().strip()
     cleaned = "".join(c if c.isalnum() or c == "_" else "_" for c in cleaned)

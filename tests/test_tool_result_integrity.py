@@ -186,6 +186,7 @@ class TestParallelApprovalPending:
                 request_id="r1",
                 tool_name="glob",
                 command_preview="needs approval",
+                tc_id="",
             )
             with pytest.raises(ApprovalPending) as exc_info:
                 await loop._execute_tools_parallel(
@@ -258,6 +259,7 @@ class TestParallelApprovalPending:
                 request_id="r1",
                 tool_name="glob",
                 command_preview="needs approval",
+                tc_id="",
             )
             state = AgentState(messages=[{"role": "user", "content": "go"}])
             with pytest.raises(ApprovalPending):
@@ -302,6 +304,7 @@ class TestParallelApprovalPending:
                 request_id="r1",
                 tool_name="glob",
                 command_preview="needs approval",
+                tc_id="",
             )
             with pytest.raises(ApprovalPending) as exc_info:
                 await loop._execute_tools_parallel(

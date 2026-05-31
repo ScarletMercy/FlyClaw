@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 
-_CHARS_PER_TOKEN = 4
+from src.compressor.compressor import _CHARS_PER_TOKEN
 
 
 def _estimate_tokens(text: str) -> int:

@@ -24,7 +24,6 @@ logger = logging.getLogger("flyclaw.agent.loop")
 
 _SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
 
-_CHARS_PER_TOKEN = 4
 
 
 async def interruptible(event: asyncio.Event, coro):
@@ -123,21 +122,6 @@ def _repair_tool_args(args_str: str) -> str:
         pass
 
     return "{}"
-
-
-def _estimate_tokens_simple(messages: list[dict]) -> int:
-    """Fast token estimate without per-message overhead."""
-    total = 0
-    for m in messages:
-        content = m.get("content", "")
-        if isinstance(content, str):
-            total += len(content) // _CHARS_PER_TOKEN
-        elif isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict):
-                    total += len(part.get("text", "")) // _CHARS_PER_TOKEN
-        total += 10
-    return total
 
 
 class ApprovalPending(Exception):
@@ -390,6 +374,9 @@ class AgentLoop:
                     from src.tools.approval import get_approval_manager
 
                     get_approval_manager().clear_session(thread_id)
+                    from src.agent.tool_cache import clear_thread_cache
+
+                    clear_thread_cache(thread_id)
                 except Exception:
                     pass
                 flag = self._store.get_interrupt_flag(thread_id)
@@ -468,6 +455,13 @@ class AgentLoop:
                 await self._store.save(thread_id, state)
         except Exception as e:
             logger.warning("Grace period summary failed: %s", e)
+
+        try:
+            from src.agent.tool_cache import clear_thread_cache
+
+            clear_thread_cache(thread_id)
+        except Exception:
+            pass
 
         self._maybe_trigger_skill_review(state, thread_id)
         return state

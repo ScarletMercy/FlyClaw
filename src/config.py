@@ -4,7 +4,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError
@@ -175,11 +175,6 @@ class WebFetchToolConfig(BaseModel):
     enabled: bool = True
 
 
-class FeishuToolConfig(BaseModel):
-    doc: bool = True
-    chat: bool = True
-
-
 class MediaUnderstandingCapabilityConfig(BaseModel):
     """Config for a single media capability (image/audio)."""
 
@@ -268,7 +263,6 @@ class ToolsConfig(BaseModel):
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)
     web_search: WebSearchToolConfig = Field(default_factory=WebSearchToolConfig)
     web_fetch: WebFetchToolConfig = Field(default_factory=WebFetchToolConfig)
-    feishu: FeishuToolConfig = Field(default_factory=FeishuToolConfig)
     policy: ToolsPolicyConfig = Field(default_factory=ToolsPolicyConfig)
     media_understanding: MediaUnderstandingConfig = Field(default_factory=MediaUnderstandingConfig)
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
@@ -394,14 +388,6 @@ class AuthConfig(BaseModel):
     db_path: str = "~/.flyclaw/data/auth.db"
 
 
-class TimeoutsConfig(BaseModel):
-    """Global timeout settings for various operations."""
-
-    tool_short: int = 30  # Short-lived tool operations (e.g., simple commands)
-    tool_long: int = 600  # Long-running tool operations (e.g., complex builds)
-    session_idle: int = 3600  # Session idle timeout in seconds
-
-
 class SessionSearchConfig(BaseModel):
     enabled: bool = True
     index_path: str = "~/.flyclaw/data/session_index.db"
@@ -453,7 +439,6 @@ class AppConfig(BaseModel):
     security: SecurityConfig = Field(default_factory=SecurityConfig)
     link_understanding: LinkUnderstandingConfig = Field(default_factory=LinkUnderstandingConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
-    timeouts: TimeoutsConfig = Field(default_factory=TimeoutsConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     memory_store: MemoryStoreConfig = Field(default_factory=MemoryStoreConfig)
     task: TaskConfig = Field(default_factory=TaskConfig)

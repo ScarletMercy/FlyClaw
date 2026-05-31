@@ -3,15 +3,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import ipaddress
 import json
 import logging
 import random
 import re
-import socket
 import time
 from typing import Any, Optional
-from urllib.parse import urlparse
 
 import httpx
 
@@ -43,43 +40,9 @@ def _is_transient_error(error_str: str) -> bool:
 
 
 async def _is_safe_webhook_url(url: str) -> tuple[bool, str]:
-    try:
-        parsed = urlparse(url)
-    except Exception:
-        return False, "invalid URL"
+    from src.security.url_safety import is_safe_url
 
-    if parsed.scheme not in ("https", "http"):
-        return False, f"unsupported scheme: {parsed.scheme}"
-
-    hostname = parsed.hostname
-    if not hostname:
-        return False, "missing hostname"
-
-    try:
-        addr = ipaddress.ip_address(hostname)
-        if addr.is_private:
-            return False, f"private IP: {hostname}"
-        if addr.is_loopback:
-            return False, f"loopback: {hostname}"
-        if addr.is_link_local:
-            return False, f"link-local: {hostname}"
-        if addr.is_reserved:
-            return False, f"reserved: {hostname}"
-    except ValueError:
-        # hostname is a domain — resolve DNS to check for private IPs (prevent DNS rebinding)
-        try:
-            port = parsed.port or (443 if parsed.scheme == "https" else 80)
-            addrs = await asyncio.get_running_loop().run_in_executor(
-                None, socket.getaddrinfo, hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM
-            )
-            for _family, _type, _proto, _canonname, sockaddr in addrs:
-                addr = ipaddress.ip_address(sockaddr[0])
-                if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-                    return False, f"resolved to private/reserved IP: {addr}"
-        except (socket.gaierror, OSError):
-            return False, f"cannot resolve hostname: {hostname}"
-
-    return True, ""
+    return await asyncio.get_running_loop().run_in_executor(None, is_safe_url, url)
 
 
 def _extract_assistant_text(messages: list[dict]) -> str:

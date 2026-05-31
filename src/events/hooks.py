@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.events.bus import EventBus
-from src.events.types import Event
 
 logger = logging.getLogger("flyclaw.events.hooks")
 

@@ -181,17 +181,3 @@ class MediaUnderstandingRunner:
         if mime_type.startswith("video/"):
             return MediaCapability.VIDEO
         return None
-
-    @staticmethod
-    def guess_capability_from_ext(filename: str) -> Optional[MediaCapability]:
-        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-        image_exts = {"png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "tiff", "ico"}
-        audio_exts = {"wav", "mp3", "ogg", "flac", "aac", "m4a", "wma", "opus"}
-        video_exts = {"mp4", "avi", "mkv", "mov", "wmv", "flv", "webm", "m4v"}
-        if ext in image_exts:
-            return MediaCapability.IMAGE
-        if ext in audio_exts:
-            return MediaCapability.AUDIO
-        if ext in video_exts:
-            return MediaCapability.VIDEO
-        return None

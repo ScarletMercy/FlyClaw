@@ -21,9 +21,6 @@ from src.skills.loader import discover_skills
 from src.skills.prompt import build_skills_prompt
 from src.commands.dispatcher import CommandDispatcher
 
-if TYPE_CHECKING:
-    from src.skills.types import Skill
-
 logger = logging.getLogger("flyclaw")
 
 _FLYCLAW_DATA_DIR = Path.home() / ".flyclaw" / "data"
@@ -60,7 +57,6 @@ class ServiceContainer:
         self.approval_manager = None
         self.browser_manager = None
         self.media_understanding_runner = None
-        self.process_supervisor = None
         self.background_tasks: set = set()
         self._qq_mu_runner = None
         self._config_path: str = str(Path.home() / ".flyclaw" / "config.yaml")
@@ -436,10 +432,6 @@ class ServiceContainer:
         logger.info("ToolRegistry: %d tools registered", len(tools))
         self._setup_media_understanding()
         self._setup_browser()
-
-        from src.tools.process import ProcessSupervisor
-
-        self.process_supervisor = ProcessSupervisor()
 
         self._setup_cron()
         await self._setup_workspace()

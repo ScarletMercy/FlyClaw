@@ -95,9 +95,6 @@ class ReloadExecutor:
             if hasattr(self._app, "dispatcher"):
                 self._app.dispatcher._reload_skills(skills)
 
-    async def _do_reload_memory(self):
-        pass
-
     async def _do_reload_auth(self):
         try:
             from src.auth.rbac import RBAC
@@ -107,6 +104,3 @@ class ReloadExecutor:
             self._app.rbac = RBAC(store, self._app.config)
         except Exception as e:
             logger.warning("Auth reload failed: %s", e)
-
-    async def _do_reload_security(self):
-        pass

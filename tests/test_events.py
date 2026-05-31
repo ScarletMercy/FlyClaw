@@ -6,7 +6,7 @@ import time
 import pytest
 
 from src.events.bus import EventBus
-from src.events.types import Event, EventContext
+from src.events.types import EventContext
 
 
 class TestEventBusBasic:
