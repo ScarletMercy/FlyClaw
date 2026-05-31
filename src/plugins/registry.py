@@ -33,9 +33,6 @@ class PluginRegistry:
             sum(len(v) for v in record.hooks.values()),
         )
 
-    def get_all_tools(self) -> list[ToolDef]:
-        return list(self._tools)
-
     def collect_tools(self) -> list[ToolDef]:
         return list(self._tools)
 

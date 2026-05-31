@@ -16,10 +16,8 @@ logger = logging.getLogger("flyclaw.dashboard")
 # ── Auth helper ──
 
 
-def _check_auth(request: Request, app: FastAPI):
-    from src.config import load_config
-
-    cfg = load_config()
+def _check_auth(request: Request):
+    cfg = _app_ref.config
     if not cfg.gateway.auth_token:
         return
     auth = request.headers.get("Authorization", "")
@@ -61,7 +59,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.get("/api/dashboard/status")
     async def dashboard_status(request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         cfg = _app_ref.config
         uptime = time.monotonic() - _start_time
         hours, remainder = divmod(int(uptime), 3600)
@@ -96,7 +94,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.get("/api/dashboard/sessions")
     async def dashboard_sessions(request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         import re as _re
 
         sessions = []
@@ -135,7 +133,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.post("/api/dashboard/sessions/{thread_id}/reset")
     async def dashboard_reset_session(thread_id: str, request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         if not _app_ref.state_store:
             raise HTTPException(status_code=500, detail="State store not initialized")
         try:
@@ -150,7 +148,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.get("/api/dashboard/cron")
     async def dashboard_cron(request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         if not _app_ref.cron_service:
             return {"enabled": False, "jobs": []}
         jobs = _app_ref.cron_service.list_jobs()
@@ -162,7 +160,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.get("/api/dashboard/tools")
     async def dashboard_tools(request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         tools_info = []
         # Gather tools from the registry
         try:
@@ -183,7 +181,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.get("/api/dashboard/skills")
     async def dashboard_skills(request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         skills = _app_ref.skills_cache or []
         config = _app_ref.config
         return [
@@ -201,7 +199,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.get("/api/dashboard/config")
     async def dashboard_config(request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         cfg = _app_ref.config
         return {
             "model": {
@@ -265,14 +263,14 @@ def register_dashboard(app: FastAPI, application):
 
     @router.get("/api/dashboard/logs")
     async def dashboard_logs(request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         return []
 
     # ── Model switching ─────────────────────────────────────
 
     @router.get("/api/dashboard/models")
     async def dashboard_list_models(request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         cfg = _app_ref.config
         active_model = _app_ref.model_ref.model if _app_ref.model_ref else None
         from src.agent.client import FallbackChain
@@ -290,7 +288,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.post("/api/dashboard/models/switch")
     async def dashboard_switch_model(request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         body = await request.json()
         provider = body.get("provider", "").strip()
         name = body.get("name", "").strip()
@@ -347,7 +345,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.get("/api/dashboard/users")
     async def dashboard_users(request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         cfg = _app_ref.config
         if not getattr(cfg.auth, "enabled", False):
             return {"enabled": False, "users": []}
@@ -374,7 +372,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.get("/api/dashboard/users/{user_id}/devices")
     async def dashboard_user_devices(user_id: str, request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             from src.auth.rbac import get_rbac
 
@@ -387,7 +385,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.patch("/api/dashboard/users/{user_id}/role")
     async def dashboard_update_role(user_id: str, request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             body = await request.json()
             from src.auth.models import UserRole
@@ -406,7 +404,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.delete("/api/dashboard/users/{user_id}")
     async def dashboard_delete_user(user_id: str, request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             from src.auth.rbac import get_rbac
 
@@ -420,7 +418,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.delete("/api/dashboard/devices/{device_id}")
     async def dashboard_delete_device(device_id: str, request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             from src.auth.rbac import get_rbac
 
@@ -436,7 +434,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.get("/api/dashboard/memory/memories")
     async def dashboard_memory_list(request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             from src.tools.memory_tools import get_memory_store
 
@@ -452,7 +450,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.get("/api/dashboard/memory/recall/{key:path}")
     async def dashboard_memory_recall(key: str, request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             from src.tools.memory_tools import get_memory_store
             import json
@@ -464,7 +462,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.delete("/api/dashboard/memory/forget/{key:path}")
     async def dashboard_memory_forget(key: str, request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             from src.tools.memory_tools import get_memory_store
             import json
@@ -476,7 +474,7 @@ def register_dashboard(app: FastAPI, application):
 
     @router.post("/api/dashboard/memory/remember")
     async def dashboard_memory_save(request: Request):
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             body = await request.json()
             content = body.get("content", "").strip()
@@ -499,7 +497,7 @@ def register_dashboard(app: FastAPI, application):
     @router.post("/api/dashboard/config/reload")
     async def dashboard_config_reload(request: Request):
         """Hot-reload configuration."""
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             from src.config import load_config
 
@@ -516,7 +514,7 @@ def register_dashboard(app: FastAPI, application):
     @router.get("/api/dashboard/search")
     async def dashboard_session_search(request: Request, q: str = ""):
         """Search session history via FTS5."""
-        _check_auth(request, app)
+        _check_auth(request)
         if not q:
             return {"results": []}
         try:
@@ -533,7 +531,7 @@ def register_dashboard(app: FastAPI, application):
     @router.get("/api/dashboard/sessions/{thread_id}/messages")
     async def dashboard_session_messages(thread_id: str, request: Request, limit: int = 50, offset: int = 0):
         """Get message history for a session."""
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             if not _app_ref.state_store:
                 raise HTTPException(status_code=500, detail="State store not initialized")
@@ -558,17 +556,18 @@ def register_dashboard(app: FastAPI, application):
     @router.get("/api/dashboard/memory/stats")
     async def dashboard_memory_stats(request: Request):
         """Get memory system statistics."""
-        _check_auth(request, app)
+        _check_auth(request)
         cfg = _app_ref.config
         if not getattr(cfg.memory, "enabled", False):
             return {"enabled": False}
         try:
-            from src.memory.search import get_memory_searcher
-
-            searcher = get_memory_searcher()
+            searcher = _app_ref.memory_searcher
             if not searcher:
                 return {"enabled": True, "error": "Memory searcher not initialized"}
-            stats = searcher.get_stats()
+            docs = await searcher.store.list_documents()
+            stats = {
+                "total_documents": len(docs),
+            }
             return {"enabled": True, **stats}
         except Exception as e:
             return {"enabled": True, "error": str(e)}
@@ -576,7 +575,7 @@ def register_dashboard(app: FastAPI, application):
     @router.get("/api/dashboard/security/audit")
     async def dashboard_security_audit(request: Request):
         """Run and return security audit results."""
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             from src.security.audit import run_security_audit
 
@@ -593,7 +592,7 @@ def register_dashboard(app: FastAPI, application):
     @router.get("/api/dashboard/skills/curation")
     async def dashboard_skills_curation(request: Request):
         """Get skill curation status."""
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             from src.skills.curator import SkillCurator
             from pathlib import Path
@@ -620,7 +619,7 @@ def register_dashboard(app: FastAPI, application):
     @router.post("/api/dashboard/skills/curation/review")
     async def dashboard_skills_curation_review(request: Request, dry_run: bool = False):
         """Trigger skill curation review."""
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             from src.skills.curator import SkillCurator
             from pathlib import Path
@@ -634,7 +633,7 @@ def register_dashboard(app: FastAPI, application):
     @router.get("/api/dashboard/learning/status")
     async def dashboard_learning_status(request: Request):
         """Get learning loop status."""
-        _check_auth(request, app)
+        _check_auth(request)
         cfg = _app_ref.config
         return {
             "memory_store_enabled": getattr(cfg.memory_store, "enabled", False),
@@ -647,7 +646,7 @@ def register_dashboard(app: FastAPI, application):
     @router.post("/api/dashboard/learning/trigger")
     async def dashboard_learning_trigger(request: Request):
         """Manually trigger learning cycle."""
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             from src.agent.learning import LearningLoop
 
@@ -669,7 +668,7 @@ def register_dashboard(app: FastAPI, application):
         offset: int = 0,
     ):
         """Get audit log entries with filters."""
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             from src.analytics.audit_store import get_audit_store
 
@@ -714,7 +713,7 @@ def register_dashboard(app: FastAPI, application):
     @router.get("/api/dashboard/audit/stats")
     async def dashboard_audit_stats(request: Request, days: int = 7):
         """Get audit statistics."""
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             from src.analytics.audit_store import get_audit_store
 
@@ -726,7 +725,7 @@ def register_dashboard(app: FastAPI, application):
     @router.post("/api/dashboard/config/update")
     async def dashboard_config_update(request: Request):
         """Update configuration values."""
-        _check_auth(request, app)
+        _check_auth(request)
         try:
             body = await request.json()
             cfg = _app_ref.config

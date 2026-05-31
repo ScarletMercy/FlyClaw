@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import logging
 import re
 from datetime import datetime
@@ -170,8 +171,10 @@ class SkillManager:
         Returns:
             (success, error_message)
         """
-        skill_dir = self.skills_dir / name
-
+        skill_dir = (self.skills_dir / name).resolve()
+        base = str(self.skills_dir.resolve()) + os.sep
+        if not (str(skill_dir) + os.sep).startswith(base):
+            return False, f"Invalid skill name: {name}"
         if not skill_dir.exists():
             return False, f"Skill not found: {name}"
 

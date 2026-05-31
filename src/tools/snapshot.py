@@ -46,9 +46,18 @@ def _dir_hash(path: str) -> str:
     return hashlib.sha256(path.encode()).hexdigest()[:16]
 
 
+_GIT_IDENTITY = {
+    "GIT_AUTHOR_NAME": "flyclaw",
+    "GIT_AUTHOR_EMAIL": "flyclaw@snapshot",
+    "GIT_COMMITTER_NAME": "flyclaw",
+    "GIT_COMMITTER_EMAIL": "flyclaw@snapshot",
+}
+
+
 def _git(*args: str, cwd: str, env: dict | None = None) -> subprocess.CompletedProcess:
     cmd = ["git"] + list(args)
     run_env = dict(os.environ)
+    run_env.update(_GIT_IDENTITY)
     if env:
         run_env.update(env)
     return subprocess.run(

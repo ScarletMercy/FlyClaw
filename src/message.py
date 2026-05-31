@@ -346,6 +346,7 @@ class MessageHandler:
                 self._container.agent_loop.is_thread_busy(thread_id)
                 or thread_id in self._interrupted_threads
                 or thread_id in self._pending_queue
+                or thread_id in self._approval_handler_threads
             ):
                 await self._handle_busy_message(
                     text,

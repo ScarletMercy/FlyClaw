@@ -66,11 +66,19 @@ def main():
 
         _HANDLER = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_uint)
 
+        import threading
+
         def _ctrl_handler(ctrl_type):
             if ctrl_type == 0:
                 try:
-                    loop = asyncio.get_event_loop()
-                    loop.call_soon_threadsafe(loop.stop)
+                    main_thread = threading.main_thread()
+                    if main_thread is not None and main_thread.is_alive():
+                        ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                            ctypes.c_ulong(main_thread.ident),
+                            ctypes.py_object(KeyboardInterrupt),
+                        )
+                    else:
+                        os._exit(0)
                 except Exception:
                     os._exit(0)
                 return True

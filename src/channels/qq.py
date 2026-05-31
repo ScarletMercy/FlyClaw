@@ -862,7 +862,8 @@ class QQChannel(Channel):
         except Exception as e:
             logger.debug("Typing loop error: %s", e)
         finally:
-            self._typing_tasks.pop(chat_id, None)
+            if self._typing_tasks.get(chat_id) is asyncio.current_task():
+                self._typing_tasks.pop(chat_id, None)
 
     # --- Core HTTP request ---
 

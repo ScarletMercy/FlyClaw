@@ -476,6 +476,9 @@ async def exec_command(
         if not any(_is_under(wd, a) for a in allowed):
             raise ToolExecutionError(f"当前为沙盒模式，无法访问工作目录之外的路径：{wd}（允许范围：{workspace}）")
 
+        # Use resolved path to prevent TOCTOU symlink race
+        workdir = str(wd)
+
     # Background mode: spawn via ProcessRegistry and return immediately
     if background:
         from src.tools.process import get_process_registry

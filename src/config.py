@@ -496,8 +496,6 @@ def load_config(path: str | Path = None) -> AppConfig:
         if not raw:
             return AppConfig()
         substituted = _substitute_recursive(raw)
-        if "beads" in substituted and "memory_store" not in substituted:
-            substituted["memory_store"] = substituted.pop("beads")
         config = AppConfig(**substituted)
         return _expand_paths(config)
     except ValidationError as e:
