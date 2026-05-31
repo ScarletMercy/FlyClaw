@@ -2,54 +2,16 @@
 
 from __future__ import annotations
 
-import asyncio
 import hmac
 import json
 import logging
 import time
-from collections import deque
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 logger = logging.getLogger("flyclaw.dashboard")
-
-# ── Log buffer for SSE streaming ──
-
-_log_buffer: deque = deque(maxlen=200)
-_log_subscribers: list[asyncio.Queue] = []
-
-
-class _LogHandler(logging.Handler):
-    def emit(self, record):
-        try:
-            msg = self.format(record)
-            entry = {
-                "ts": int(time.time()),
-                "level": record.levelname,
-                "logger": record.name,
-                "message": msg,
-            }
-            _log_buffer.append(entry)
-            for q in _log_subscribers:
-                try:
-                    q.put_nowait(entry)
-                except asyncio.QueueFull:
-                    pass
-        except Exception:
-            pass
-
-
-_log_handler = _LogHandler()
-_log_handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s", datefmt="%H:%M:%S"))
-
-
-def _install_log_handler():
-    root = logging.getLogger("flyclaw")
-    if _log_handler not in root.handlers:
-        root.addHandler(_log_handler)
-
 
 # ── Auth helper ──
 
@@ -82,7 +44,6 @@ _app_ref = None
 def register_dashboard(app: FastAPI, application):
     global _app_ref
     _app_ref = application
-    _install_log_handler()
 
     _template_path = Path(__file__).parent / "templates" / "dashboard.html"
     _html_template = _template_path.read_text(encoding="utf-8")
@@ -305,197 +266,7 @@ def register_dashboard(app: FastAPI, application):
     @router.get("/api/dashboard/logs")
     async def dashboard_logs(request: Request):
         _check_auth(request, app)
-        return list(_log_buffer)
-
-    @router.get("/api/dashboard/stream")
-    async def dashboard_stream(request: Request):
-        _check_auth(request, app)
-        import json
-
-        from starlette.responses import StreamingResponse
-
-        async def event_generator():
-            q: asyncio.Queue = asyncio.Queue(maxsize=50)
-            _log_subscribers.append(q)
-            try:
-                # Send buffered logs first
-                for entry in _log_buffer:
-                    yield f"event: log\ndata: {json.dumps(entry, ensure_ascii=False)}\n\n"
-                # Stream new logs
-                while True:
-                    try:
-                        entry = await asyncio.wait_for(q.get(), timeout=30)
-                        yield f"event: log\ndata: {json.dumps(entry, ensure_ascii=False)}\n\n"
-                    except asyncio.TimeoutError:
-                        yield ": keepalive\n\n"
-            except asyncio.CancelledError:
-                pass
-            finally:
-                if q in _log_subscribers:
-                    _log_subscribers.remove(q)
-
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    @router.get("/api/dashboard/state-stream")
-    async def dashboard_state_stream(request: Request):
-        """SSE endpoint pushing periodic state snapshots for real-time UI updates."""
-        _check_auth(request, app)
-        import json
-
-        from starlette.responses import StreamingResponse
-
-        async def state_generator():
-            try:
-                while True:
-                    state = await _build_state_snapshot()
-                    yield f"data: {json.dumps(state, ensure_ascii=False)}\n\n"
-                    await asyncio.sleep(3)
-            except asyncio.CancelledError:
-                pass
-
-        return StreamingResponse(
-            state_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    @router.get("/api/dashboard/events")
-    async def dashboard_events(request: Request):
-        """SSE endpoint pushing real-time events from the event bus."""
-        _check_auth(request, app)
-        import json
-
-        from starlette.responses import StreamingResponse
-
-        async def event_generator():
-            q: asyncio.Queue = asyncio.Queue(maxsize=100)
-
-            def _on_event(event, **ctx):
-                try:
-                    q.put_nowait({"event": event, "context": ctx, "ts": ctx.get("_ts", 0)})
-                except asyncio.QueueFull:
-                    pass  # Drop events if client is too slow
-
-            from src.events import subscribe_async
-
-            sub = subscribe_async("*", _on_event, priority=999)
-
-            try:
-                # Send initial state snapshot
-                yield f"event: init\ndata: {json.dumps(await _build_state_snapshot(), ensure_ascii=False)}\n\n"
-
-                # Stream events
-                while True:
-                    try:
-                        evt = await asyncio.wait_for(q.get(), timeout=30)
-                        yield f"event: {evt['event']}\ndata: {json.dumps(evt, ensure_ascii=False)}\n\n"
-                    except asyncio.TimeoutError:
-                        yield ": keepalive\n\n"
-            except asyncio.CancelledError:
-                pass
-            finally:
-                from src.events import unsubscribe
-
-                unsubscribe("*", _on_event)
-
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
-
-    async def _build_state_snapshot() -> dict:
-        cfg = _app_ref.config
-        uptime = time.monotonic() - _start_time
-        hours, remainder = divmod(int(uptime), 3600)
-        minutes, seconds = divmod(remainder, 60)
-        snapshot = {
-            "uptime": f"{hours}h {minutes}m {seconds}s",
-            "uptime_seconds": int(uptime),
-            "session_count": _app_ref.session_tracker.active_count if _app_ref.session_tracker else 0,
-            "skill_count": len(_app_ref.skills_cache or []),
-        }
-        # Sessions (active + historical from checkpointer, chat only)
-        import re as _re
-
-        _chat_pattern = _re.compile(r"^(qq):(user|group|s\d+):")
-        all_sessions = []
-        active_ids = set()
-        if _app_ref.session_tracker:
-            for s in _app_ref.session_tracker.get_sessions():
-                if _chat_pattern.match(s["thread_id"]):
-                    active_ids.add(s["thread_id"])
-                    all_sessions.append({**s, "status": "active"})
-        if _app_ref.state_store:
-            try:
-                for tid in _app_ref.state_store.list_threads():
-                    if tid not in active_ids and _chat_pattern.match(tid):
-                        state = await _app_ref.state_store.aload(tid)
-                        msg_count = len(state.messages) if state else 0
-                        all_sessions.append(
-                            {
-                                "thread_id": tid,
-                                "last_active": None,
-                                "status": "idle",
-                                "checkpoint_count": msg_count,
-                            }
-                        )
-            except Exception:
-                pass
-        snapshot["sessions"] = all_sessions
-        snapshot["session_count"] = len(active_ids)
-        # Pending approvals
-        try:
-            from src.tools.approval import get_approval_manager
-
-            snapshot["pending_approvals"] = [r.model_dump() for r in get_approval_manager().list_pending()]
-        except Exception:
-            snapshot["pending_approvals"] = []
-        # Cron
-        if _app_ref.cron_service:
-            snapshot["cron_jobs"] = [j.model_dump() for j in _app_ref.cron_service.list_jobs()]
-        # Auth users
-        if getattr(cfg.auth, "enabled", False):
-            try:
-                from src.auth.rbac import get_rbac
-
-                rbac = get_rbac()
-                if rbac:
-                    snapshot["auth_users"] = [
-                        {
-                            **u.model_dump(),
-                            "device_count": len(rbac.store.list_user_devices(u.user_id)),
-                            "trusted_devices": sum(1 for d in rbac.store.list_user_devices(u.user_id) if d.trusted),
-                        }
-                        for u in rbac.store.list_users()
-                    ]
-            except Exception:
-                snapshot["auth_users"] = []
-        # Beads
-        try:
-            from src.tools.memory_tools import get_memory_store
-
-            store = await get_memory_store()
-            snapshot["memories"] = await store.list_all()
-        except Exception:
-            snapshot["memories"] = {}
-        return snapshot
+        return []
 
     # ── Model switching ─────────────────────────────────────
 

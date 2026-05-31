@@ -1327,7 +1327,6 @@ class WeixinChannel(Channel):
 
         chat_type_str = "group" if chat_type == "group" else "p2p"
         reply_fn = lambda t: self.send_text(effective_chat_id, t, message_id)
-        stream_fn = self._create_stream_sender(effective_chat_id, message_id)
 
         # Inject chat context for send tools
         try:
@@ -1345,7 +1344,6 @@ class WeixinChannel(Channel):
             chat_type=chat_type_str,
             message_id=message_id or "",
             reply_fn=reply_fn,
-            stream_fn=stream_fn,
         )
 
     async def _maybe_fetch_typing_ticket(self, user_id: str, context_token: Optional[str]) -> None:
@@ -1752,17 +1750,3 @@ class WeixinChannel(Channel):
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
             handle.write(data)
             return handle.name
-
-    def _create_stream_sender(self, chat_id: str, message_id: str):
-        accumulated: list[str] = []
-
-        async def stream_fn(delta: str, done: bool = False, flush: bool = False):
-            if delta:
-                accumulated.append(delta)
-            if done:
-                full = "".join(accumulated)
-                if full.strip():
-                    await self.send_text(chat_id, full, message_id)
-                accumulated.clear()
-
-        return stream_fn

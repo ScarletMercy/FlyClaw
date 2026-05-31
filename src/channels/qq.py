@@ -806,7 +806,6 @@ class QQChannel(Channel):
                 chat_type=chat_type,
                 message_id=message_id,
                 reply_fn=lambda t: self.send_text(chat_id, t, message_id),
-                stream_fn=self._create_stream_sender(chat_id, message_id),
             )
         finally:
             # Stop typing
@@ -1181,21 +1180,5 @@ class QQChannel(Channel):
                 )
 
         return await self.send_text(chat_id, text, reply_to)
-
-    # --- Stream sender ---
-
-    def _create_stream_sender(self, chat_id: str, message_id: str):
-        accumulated: list[str] = []
-
-        async def stream_fn(delta: str, done: bool = False, flush: bool = False):
-            if delta:
-                accumulated.append(delta)
-            if done:
-                full = "".join(accumulated)
-                if full.strip():
-                    await self.send_text(chat_id, full, message_id)
-                accumulated.clear()
-
-        return stream_fn
 
     # --- Helpers ---

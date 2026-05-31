@@ -4,6 +4,7 @@ Usage: python scripts/migrate_tool_calls.py [path_to_checkpoints.db]
 
 If no path is provided, defaults to ~/.flyclaw/data/checkpoints.db
 """
+
 import json
 import sqlite3
 import sys
@@ -49,7 +50,7 @@ def migrate(db_path: str):
         if changed:
             db.execute(
                 "UPDATE sessions SET messages = ? WHERE thread_id = ?",
-                (json.dumps(messages, ensure_ascii=False), thread_id)
+                (json.dumps(messages, ensure_ascii=False), thread_id),
             )
             fixed_threads += 1
 

@@ -156,6 +156,15 @@ class TestCompressToolGroupIntegrity:
 
 
 class TestParallelApprovalPending:
+    @pytest.fixture(autouse=True)
+    def _mock_approval_mgr(self):
+        """Mock get_approval_manager to avoid ServiceContainer dependency."""
+        mgr = MagicMock()
+        mgr.list_pending.return_value = []
+        mgr.is_resolved.return_value = True
+        with patch("src.tools.approval.get_approval_manager", return_value=mgr):
+            yield mgr
+
     @pytest.mark.asyncio
     async def test_partial_results_contains_completed_tools(self):
         from src.tools.exec import ApprovalNeededError

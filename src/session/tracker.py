@@ -342,4 +342,3 @@ class SessionRegistry:
                 s.summary = summary
                 self._save()
                 return
-

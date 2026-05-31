@@ -305,7 +305,7 @@ tailwind.config = {
     </div>
 
     <!-- ═══ Logs ═══ -->
-    <div x-show="activeTab==='logs'" class="fade-up space-y-3" x-init="startLogStream()">
+    <div x-show="activeTab==='logs'" class="fade-up space-y-3" x-init="loadLogs()">
       <div class="flex items-center gap-4 text-xs">
         <label class="flex items-center gap-2 text-zinc-400 cursor-pointer hover:text-zinc-200 transition">
           <input type="checkbox" x-model="logAutoScroll" class="accent-accent w-3.5 h-3.5"> 自动滚动
@@ -572,7 +572,6 @@ function app() {
     logLines: [],
     logAutoScroll: true,
     logShowAll: false,
-    _logEs: null,
 
     memories: {},
     filteredMemories: {},
@@ -766,24 +765,9 @@ function app() {
     },
 
     // ── Logs ──
-    startLogStream() {
-      if (this._logEs) return;
-      const url = AUTH_TOKEN ? '/api/dashboard/stream?token='+AUTH_TOKEN : '/api/dashboard/stream';
-      this._logEs = new EventSource(url);
-      this._logEs.addEventListener('log', (e) => {
-        try {
-          const entry = JSON.parse(e.data);
-          this.logLines.push(entry);
-          if (this.logLines.length > 2000) this.logLines.splice(0, this.logLines.length - 2000);
-          if (this.logAutoScroll) {
-            this.$nextTick(() => {
-              const box = this.$refs.logBox;
-              if (box) box.scrollTop = box.scrollHeight;
-            });
-          }
-        } catch(ex) {}
-      });
-      this._logEs.onerror = () => {};
+    async loadLogs() {
+      const d = await this.api('/api/dashboard/logs');
+      if (Array.isArray(d)) this.logLines = d;
     },
 
     // ── Memory ──

@@ -104,7 +104,6 @@ class _DrainContext:
         "chat_type",
         "channel_prefix",
         "reply_fn",
-        "stream_fn",
         "system_prompt",
         "depth",
     )
@@ -119,7 +118,6 @@ class _DrainContext:
         chat_type,
         channel_prefix,
         reply_fn,
-        stream_fn,
         system_prompt,
         depth,
     ):
@@ -130,7 +128,6 @@ class _DrainContext:
         self.chat_type = chat_type
         self.channel_prefix = channel_prefix
         self.reply_fn = reply_fn
-        self.stream_fn = stream_fn
         self.system_prompt = system_prompt
         self.depth = depth
 
@@ -186,7 +183,6 @@ class MessageHandler:
             chat_type: str,
             message_id: str,
             reply_fn,
-            stream_fn,
         ):
             from src.events import emit_async
 
@@ -222,7 +218,6 @@ class MessageHandler:
                     chat_type,
                     message_id,
                     reply_fn,
-                    stream_fn,
                     thread_id,
                     is_command,
                     channel_prefix,
@@ -240,7 +235,6 @@ class MessageHandler:
             chat_type,
             message_id,
             reply_fn,
-            stream_fn,
             thread_id,
             is_command,
             channel_prefix,
@@ -370,7 +364,6 @@ class MessageHandler:
                 chat_type=chat_type,
                 channel_prefix=channel_prefix,
                 reply_fn=reply_fn,
-                stream_fn=stream_fn,
                 system_prompt=system_prompt,
                 original_text=text,
             )
@@ -473,7 +466,6 @@ class MessageHandler:
         chat_type: str,
         channel_prefix: str,
         reply_fn,
-        stream_fn,
         system_prompt: str,
         original_text: str,
         depth: int = 0,
@@ -579,7 +571,6 @@ class MessageHandler:
                     chat_type=chat_type,
                     channel_prefix=channel_prefix,
                     reply_fn=reply_fn,
-                    stream_fn=stream_fn,
                     system_prompt=system_prompt,
                     depth=depth,
                 )
@@ -784,7 +775,6 @@ class MessageHandler:
             chat_type=chat_type,
             channel_prefix=channel_prefix,
             reply_fn=reply_fn,
-            stream_fn=stream_fn,
             system_prompt=system_prompt,
             depth=depth,
         )
@@ -798,7 +788,6 @@ class MessageHandler:
         chat_type: str,
         channel_prefix: str,
         reply_fn,
-        stream_fn,
         system_prompt: str,
         depth: int,
     ):
@@ -823,7 +812,6 @@ class MessageHandler:
                     chat_type=chat_type,
                     channel_prefix=channel_prefix,
                     reply_fn=reply_fn,
-                    stream_fn=stream_fn,
                     system_prompt=system_prompt,
                     original_text=interrupt_msg,
                     depth=depth + 1,
@@ -859,7 +847,6 @@ class MessageHandler:
             chat_type=chat_type,
             channel_prefix=channel_prefix,
             reply_fn=reply_fn,
-            stream_fn=stream_fn,
             system_prompt=system_prompt,
             original_text=pending,
             depth=depth + 1,
@@ -983,7 +970,6 @@ class MessageHandler:
                     chat_type=drain_ctx.chat_type,
                     channel_prefix=drain_ctx.channel_prefix,
                     reply_fn=drain_ctx.reply_fn,
-                    stream_fn=drain_ctx.stream_fn,
                     system_prompt=drain_ctx.system_prompt,
                     depth=drain_ctx.depth,
                 )

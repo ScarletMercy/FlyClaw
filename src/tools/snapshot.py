@@ -93,24 +93,38 @@ class CheckpointManager:
         if r.returncode != 0:
             # Need an initial commit
             self._create_initial_commit(work_dir, dh, ref)
+            # Only mark initialized if the ref was actually created
+            r2 = _git("rev-parse", "--verify", ref, cwd=str(self._store))
+            if r2.returncode != 0:
+                logger.warning("Snapshot init incomplete for %s — ref %s not created", work_dir, ref)
+                return
         self._initialized_dirs.add(work_dir)
 
     def _create_initial_commit(self, work_dir: str, dh: str, ref: str):
         idx_file = str(self._store / f"index-{dh}")
+        # Remove stale index if present
+        try:
+            Path(idx_file).unlink(missing_ok=True)
+        except OSError:
+            pass
         env = {
             "GIT_DIR": str(self._store),
             "GIT_WORK_TREE": work_dir,
             "GIT_INDEX_FILE": idx_file,
         }
         # Add all files
-        _git("add", "-A", cwd=work_dir, env=env)
+        r_add = _git("add", "-A", cwd=work_dir, env=env)
+        if r_add.returncode != 0:
+            logger.warning("git add -A failed for %s: %s", work_dir, r_add.stderr.strip())
+            return
         # Write tree from index
         r_tree = _git("write-tree", cwd=work_dir, env=env)
         if r_tree.returncode != 0:
-            logger.debug("write-tree failed (empty dir?): %s", r_tree.stderr.strip())
+            logger.warning("write-tree failed for %s: %s", work_dir, r_tree.stderr.strip())
             return
         tree_sha = r_tree.stdout.strip()
         if not tree_sha:
+            logger.warning("write-tree returned empty SHA for %s", work_dir)
             return
         # Create an orphan commit (no parent) so directories are independent
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -123,10 +137,15 @@ class CheckpointManager:
             env=env,
         )
         if r_commit.returncode != 0:
-            logger.debug("commit-tree failed: %s", r_commit.stderr.strip())
+            logger.warning("commit-tree failed for %s: %s", work_dir, r_commit.stderr.strip())
             return
         sha = r_commit.stdout.strip()
-        _git("update-ref", ref, sha, cwd=str(self._store))
+        if not sha:
+            logger.warning("commit-tree returned empty SHA for %s", work_dir)
+            return
+        r_ref = _git("update-ref", ref, sha, cwd=str(self._store))
+        if r_ref.returncode != 0:
+            logger.warning("update-ref failed for %s: %s", work_dir, r_ref.stderr.strip())
 
     def _env_for(self, work_dir: str) -> dict:
         dh = _dir_hash(work_dir)
@@ -193,12 +212,13 @@ class CheckpointManager:
             return None
         current_tree = r_tree.stdout.strip()
 
-        r_ref = _git("rev-parse", ref, cwd=str(self._store))
-        if r_ref.returncode == 0 and r_ref.stdout.strip():
-            ref_sha = r_ref.stdout.strip()
-            r_ref_tree = _git("rev-parse", f"{ref_sha}^{{tree}}", cwd=str(self._store))
-            if r_ref_tree.returncode == 0 and r_ref_tree.stdout.strip() == current_tree:
-                # No changes — return existing ref tip
+        # Resolve ref and its tree in one rev-parse call
+        r_ref = _git("rev-parse", ref, f"{ref}^{{tree}}", cwd=str(self._store))
+        if r_ref.returncode == 0:
+            lines = r_ref.stdout.strip().split("\n")
+            ref_sha = lines[0].strip() if len(lines) > 0 else None
+            ref_tree = lines[1].strip() if len(lines) > 1 else None
+            if ref_tree == current_tree:
                 return ref_sha[:12]
         else:
             ref_sha = None
@@ -309,27 +329,17 @@ class CheckpointManager:
         if self._max_per_dir <= 0:
             return
 
-        # Count commits on this ref
-        r = _git("rev-list", "--count", ref, cwd=str(self._store), env=env)
-        if r.returncode != 0:
+        # Find the commit to keep as new base (--reverse = oldest-first, skip N oldest)
+        keep_skip = self._max_per_dir
+        r = _git(
+            "rev-list", "--reverse", ref, f"--skip={keep_skip}", "--max-count=1",
+            cwd=str(self._store), env=env,
+        )
+        if r.returncode != 0 or not r.stdout.strip():
+            # Fewer than max_per_dir commits — nothing to prune
             return
 
-        try:
-            count = int(r.stdout.strip())
-        except ValueError:
-            return
-
-        if count <= self._max_per_dir:
-            return
-
-        # Find the commit to keep as new base
-        keep = count - self._max_per_dir
-        r = _git("rev-list", "--reverse", ref, f"--skip={keep}", "--max-count=1", cwd=str(self._store), env=env)
-        if r.returncode != 0:
-            return
         new_base = r.stdout.strip()
-        if not new_base:
-            return
 
         # Update ref to new base
         _git("update-ref", ref, new_base, cwd=str(self._store))

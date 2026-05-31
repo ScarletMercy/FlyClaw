@@ -14,7 +14,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
 from src.canvas.server import router as canvas_router
 
@@ -231,7 +231,6 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             )
         messages = body.get("messages", [])
         model_name = body.get("model", "flyclaw")
-        stream = body.get("stream", False)
         thread_id = body.get("user", str(uuid.uuid4()))
         from src.agent.state import AgentState
 
@@ -247,12 +246,6 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             message_id=str(uuid.uuid4()),
             channel="api",
         )
-        if stream:
-            return StreamingResponse(
-                _stream_response(agent_loop, input_state, thread_id),
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
-            )
         try:
             result_state = await agent_loop.run(input_state, thread_id)
         except Exception as e:
@@ -272,30 +265,6 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             ],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
-
-    _STREAM_CHUNK_SIZE = 64
-
-    async def _stream_response(loop, input_state, thread_id):
-        chat_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-        created = int(time.time())
-        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'flyclaw', 'choices': [{'index': 0, 'delta': {'role': 'assistant'}, 'finish_reason': None}]})}\n\n"
-        try:
-            result_state = await loop.run(input_state, thread_id)
-            assistant_text = ""
-            for msg in reversed(result_state.messages):
-                if msg.get("role") == "assistant" and msg.get("content"):
-                    assistant_text = msg["content"]
-                    break
-            for i in range(0, len(assistant_text), _STREAM_CHUNK_SIZE):
-                chunk = assistant_text[i : i + _STREAM_CHUNK_SIZE]
-                yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'flyclaw', 'choices': [{'index': 0, 'delta': {'content': chunk}, 'finish_reason': None}]})}\n\n"
-                await asyncio.sleep(0.005)
-        except Exception as e:
-            yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'flyclaw', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop', 'error': str(e)}]})}\n\n"
-            yield "data: [DONE]\n\n"
-            return
-        yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'flyclaw', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
-        yield "data: [DONE]\n\n"
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket):

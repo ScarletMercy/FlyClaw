@@ -48,9 +48,19 @@ def reply_fn():
     return fn
 
 
+@pytest.fixture
+def mock_approval_mgr():
+    """Mock get_approval_manager to avoid ServiceContainer dependency."""
+    mgr = MagicMock()
+    mgr.list_pending.return_value = []
+    mgr.is_resolved.return_value = True
+    with patch("src.tools.approval.get_approval_manager", return_value=mgr):
+        yield mgr
+
+
 class TestMessageCallbackBasicFlow:
     @pytest.mark.asyncio
-    async def test_user_message_gets_agent_reply(self, container, reply_fn):
+    async def test_user_message_gets_agent_reply(self, container, reply_fn, mock_approval_mgr):
         result_state = AgentState(
             messages=[
                 {"role": "user", "content": "hello"},
@@ -68,7 +78,6 @@ class TestMessageCallbackBasicFlow:
             chat_type="p2p",
             message_id="m1",
             reply_fn=reply_fn,
-            stream_fn=AsyncMock(),
         )
 
         container.agent_loop.run.assert_called_once()
@@ -76,7 +85,7 @@ class TestMessageCallbackBasicFlow:
         assert "Hi there!" in reply_fn.call_args[0][0]
 
     @pytest.mark.asyncio
-    async def test_session_key_per_sender(self, container, reply_fn):
+    async def test_session_key_per_sender(self, container, reply_fn, mock_approval_mgr):
         container.agent_loop.run.return_value = AgentState(messages=[{"role": "assistant", "content": "ok"}])
 
         handler = MessageHandler(container)
@@ -88,7 +97,6 @@ class TestMessageCallbackBasicFlow:
             chat_type="p2p",
             message_id="m1",
             reply_fn=reply_fn,
-            stream_fn=AsyncMock(),
         )
 
         call_args = container.agent_loop.run.call_args
@@ -96,7 +104,7 @@ class TestMessageCallbackBasicFlow:
         assert "user123" in thread_id
 
     @pytest.mark.asyncio
-    async def test_session_key_global(self, container, reply_fn):
+    async def test_session_key_global(self, container, reply_fn, mock_approval_mgr):
         container.agent_loop.run.return_value = AgentState(messages=[{"role": "assistant", "content": "ok"}])
 
         handler = MessageHandler(container)
@@ -108,7 +116,6 @@ class TestMessageCallbackBasicFlow:
             chat_type="p2p",
             message_id="m1",
             reply_fn=reply_fn,
-            stream_fn=AsyncMock(),
         )
 
         call_args = container.agent_loop.run.call_args
@@ -118,7 +125,7 @@ class TestMessageCallbackBasicFlow:
 
 class TestMessageCallbackSlashCommands:
     @pytest.mark.asyncio
-    async def test_slash_command_dispatches_and_returns(self, container, reply_fn):
+    async def test_slash_command_dispatches_and_returns(self, container, reply_fn, mock_approval_mgr):
         container.dispatcher.match.return_value = ("help", "")
         container.dispatcher.dispatch.return_value = "Available commands: ..."
 
@@ -131,7 +138,6 @@ class TestMessageCallbackSlashCommands:
             chat_type="p2p",
             message_id="m1",
             reply_fn=reply_fn,
-            stream_fn=AsyncMock(),
         )
 
         container.dispatcher.dispatch.assert_awaited_once_with(
@@ -151,7 +157,7 @@ class TestMessageCallbackSlashCommands:
 
 class TestMessageCallbackPendingApproval:
     @pytest.mark.asyncio
-    async def test_pending_approval_blocks_new_messages(self, container, reply_fn):
+    async def test_pending_approval_blocks_new_messages(self, container, reply_fn, mock_approval_mgr):
         pending_state = AgentState(
             messages=[{"role": "user", "content": "cmd"}],
             pending_approval={"tool_call_id": "tc1"},
@@ -167,7 +173,6 @@ class TestMessageCallbackPendingApproval:
             chat_type="p2p",
             message_id="m2",
             reply_fn=reply_fn,
-            stream_fn=AsyncMock(),
         )
 
         container.agent_loop.run.assert_not_called()
@@ -195,7 +200,6 @@ class TestMessageCallbackApprovalViaQQ:
                 chat_type="p2p",
                 message_id="m1",
                 reply_fn=reply_fn,
-                stream_fn=AsyncMock(),
             )
 
         mock_mgr.resolve.assert_called_once()
@@ -204,7 +208,7 @@ class TestMessageCallbackApprovalViaQQ:
 
 class TestMessageCallbackHistoryLoad:
     @pytest.mark.asyncio
-    async def test_existing_history_prepended(self, container, reply_fn):
+    async def test_existing_history_prepended(self, container, reply_fn, mock_approval_mgr):
         old_state = AgentState(
             messages=[
                 {"role": "user", "content": "previous question"},
@@ -232,7 +236,6 @@ class TestMessageCallbackHistoryLoad:
             chat_type="p2p",
             message_id="m2",
             reply_fn=reply_fn,
-            stream_fn=AsyncMock(),
         )
 
         call_args = container.agent_loop.run.call_args
@@ -244,7 +247,7 @@ class TestMessageCallbackHistoryLoad:
 
 class TestMessageCallbackErrorHandling:
     @pytest.mark.asyncio
-    async def test_agent_error_returns_error_message(self, container, reply_fn):
+    async def test_agent_error_returns_error_message(self, container, reply_fn, mock_approval_mgr):
         container.agent_loop.run.side_effect = RuntimeError("LLM timeout")
 
         handler = MessageHandler(container)
@@ -256,7 +259,6 @@ class TestMessageCallbackErrorHandling:
             chat_type="p2p",
             message_id="m1",
             reply_fn=reply_fn,
-            stream_fn=AsyncMock(),
         )
 
         reply_fn.assert_awaited()

@@ -82,11 +82,13 @@ def convert_messages_to_openai_format(messages_rows) -> list[dict]:
                 simplified = json.loads(tool_calls)
                 for tc_idx, tc in enumerate(simplified):
                     tc_id = f"call_{message_id}_{tc_idx}"
-                    pending_tool_calls.append({
-                        "id": tc_id,
-                        "name": tc.get("name", "unknown"),
-                        "args": tc.get("args", "{}"),
-                    })
+                    pending_tool_calls.append(
+                        {
+                            "id": tc_id,
+                            "name": tc.get("name", "unknown"),
+                            "args": tc.get("args", "{}"),
+                        }
+                    )
             except (json.JSONDecodeError, TypeError):
                 pass
 
@@ -181,7 +183,10 @@ def recover_checkpoints(index_path: str, checkpoints_path: str, dry_run: bool = 
             ).fetchall()
             logger.info(
                 "  %s: %d 条消息 (channel=%s, sender=%s)",
-                s[0], len(messages), s[1], s[2],
+                s[0],
+                len(messages),
+                s[1],
+                s[2],
             )
         idx_conn.close()
         return stats
@@ -256,7 +261,8 @@ def recover_checkpoints(index_path: str, checkpoints_path: str, dry_run: bool = 
             stats["messages_recovered"] += len(openai_messages)
             logger.info(
                 "恢复会话: %s (%d 条消息)",
-                thread_id, len(openai_messages),
+                thread_id,
+                len(openai_messages),
             )
 
         except Exception as e:
@@ -315,4 +321,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

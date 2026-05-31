@@ -266,5 +266,3 @@ def _build_bootstrap_context(context_files: list[dict]) -> list[str]:
         lines.append(entry["content"])
         lines.append("")
     return lines
-
-

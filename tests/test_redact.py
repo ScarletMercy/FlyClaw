@@ -68,9 +68,7 @@ class TestRedactCredentialPatterns:
         """Every CREDENTIAL_PATTERNS entry must be caught by redact()."""
         sample = _min_sample(cp.pattern)
         result = redact(f"key={sample}")
-        assert sample not in result, (
-            f"{cp.name}: pattern {cp.pattern!r} sample {sample!r} not redacted"
-        )
+        assert sample not in result, f"{cp.name}: pattern {cp.pattern!r} sample {sample!r} not redacted"
 
     def test_redact_openai_key(self):
         assert redact("key=sk-abc1234567890") == "key=***"

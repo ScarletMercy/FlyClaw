@@ -58,4 +58,3 @@ class A2uiBuilder:
 
     def to_jsonl(self) -> list[str]:
         return list(self._lines)
-

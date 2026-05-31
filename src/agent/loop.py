@@ -25,7 +25,6 @@ logger = logging.getLogger("flyclaw.agent.loop")
 _SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
 
 
-
 async def interruptible(event: asyncio.Event, coro):
     task = asyncio.ensure_future(coro)
     wait_task = asyncio.ensure_future(event.wait())
@@ -741,7 +740,7 @@ class AgentLoop:
                 if tc_id in tc_id_to_name and tc_id_to_name[tc_id] in self._NO_TRUNCATE_TOOLS:
                     continue
                 content = m.get("content", "")
-                _config = getattr(self, '_config', None)
+                _config = getattr(self, "_config", None)
                 threshold = _config.agents.tool_output_cache_chars if _config else 8000
                 if isinstance(content, str) and len(content) > threshold and not m.get("_truncated"):
                     from src.agent.tool_cache import cache_large_output
@@ -1196,11 +1195,13 @@ class AgentLoop:
                 state.pending_approval = r.to_pending_data()
                 r.partial_results = list(final)
                 for tc_id, result in r.partial_results:
-                    state.append_message({
-                        "role": "tool",
-                        "tool_call_id": tc_id,
-                        "content": result,
-                    })
+                    state.append_message(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": result,
+                        }
+                    )
                 await self._store.save(thread_id, state)
                 raise r
             if isinstance(r, BaseException):
