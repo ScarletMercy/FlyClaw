@@ -667,6 +667,14 @@ class TestCleanTruncatedMarkers:
         cleaned = _clean_for_summary(msgs)
         assert cleaned[0]["content"] == content
 
+    def test_returns_new_objects_not_aliases(self):
+        from src.compressor.compressor import _clean_for_summary
+
+        msgs = [{"role": "user", "content": "hello"}]
+        cleaned = _clean_for_summary(msgs)
+        assert cleaned is not msgs
+        assert cleaned[0] is not msgs[0]
+
     def test_no_error_on_missing_keys(self):
         from src.compressor.compressor import _clean_for_summary
 
@@ -676,7 +684,8 @@ class TestCleanTruncatedMarkers:
 
     def test_roundtrip_cache_and_strip(self):
         """cache_large_output produces format that strip_cache_path can remove."""
-        from src.agent.tool_cache import cache_large_output, strip_cache_path
+        from src.agent.tool_cache import cache_large_output
+        from src.compressor.compressor import strip_cache_path
 
         big = "abc" * 5000  # 15000 chars > default 8000
         truncated, path = cache_large_output(big, "test_thread")

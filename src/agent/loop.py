@@ -741,7 +741,8 @@ class AgentLoop:
                 if tc_id in tc_id_to_name and tc_id_to_name[tc_id] in self._NO_TRUNCATE_TOOLS:
                     continue
                 content = m.get("content", "")
-                threshold = self._config.agents.tool_output_cache_chars if self._config else 8000
+                _config = getattr(self, '_config', None)
+                threshold = _config.agents.tool_output_cache_chars if _config else 8000
                 if isinstance(content, str) and len(content) > threshold and not m.get("_truncated"):
                     from src.agent.tool_cache import cache_large_output
 

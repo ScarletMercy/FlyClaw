@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import io
 import logging
 import os
 import threading
@@ -60,17 +61,29 @@ def read_file(path: str, offset: int = 0, head_limit: int = 500) -> str:
         return f"Error: {e}"
 
     try:
-        if _is_binary(resolved):
+        # Extension check (no file open needed — no TOCTOU possible)
+        ext = os.path.splitext(resolved)[1].lower()
+        if ext in _BINARY_EXTS:
             return f"Error: binary file: {path}"
+        # Open once; null-byte probe + text reading share the same handle
         selected: list[str] = []
         total = 0
-        with open(resolved, "r", encoding="utf-8") as f:
+        with open(resolved, "rb") as raw:
+            chunk = raw.read(8192)
+            if b"\x00" in chunk:
+                return f"Error: binary file: {path}"
+            raw.seek(0)
+            f = io.TextIOWrapper(raw, encoding="utf-8")
             for idx, line in enumerate(f):
                 total += 1
                 if idx < offset:
                     continue
                 if len(selected) < head_limit:
                     selected.append(line)
+        if total == 0:
+            return f"File: {path} (empty, 0 lines)"
+        if offset >= total:
+            return f"Error: offset {offset} exceeds file length ({total} lines)"
         end = offset + head_limit
         result = []
         for i, line in enumerate(selected):
@@ -371,6 +384,8 @@ def _grep_impl(
         if not results:
             return f"No matches found for '{pattern}' in {path}"
         total = len(results)
+        if offset >= total:
+            return f"Error: offset {offset} exceeds total matches ({total})"
         page = results[offset : offset + head_limit]
         header = f"Found {len(page)} of {total} match(es) for '{pattern}':\n"
         suffix = ""
@@ -416,6 +431,8 @@ def _grep_impl(
     total = len(results)
     if not total:
         return f"No matches found for '{pattern}' in {path}"
+    if offset >= total:
+        return f"Error: offset {offset} exceeds total matches ({total})"
     page = results[offset : offset + head_limit]
     header = f"Found {len(page)} of {total} match(es) for '{pattern}':\n"
     suffix = ""
@@ -458,6 +475,8 @@ def _grep_files_with_matches(
     total = len(files)
     if not total:
         return f"No files matching '{pattern}'"
+    if offset >= total:
+        return f"Error: offset {offset} exceeds total files ({total})"
     page = files[offset : offset + head_limit]
     header = f"Found {len(page)} of {total} file(s) matching pattern in {path}:\n"
     suffix = ""
@@ -494,6 +513,8 @@ def _glob_impl(pattern: str, path: str = ".", head_limit: int = 50, offset: int 
             return f"No files matched '{pattern}' in {path}"
         all_matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
         total = len(all_matches)
+        if offset >= total:
+            return f"Error: offset {offset} exceeds total matches ({total})"
         page = all_matches[offset : offset + head_limit]
         lines = []
         for m in page:

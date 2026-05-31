@@ -273,7 +273,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
         }
 
-    _STREAM_CHUNK_SIZE = 16
+    _STREAM_CHUNK_SIZE = 64
 
     async def _stream_response(loop, input_state, thread_id):
         chat_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
@@ -289,7 +289,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             for i in range(0, len(assistant_text), _STREAM_CHUNK_SIZE):
                 chunk = assistant_text[i : i + _STREAM_CHUNK_SIZE]
                 yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'flyclaw', 'choices': [{'index': 0, 'delta': {'content': chunk}, 'finish_reason': None}]})}\n\n"
-                await asyncio.sleep(0.01)
+                await asyncio.sleep(0.005)
         except Exception as e:
             yield f"data: {json.dumps({'id': chat_id, 'object': 'chat.completion.chunk', 'created': created, 'model': 'flyclaw', 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop', 'error': str(e)}]})}\n\n"
             yield "data: [DONE]\n\n"

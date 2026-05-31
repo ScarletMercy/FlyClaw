@@ -10,6 +10,7 @@ When a conversation grows too long, this module:
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -39,7 +40,15 @@ _SUMMARY_SYSTEM = """你是一个会话摘要助手。你需要将一段对话�
 ## 关键文件/路径
 - ..."""
 
-from src.agent.tool_cache import strip_cache_path
+# Regex for stripping cache file paths from truncated messages.
+# Must stay in sync with the format string in agent/tool_cache.cache_large_output:
+#   f"... Full content saved to: `{filepath}`]"
+_CACHE_PATH_RE = re.compile(r"\. Full content saved to: `[^`]+`")
+
+
+def strip_cache_path(content: str) -> str:
+    """Remove embedded cache file paths from truncated tool output."""
+    return _CACHE_PATH_RE.sub(".", content)
 
 
 def _clean_for_summary(messages: list[dict]) -> list[dict]:
@@ -48,7 +57,7 @@ def _clean_for_summary(messages: list[dict]) -> list[dict]:
         if "_truncated" not in m:
             content = m.get("content", "")
             if not (isinstance(content, str) and "Full content saved to:" in content):
-                cleaned.append(m)
+                cleaned.append({**m})
                 continue
         new_m = {k: v for k, v in m.items() if k != "_truncated"}
         content = new_m.get("content", "")

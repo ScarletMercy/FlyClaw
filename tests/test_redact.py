@@ -1,7 +1,54 @@
 import re
 
+import pytest
+
 from src.security.credential_patterns import CREDENTIAL_PATTERNS
 from src.security.redact import _PREFIX_PATTERNS, redact
+
+
+def _min_sample(pattern: str) -> str:
+    """Build the shortest string matching *pattern*.
+
+    Handles the regex subset used in credential_patterns.py:
+    literal chars, ``\\. ``, ``[charset]{N,}`` / ``[charset]{N}``.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(pattern):
+        if pattern[i] == "[":
+            j = pattern.index("]", i)
+            cls = pattern[i + 1 : j]
+            i = j + 1
+            # Parse quantifier
+            if i < len(pattern) and pattern[i] == "{":
+                k = pattern.index("}", i)
+                spec = pattern[i + 1 : k]
+                i = k + 1
+                n = int(spec.rstrip(","))
+                if spec.endswith(","):
+                    n += 1  # minimum + 1 for safety
+            else:
+                n = 1
+            # Pick a char that belongs to the class
+            if "a-z" in cls:
+                ch = "a"
+            elif "A-Z" in cls:
+                ch = "A"
+            elif "0-9" in cls:
+                ch = "0"
+            elif cls:  # literal chars like "baprs"
+                ch = cls[0]
+            else:
+                ch = "x"
+            out.append(ch * n)
+        elif pattern[i] == "\\":
+            i += 1
+            out.append(pattern[i])
+            i += 1
+        else:
+            out.append(pattern[i])
+            i += 1
+    return "".join(out)
 
 
 class TestRedactCredentialPatterns:
@@ -11,6 +58,19 @@ class TestRedactCredentialPatterns:
     def test_all_prefix_patterns_compile(self):
         for p in _PREFIX_PATTERNS:
             re.compile(p)
+
+    @pytest.mark.parametrize(
+        "cp",
+        CREDENTIAL_PATTERNS,
+        ids=lambda c: c.name,
+    )
+    def test_each_credential_pattern_redacted(self, cp):
+        """Every CREDENTIAL_PATTERNS entry must be caught by redact()."""
+        sample = _min_sample(cp.pattern)
+        result = redact(f"key={sample}")
+        assert sample not in result, (
+            f"{cp.name}: pattern {cp.pattern!r} sample {sample!r} not redacted"
+        )
 
     def test_redact_openai_key(self):
         assert redact("key=sk-abc1234567890") == "key=***"

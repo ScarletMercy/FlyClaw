@@ -17,15 +17,18 @@ from typing import Optional
 logger = logging.getLogger("flyclaw.process")
 
 
-async def kill_process_tree(proc: asyncio.subprocess.Process) -> None:
+async def kill_process_tree(proc: asyncio.subprocess.Process) -> bool:
     """Kill a process and all its descendants (cross-platform).
 
-    Does NOT call ``await proc.wait()`` — the caller is responsible for
-    reaping the process afterwards.
+    On POSIX, sends SIGTERM first, waits up to 5 s, then escalates to SIGKILL.
+    On Windows, uses ``taskkill /T /F /PID``.
+    Calls ``await proc.wait()`` internally and returns whether the kill succeeded.
     """
     if proc.pid is None:
-        return
+        return False
     pid = proc.pid
+    killed = False
+
     if os.name == "nt":
         try:
             t = await asyncio.create_subprocess_exec(
@@ -38,19 +41,46 @@ async def kill_process_tree(proc: asyncio.subprocess.Process) -> None:
                 stderr=asyncio.subprocess.DEVNULL,
             )
             await asyncio.wait_for(t.wait(), timeout=10)
+            await proc.wait()
+            killed = True
         except (FileNotFoundError, OSError, asyncio.TimeoutError):
             try:
                 proc.kill()
+                await proc.wait()
+                killed = True
             except ProcessLookupError:
-                pass
+                try:
+                    await proc.wait()
+                except Exception:
+                    pass
     else:
         try:
-            os.killpg(os.getpgid(pid), signal.SIGKILL)
-        except (ProcessLookupError, OSError):
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+            killed = True
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGKILL)
+                    await proc.wait()
+                except (ProcessLookupError, OSError):
+                    try:
+                        await proc.wait()
+                    except Exception:
+                        pass
+        except (ProcessLookupError, OSError, PermissionError) as e:
+            logger.debug("[process] kill_tree failed for pid=%d: %s", pid, e)
             try:
                 proc.kill()
-            except ProcessLookupError:
-                pass
+                await proc.wait()
+                killed = True
+            except (ProcessLookupError, OSError):
+                try:
+                    await proc.wait()
+                except Exception:
+                    pass
+
+    return killed
 
 
 # ── Background process management ──
@@ -241,7 +271,6 @@ class ProcessRegistry:
 
         try:
             await kill_process_tree(session.proc)
-            await session.proc.wait()
             session.killed = True
             logger.info("[bg-process] killed session=%s pid=%d", session_id, session.pid)
             return f"Killed process {session_id} (pid {session.pid})."

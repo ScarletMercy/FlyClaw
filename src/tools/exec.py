@@ -278,7 +278,6 @@ async def _exec_streaming(
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 await _safe_kill()
-                await proc.wait()
                 duration = time.monotonic() - start
                 logger.warning("[exec-audit] TIMEOUT dur=%.1fs cmd=%.200s", duration, command)
                 raise ToolExecutionError(f"Command timed out after {timeout}s")
@@ -307,14 +306,12 @@ async def _exec_streaming(
                 # No-output timeout
                 if time.monotonic() >= deadline:
                     await _safe_kill()
-                    await proc.wait()
                     duration = time.monotonic() - start
                     logger.warning("[exec-audit] TIMEOUT dur=%.1fs cmd=%.200s", duration, command)
                     raise ToolExecutionError(f"Command timed out after {timeout}s")
 
                 killed = True
                 await _safe_kill()
-                await proc.wait()
                 break
 
             # Got output, clear event and loop back
@@ -323,7 +320,6 @@ async def _exec_streaming(
         raise
     except Exception as e:
         await _safe_kill()
-        await proc.wait()
         duration = time.monotonic() - start
         logger.error("[exec-audit] ERROR dur=%.1fs cmd=%.200s: %s", duration, command, e)
         raise ToolExecutionError(f"{type(e).__name__}: {e}")
@@ -616,7 +612,6 @@ async def exec_command(
 
     except asyncio.TimeoutError:
         await kill_process_tree(proc)
-        await proc.wait()
         duration = time.monotonic() - start
         logger.warning("[exec-audit] TIMEOUT dur=%.1fs cmd=%.200s", duration, command)
         raise ToolExecutionError(f"Command timed out after {timeout}s")

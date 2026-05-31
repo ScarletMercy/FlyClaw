@@ -64,26 +64,26 @@ class TestMemoryStore:
         assert "doc2" in paths
 
     def test_fts_query_formatting(self):
-        from src.memory.store import MemoryStore
+        from src.utils.fts import sanitize_fts5_query
 
-        assert "OR" in MemoryStore._format_fts_query("hello world")
-        assert "test" in MemoryStore._format_fts_query("test")
+        assert "OR" in sanitize_fts5_query("hello world")
+        assert "test" in sanitize_fts5_query("test")
         # Special chars stripped
-        q = MemoryStore._format_fts_query('hello "world" * (test)')
+        q = sanitize_fts5_query('hello "world" * (test)')
         assert '"' not in q
         assert "*" not in q
 
     def test_fts_query_only_special_chars_returns_empty(self):
-        from src.memory.store import MemoryStore
+        from src.utils.fts import sanitize_fts5_query
 
-        assert MemoryStore._format_fts_query('*"') == '""'
-        assert MemoryStore._format_fts_query("(") == '""'
-        assert MemoryStore._format_fts_query('()""**') == '""'
+        assert sanitize_fts5_query('*"') == '""'
+        assert sanitize_fts5_query("(") == '""'
+        assert sanitize_fts5_query('()""**') == '""'
 
     def test_fts_query_whitespace_only(self):
-        from src.memory.store import MemoryStore
+        from src.utils.fts import sanitize_fts5_query
 
-        assert MemoryStore._format_fts_query("   ") == '""'
+        assert sanitize_fts5_query("   ") == '""'
 
     def test_overwrite_document(self, store):
         _run(store.add_document("doc1", "Original content about algorithms."))

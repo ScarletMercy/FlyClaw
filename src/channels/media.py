@@ -5,14 +5,12 @@ import logging
 
 import httpx
 
-from typing import Optional
-
 logger = logging.getLogger("flyclaw.media")
 
 _MAX_DOWNLOAD_SIZE = 50 * 1024 * 1024
 
 
-async def download_from_url(url: str, timeout: int = 30) -> Optional[tuple[bytes, str]]:
+async def download_from_url(url: str, timeout: int = 30) -> tuple[bytes, str] | None:
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(timeout), follow_redirects=True) as client:
             resp = await client.get(url)

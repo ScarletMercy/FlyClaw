@@ -230,45 +230,55 @@ class TestSessionIndexStore:
 
 class TestSanitizeFts5Query:
     def test_basic_query(self):
-        from src.session_index.store import _sanitize_fts5_query
+        from src.utils.fts import sanitize_fts5_query
 
-        result = _sanitize_fts5_query("hello world")
+        result = sanitize_fts5_query("hello world")
         assert result == "hello OR world"
 
     def test_empty_query(self):
-        from src.session_index.store import _sanitize_fts5_query
+        from src.utils.fts import sanitize_fts5_query
 
-        assert _sanitize_fts5_query("") == '""'
-        assert _sanitize_fts5_query("   ") == '""'
+        assert sanitize_fts5_query("") == '""'
+        assert sanitize_fts5_query("   ") == '""'
 
     def test_unbalanced_double_quotes_stripped(self):
-        from src.session_index.store import _sanitize_fts5_query
+        from src.utils.fts import sanitize_fts5_query
 
-        result = _sanitize_fts5_query('test "unbalanced')
+        result = sanitize_fts5_query('test "unbalanced')
         assert '"' not in result
         assert "test" in result
         assert "unbalanced" in result
 
     def test_balanced_double_quotes_stripped(self):
-        from src.session_index.store import _sanitize_fts5_query
+        from src.utils.fts import sanitize_fts5_query
 
-        result = _sanitize_fts5_query('"hello world"')
+        result = sanitize_fts5_query('"hello world"')
         assert '"' not in result
         assert "hello" in result
         assert "world" in result
 
     def test_special_chars_only(self):
-        from src.session_index.store import _sanitize_fts5_query
+        from src.utils.fts import sanitize_fts5_query
 
-        result = _sanitize_fts5_query('"*()')
+        result = sanitize_fts5_query('"*()')
         assert result == '""'
 
     def test_chinese_query(self):
-        from src.session_index.store import _sanitize_fts5_query
+        from src.utils.fts import sanitize_fts5_query
 
-        result = _sanitize_fts5_query("部署 测试")
+        result = sanitize_fts5_query("部署 测试")
         assert "部署" in result
         assert "测试" in result
+
+    def test_wildcards_and_parens_stripped(self):
+        from src.utils.fts import sanitize_fts5_query
+
+        result = sanitize_fts5_query("test*(other)")
+        assert "*" not in result
+        assert "(" not in result
+        assert ")" not in result
+        assert "test" in result
+        assert "other" in result
 
 
 class TestFts5UpdateTrigger:

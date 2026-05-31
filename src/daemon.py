@@ -8,12 +8,14 @@ Supports:
 
 from __future__ import annotations
 
+import argparse
 import getpass
 import os
 import platform
 import shlex
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -93,11 +95,14 @@ WantedBy=multi-user.target
         service_path = self._get_systemd_service_path()
         service_content = self._generate_systemd_service()
 
+        tmp = Path(tempfile.gettempdir()) / "flyclaw.service"
+        tmp.write_text(service_content, encoding="utf-8")
+
         print("Installing flyclaw systemd service...")
         print(f"Service file: {service_path}")
         print()
         print("Run the following commands to complete the installation:")
-        print(f"  echo '{service_content}' | sudo tee {service_path}")
+        print(f"  sudo cp {tmp} {service_path}")
         print("  sudo systemctl daemon-reload")
         print("  sudo systemctl enable flyclaw")
         print("  sudo systemctl start flyclaw")
@@ -108,6 +113,10 @@ WantedBy=multi-user.target
         print("  sudo systemctl stop flyclaw")
         print("  sudo systemctl disable flyclaw")
         print(f"  sudo rm {self._get_systemd_service_path()}")
+
+        tmp = Path(tempfile.gettempdir()) / "flyclaw.service"
+        if tmp.exists():
+            tmp.unlink()
 
     def _status_systemd(self) -> None:
         result = subprocess.run(
@@ -146,12 +155,15 @@ WantedBy=multi-user.target
         plist_path = self._get_launchd_plist_path()
         plist_content = self._generate_launchd_plist()
 
+        tmp = Path(tempfile.gettempdir()) / "com.flyclaw.agent.plist"
+        tmp.write_text(plist_content, encoding="utf-8")
+
         print("Installing flyclaw launchd agent...")
         print(f"Plist file: {plist_path}")
         print()
         print("Run the following commands to complete the installation:")
         print(f"  mkdir -p {plist_path.parent}")
-        print(f"  echo '{plist_content}' > {plist_path}")
+        print(f"  cp {tmp} {plist_path}")
         print(f"  launchctl load {plist_path}")
 
     def _uninstall_launchd(self) -> None:
@@ -160,6 +172,10 @@ WantedBy=multi-user.target
         print("Run the following commands:")
         print(f"  launchctl unload {plist_path}")
         print(f"  rm {plist_path}")
+
+        tmp = Path(tempfile.gettempdir()) / "com.flyclaw.agent.plist"
+        if tmp.exists():
+            tmp.unlink()
 
     def _status_launchd(self) -> None:
         result = subprocess.run(
@@ -234,18 +250,26 @@ WantedBy=multi-user.target
 
 def main_daemon():
     """CLI entry point for daemon management."""
+    parser = argparse.ArgumentParser(
+        prog="flyclaw-daemon",
+        description="flyclaw 守护进程管理工具",
+    )
+    parser.add_argument(
+        "action",
+        choices=["install", "uninstall", "status"],
+        nargs="?",
+        default="status",
+        help="要执行的操作 (默认: status)",
+    )
+    args = parser.parse_args()
     manager = DaemonManager()
-    action = sys.argv[2] if len(sys.argv) > 2 else "status"
 
-    if action == "install":
+    if args.action == "install":
         manager.install()
-    elif action == "uninstall":
+    elif args.action == "uninstall":
         manager.uninstall()
-    elif action == "status":
-        manager.status()
     else:
-        print(f"Usage: flyclaw-daemon [install|uninstall|status]")
-        sys.exit(1)
+        manager.status()
 
 
 if __name__ == "__main__":

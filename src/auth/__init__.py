@@ -4,7 +4,6 @@ from src.auth.models import Device, PairingCode, User, UserRole, ROLE_PERMISSION
 from src.auth.rbac import RBAC, get_rbac
 
 __all__ = [
-    "AuthStore",
     "RBAC",
     "get_rbac",
     "User",

@@ -14,6 +14,8 @@ from typing import Optional
 
 import aiosqlite
 
+from src.utils.fts import sanitize_fts5_query
+
 logger = logging.getLogger("flyclaw.memory.base")
 
 
@@ -201,7 +203,7 @@ class BaseMemoryStore(ABC):
         if not query.strip():
             return []
         results = []
-        fts_query = self._format_fts_query(query)
+        fts_query = sanitize_fts5_query(query)
         try:
             cursor = await self._conn.execute(
                 """
@@ -232,26 +234,6 @@ class BaseMemoryStore(ABC):
         return results
 
     # ── Score utilities (shared) ────────────────────────────
-
-    @staticmethod
-    def _format_fts_query(query: str) -> str:
-        """Format a natural language query for FTS5 MATCH syntax."""
-        import shlex
-
-        try:
-            parts = shlex.split(query)
-        except ValueError:
-            parts = query.split()
-
-        fts_terms = []
-        for part in parts:
-            cleaned = part.replace('"', "").replace("*", "").replace("(", "").replace(")", "")
-            if cleaned:
-                fts_terms.append(cleaned)
-
-        if not fts_terms:
-            return '""'
-        return " OR ".join(fts_terms)
 
     @staticmethod
     def _normalize_fts_scores(results: list[dict], min_score: float = 0.35) -> list[dict]:
