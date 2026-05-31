@@ -60,6 +60,7 @@ class ReloadExecutor:
                 old._scheduler.shutdown(wait=False)
                 old._scheduler = None
             await old._drain_running_tasks()
+
             # Update closure references (agent_loop/config may have changed)
             async def cron_execute(job):
                 return await execute_cron_job(job, app.agent_loop, app.config, app.qq)

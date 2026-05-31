@@ -95,9 +95,7 @@ class CronStore:
                 # Restore version for retry
                 job.version = old_version
                 # Version conflict — check if row exists
-                async with conn.execute(
-                    "SELECT version FROM cron_jobs WHERE id = ?", (job.id,)
-                ) as cur:
+                async with conn.execute("SELECT version FROM cron_jobs WHERE id = ?", (job.id,)) as cur:
                     row = await cur.fetchone()
                 if row is None:
                     # Row doesn't exist — insert
@@ -112,8 +110,7 @@ class CronStore:
                 # On RuntimeError below, job.version is left at old_version (restored above)
                 if attempt >= max_retries:
                     raise RuntimeError(
-                        f"Optimistic lock conflict for cron job {job.id}: "
-                        f"failed after {max_retries + 1} attempts"
+                        f"Optimistic lock conflict for cron job {job.id}: failed after {max_retries + 1} attempts"
                     )
                 db_version = row[0]
                 job.version = db_version
