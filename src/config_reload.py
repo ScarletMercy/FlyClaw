@@ -48,16 +48,38 @@ class ReloadExecutor:
         from src.cron.store import CronStore
         from src.cron.executor import execute_cron_job
 
-        if self._app.cron_service:
-            await self._app.cron_service.stop()
-        store = CronStore(self._app.config.cron.store_path)
         app = self._app
+        old = app.cron_service
+        old_path = str(old.store.db_path) if old else ""
+        new_path = app.config.cron.store_path
 
-        async def cron_execute(job):
-            return await execute_cron_job(job, app.agent_loop, app.config, app.qq)
+        if old and old_path == new_path:
+            # Store path unchanged — lightweight reload
+            logger.info("Cron reload: reusing store, rescheduling")
+            if old._scheduler:
+                old._scheduler.shutdown(wait=False)
+                old._scheduler = None
+            await old._drain_running_tasks()
+            # Update closure references (agent_loop/config may have changed)
+            async def cron_execute(job):
+                return await execute_cron_job(job, app.agent_loop, app.config, app.qq)
 
-        self._app.cron_service = CronService(store, cron_execute, config=self._app.config, channel=self._app.qq)
-        await self._app.cron_service.start()
+            old.execute_fn = cron_execute
+            old._config = app.config
+            old._channel = app.qq
+            await old.reschedule()
+        else:
+            # Store path changed or first init — full restart
+            logger.info("Cron reload: full restart")
+            if old:
+                await old.stop()
+            store = CronStore(new_path)
+
+            async def cron_execute(job):
+                return await execute_cron_job(job, app.agent_loop, app.config, app.qq)
+
+            app.cron_service = CronService(store, cron_execute, config=app.config, channel=app.qq)
+            await app.cron_service.start()
 
     async def _do_reload_tools(self):
         from src.tools.exec import reset_config_cache

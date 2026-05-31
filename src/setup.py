@@ -511,18 +511,31 @@ def _step_browser(config: dict) -> None:
             print("  正在安装 Chromium...")
             import subprocess
 
-            # 设置国内镜像源加速下载
-            env = os.environ.copy()
-            env["PLAYWRIGHT_DOWNLOAD_HOST"] = "https://registry.npmmirror.com/-/binary/playwright"
-            ret = subprocess.run(
-                [sys.executable, "-m", "playwright", "install", "chromium"],
-                capture_output=False,
-                env=env,
-            )
-            if ret.returncode == 0:
-                print("  Chromium 安装完成。")
-            else:
-                print("  Chromium 安装失败，请稍后手动运行: playwright install chromium")
+            # 镜像源列表（按优先级排序），逐个尝试直到成功
+            mirrors = [
+                ("淘宝 NPM 镜像", "https://registry.npmmirror.com/-/binary/playwright"),
+                ("Playwright 官方 CDN", "https://playwright.azureedge.net"),
+            ]
+
+            installed = False
+            for name, host in mirrors:
+                env = os.environ.copy()
+                env["PLAYWRIGHT_DOWNLOAD_HOST"] = host
+                print(f"  尝试使用 {name} ({host}) ...")
+                ret = subprocess.run(
+                    [sys.executable, "-m", "playwright", "install", "chromium"],
+                    capture_output=False,
+                    env=env,
+                )
+                if ret.returncode == 0:
+                    print(f"  Chromium 安装完成（使用 {name}）。")
+                    installed = True
+                    break
+                else:
+                    print(f"  {name} 安装失败，尝试下一个镜像源...")
+
+            if not installed:
+                print("  所有镜像源均安装失败，请稍后手动运行: playwright install chromium")
 
 
 def _step_media_understanding(config: dict) -> None:

@@ -27,5 +27,5 @@ docker:
 	docker build -t flyclaw .
 
 clean:
-	rm -rf data/ .pytest_cache/ .ruff_cache/
+	rm -rf build/ dist/ *.egg-info data/ .pytest_cache/ .ruff_cache/
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

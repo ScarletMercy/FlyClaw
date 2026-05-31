@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -43,6 +44,7 @@ class CronStore:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: Optional[aiosqlite.Connection] = None
+        self._lock = asyncio.Lock()
 
     async def __aenter__(self):
         await self._get_conn()
@@ -75,40 +77,61 @@ class CronStore:
                 logger.warning("Failed to parse cron job: %s", e)
         return jobs
 
-    async def save_job(self, job: CronJob) -> None:
-        conn = await self._get_conn()
-        new_version = job.version + 1
-        cursor = await conn.execute(
-            "UPDATE cron_jobs SET data = ?, version = ? WHERE id = ? AND version = ?",
-            (job.model_dump_json(), new_version, job.id, job.version),
-        )
-        await conn.commit()
-        if cursor.rowcount == 0:
-            async with conn.execute("SELECT id FROM cron_jobs WHERE id = ?", (job.id,)) as check_cursor:
-                if await check_cursor.fetchone() is None:
+    async def save_job(self, job: CronJob, *, max_retries: int = 3) -> None:
+        async with self._lock:
+            conn = await self._get_conn()
+            for attempt in range(max_retries + 1):
+                new_version = job.version + 1
+                old_version = job.version
+                # Set version before serialize so JSON data matches the column
+                job.version = new_version
+                cursor = await conn.execute(
+                    "UPDATE cron_jobs SET data = ?, version = ? WHERE id = ? AND version = ?",
+                    (job.model_dump_json(), new_version, job.id, old_version),
+                )
+                await conn.commit()
+                if cursor.rowcount > 0:
+                    return  # job.version already updated
+                # Restore version for retry
+                job.version = old_version
+                # Version conflict — check if row exists
+                async with conn.execute(
+                    "SELECT version FROM cron_jobs WHERE id = ?", (job.id,)
+                ) as cur:
+                    row = await cur.fetchone()
+                if row is None:
+                    # Row doesn't exist — insert
+                    job.version = new_version
                     await conn.execute(
                         "INSERT INTO cron_jobs (id, data, version) VALUES (?, ?, ?)",
                         (job.id, job.model_dump_json(), new_version),
                     )
                     await conn.commit()
-                else:
-                    logger.warning(
-                        "Cron job %s version mismatch (expected %d), forcing update",
-                        job.id,
-                        job.version,
+                    return
+                # Row exists but version mismatch — adopt DB column version and retry
+                # On RuntimeError below, job.version is left at old_version (restored above)
+                if attempt >= max_retries:
+                    raise RuntimeError(
+                        f"Optimistic lock conflict for cron job {job.id}: "
+                        f"failed after {max_retries + 1} attempts"
                     )
-                    await conn.execute(
-                        "UPDATE cron_jobs SET data = ?, version = ? WHERE id = ?",
-                        (job.model_dump_json(), new_version, job.id),
-                    )
-                    await conn.commit()
-        job.version = new_version
+                db_version = row[0]
+                job.version = db_version
+                logger.info(
+                    "Retrying save_job for %s (attempt %d/%d, version %d->%d)",
+                    job.id,
+                    attempt + 2,
+                    max_retries + 1,
+                    db_version,
+                    db_version + 1,
+                )
 
     async def remove_job(self, job_id: str) -> bool:
-        conn = await self._get_conn()
-        cursor = await conn.execute("DELETE FROM cron_jobs WHERE id = ?", (job_id,))
-        await conn.commit()
-        return cursor.rowcount > 0
+        async with self._lock:
+            conn = await self._get_conn()
+            cursor = await conn.execute("DELETE FROM cron_jobs WHERE id = ?", (job_id,))
+            await conn.commit()
+            return cursor.rowcount > 0
 
     async def get_job(self, job_id: str) -> Optional[CronJob]:
         conn = await self._get_conn()
@@ -127,6 +150,7 @@ class CronStore:
         last_run_status: Optional[str] = None,
         last_error: Optional[str] = None,
         next_run_at: Optional[float] = None,
+        running_at: Optional[float] = None,
     ) -> None:
         job = await self.get_job(job_id)
         if job is None:
@@ -137,6 +161,7 @@ class CronStore:
             "last_run_status": last_run_status,
             "last_error": last_error,
             "next_run_at": next_run_at,
+            "running_at": running_at,
         }
         for key, val in updates.items():
             if val is not None:

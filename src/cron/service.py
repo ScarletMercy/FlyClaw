@@ -38,11 +38,14 @@ class CronService:
         self._failure_alert_after = 2
         self._last_failure_alert: dict[str, float] = {}
         self._running_jobs: set[str] = set()
+        self._running_tasks: dict[str, asyncio.Task] = {}
         if config:
             self._max_transient_retries = config.cron.max_transient_retries
             self._failure_alert_after = config.cron.failure_alert_after
+            self._shutdown_timeout = config.cron.shutdown_timeout_seconds
         else:
             self._max_transient_retries = 3
+            self._shutdown_timeout = 30.0
 
     async def _execute_fn_raw(self, job):
         return await self.execute_fn(job)
@@ -78,6 +81,28 @@ class CronService:
             tz = "UTC"
         self._scheduler = AsyncIOScheduler(timezone=tz)
         jobs = await self.store.load_jobs()
+
+        # Crash recovery: detect jobs that were running when process died
+        now = time.time()
+        recovered = 0
+        for job in jobs:
+            if job.running_at is not None:
+                stale_seconds = now - job.running_at
+                logger.warning(
+                    "Recovering stale job '%s' (id=%s, stale %.0fs)",
+                    job.name,
+                    job.id,
+                    stale_seconds,
+                )
+                job.running_at = None
+                job.last_run_status = "interrupted"
+                job.last_error = f"Process crashed while running (stale {stale_seconds:.0f}s)"
+                job.consecutive_errors += 1
+                await self.store.save_job(job)
+                recovered += 1
+        if recovered:
+            logger.info("Crash recovery: reset %d stale jobs", recovered)
+
         for job in jobs:
             self._jobs[job.id] = job
             if job.enabled:
@@ -90,11 +115,47 @@ class CronService:
         )
 
     async def stop(self):
+        # 1. Stop the scheduler (prevents new job submissions)
         if self._scheduler:
             self._scheduler.shutdown(wait=False)
             self._scheduler = None
+        # 2. Drain running tasks
+        await self._drain_running_tasks()
+        # 3. Close store
         await self.store.close()
         logger.info("Cron service stopped")
+
+    async def _drain_running_tasks(self):
+        """Wait for running job tasks to complete, with timeout and state persistence."""
+        if not self._running_tasks:
+            return
+        timeout = self._shutdown_timeout
+        logger.info("Draining %d running cron jobs (timeout=%.1fs)", len(self._running_tasks), timeout)
+        try:
+            tasks = list(self._running_tasks.values())
+            done, pending = await asyncio.wait(tasks, timeout=timeout)
+            if pending:
+                logger.warning("%d cron jobs did not finish in time, cancelling", len(pending))
+                for t in pending:
+                    t.cancel()
+                _, still_pending = await asyncio.wait(pending, timeout=5.0)
+                if still_pending:
+                    logger.warning(
+                        "%d cron jobs survived 5s cancel grace period, abandoning",
+                        len(still_pending),
+                    )
+        except Exception as e:
+            logger.error("Error draining cron tasks: %s", e)
+        # Persist state for any jobs still marked as running (for crash recovery on restart)
+        for job_id in list(self._running_jobs):
+            job = self._jobs.get(job_id)
+            if job and job.running_at is not None:
+                try:
+                    await self.store.save_job(job)
+                except Exception as e:
+                    logger.error("Failed to save job %s during drain: %s", job_id, e)
+        self._running_tasks.clear()
+        self._running_jobs.clear()
 
     def _schedule_job(self, job: CronJob):
         if not self._scheduler:
@@ -108,7 +169,7 @@ class CronService:
         try:
             trigger = job.schedule.to_apscheduler_trigger()
             self._scheduler.add_job(
-                self._run_job,
+                self._run_job_tracked,
                 trigger=trigger,
                 id=job_id,
                 args=[job.id],
@@ -137,6 +198,16 @@ class CronService:
             self._scheduler.remove_job(f"cron_{job_id}")
         except JobLookupError:
             pass
+
+    async def _run_job_tracked(self, job_id: str):
+        """Wrapper that registers the running task for graceful shutdown."""
+        task = asyncio.current_task()
+        if task:
+            self._running_tasks[job_id] = task
+        try:
+            await self._run_job(job_id)
+        finally:
+            self._running_tasks.pop(job_id, None)
 
     async def _run_job(self, job_id: str):
         job = self._jobs.get(job_id)
@@ -172,6 +243,7 @@ class CronService:
                 return
 
         self._running_jobs.add(job_id)
+        job.running_at = time.time()
         try:
             logger.info("Executing cron job '%s' (id=%s)", job.name, job.id)
             started_at = time.time()
@@ -281,6 +353,7 @@ class CronService:
             if job.schedule.kind == "at" and job.delete_after_run:
                 await self.remove_job(job.id)
         finally:
+            job.running_at = None
             self._running_jobs.discard(job_id)
 
     def list_jobs(self) -> list[CronJob]:
@@ -359,9 +432,11 @@ class CronService:
                 finished_at=time.time(),
             )
         self._running_jobs.add(job_id)
+        job.running_at = time.time()
         try:
             return await self.execute_fn(job)
         finally:
+            job.running_at = None
             self._running_jobs.discard(job_id)
 
     async def _trigger_dependents(self, completed_job_id: str):
@@ -383,7 +458,7 @@ class CronService:
                     other_id,
                     completed_job_id,
                 )
-                asyncio.create_task(self._run_job(other_id))
+                asyncio.create_task(self._run_job_tracked(other_id))
 
     def status(self) -> dict:
         enabled = sum(1 for j in self._jobs.values() if j.enabled)
@@ -392,3 +467,32 @@ class CronService:
             "total_jobs": len(self._jobs),
             "enabled_jobs": enabled,
         }
+
+    async def reschedule(self):
+        """Reload jobs from store and reschedule. Used during config reload without closing the store."""
+        import zoneinfo
+
+        try:
+            tz = zoneinfo.ZoneInfo("Asia/Shanghai")
+        except Exception:
+            tz = "UTC"
+        self._scheduler = AsyncIOScheduler(timezone=tz)
+        jobs = await self.store.load_jobs()
+        # Crash recovery scan (same logic as start())
+        now = time.time()
+        for job in jobs:
+            if job.running_at is not None:
+                logger.warning("Recovering stale job '%s' during reschedule", job.name)
+                job.running_at = None
+                job.last_run_status = "interrupted"
+                job.last_error = "Job was running during reschedule"
+                # Note: consecutive_errors is NOT incremented here because
+                # reschedule is an operator-initiated action (config reload),
+                # not a job failure. Auto-disable should not be triggered.
+                await self.store.save_job(job)
+        self._jobs = {j.id: j for j in jobs}
+        for job in jobs:
+            if job.enabled:
+                self._schedule_job(job)
+        self._scheduler.start()
+        logger.info("Cron service rescheduled with %d jobs", len(jobs))

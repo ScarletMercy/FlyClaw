@@ -118,6 +118,7 @@ class CronJob(BaseModel):
     last_run_status: Optional[str] = None
     last_error: Optional[str] = None
     next_run_at: Optional[float] = None
+    running_at: Optional[float] = None
     created_at: float = Field(default_factory=lambda: datetime.now().timestamp())
     schema_version: Literal["v1"] = "v1"
     version: int = 0

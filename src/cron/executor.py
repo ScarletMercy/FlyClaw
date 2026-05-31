@@ -73,9 +73,11 @@ async def execute_cron_job(
         try:
             if agent_loop.is_thread_busy(thread_id):
                 defer_minutes = getattr(config.task, "defer_minutes", 5)
-                from datetime import datetime, timedelta, timezone
+                import zoneinfo
+                from datetime import datetime, timedelta
 
-                new_at = (datetime.now(timezone(timedelta(hours=8))) + timedelta(minutes=defer_minutes)).strftime(
+                tz_name = job.schedule.tz or "Asia/Shanghai"
+                new_at = (datetime.now(zoneinfo.ZoneInfo(tz_name)) + timedelta(minutes=defer_minutes)).strftime(
                     "%Y-%m-%d %H:%M:%S"
                 )
                 logger.info("Task checkpoint deferred: thread '%s' is busy, rescheduling to %s", thread_id, new_at)

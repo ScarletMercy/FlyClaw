@@ -341,8 +341,13 @@ class CheckpointManager:
         # Find the commit to keep as new base (--reverse = oldest-first, skip N oldest)
         keep_skip = self._max_per_dir
         r = _git(
-            "rev-list", "--reverse", ref, f"--skip={keep_skip}", "--max-count=1",
-            cwd=str(self._store), env=env,
+            "rev-list",
+            "--reverse",
+            ref,
+            f"--skip={keep_skip}",
+            "--max-count=1",
+            cwd=str(self._store),
+            env=env,
         )
         if r.returncode != 0 or not r.stdout.strip():
             # Fewer than max_per_dir commits — nothing to prune

@@ -308,6 +308,7 @@ class CronConfig(BaseModel):
     store_path: str = "~/.flyclaw/data/cron.db"
     failure_alert_after: int = 2
     max_transient_retries: int = 3
+    shutdown_timeout_seconds: float = 30.0
 
 
 class HubConfig(BaseModel):
