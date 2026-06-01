@@ -1,6 +1,7 @@
 """Tests for AgentLoop — core execution, tool calls, approval, resume, limits."""
 
 import asyncio
+import contextlib
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -531,12 +532,17 @@ class TestInterruptInLoop:
             flag = store.get_interrupt_flag("steer_test")
             flag.steer("change direction")
 
-        asyncio.create_task(run_and_steer())
-        result = await loop.run(state, "steer_test")
+        steer_task = asyncio.create_task(run_and_steer())
+        try:
+            result = await loop.run(state, "steer_test")
 
-        # Check that steer text was injected into a tool message
-        tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
-        assert any("User guidance" in m.get("content", "") for m in tool_msgs)
+            # Check that steer text was injected into a tool message
+            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
+            assert any("User guidance" in m.get("content", "") for m in tool_msgs)
+        finally:
+            steer_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await steer_task
 
     @pytest.mark.asyncio
     async def test_interrupt_during_model_call(self, store, config):

@@ -69,7 +69,7 @@ class CronSchedule(BaseModel):
 
 
 class CronPayload(BaseModel):
-    kind: Literal["system_event", "agent_turn"] = "agent_turn"
+    kind: Literal["system_event", "agent_turn", "direct"] = "agent_turn"
     text: Optional[str] = None
     message: Optional[str] = None
     model: Optional[str] = None
@@ -83,6 +83,8 @@ class CronPayload(BaseModel):
             raise ValueError("Payload kind 'system_event' requires 'text' field")
         if self.kind == "agent_turn" and not self.message:
             raise ValueError("Payload kind 'agent_turn' requires 'message' field")
+        if self.kind == "direct" and not self.message:
+            raise ValueError("Payload kind 'direct' requires 'message' field")
         return self
 
 

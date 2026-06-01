@@ -45,7 +45,7 @@ jobs:
         env:
           UV_INDEX_URL: https://pypi.org/simple/
       - name: Run tests
-        run: uv run pytest tests/ -v --tb=short -x
+        run: uv run pytest tests/ -v --tb=short -x --timeout=60 --timeout-method=thread
 
   docker:
     runs-on: ubuntu-latest

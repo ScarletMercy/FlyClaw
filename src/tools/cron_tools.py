@@ -61,12 +61,13 @@ async def cron_create(
     enabled: bool = True,
     description: str = "",
     depends_on: str = "",
+    payload_kind: Literal["agent_turn", "direct"] = "agent_turn",
 ) -> str:
     """创建定时任务。schedule_kind="cron" 创建循环任务（不会自动删除），需提供 cron_expr；不要用 cron 创建一次性任务。schedule_kind="every" 创建固定间隔任务，需提供 every_seconds。schedule_kind="at" 创建一次性任务（执行后自动删除），需提供 at_time。
 
     Args:
         name: 任务名称
-        message: 任务触发时发送给 agent 的提示词
+        message: payload_kind="direct" 时直接投递此内容给用户；payload_kind="agent_turn" 时作为 agent 任务提示词
         schedule_kind: 调度类型：cron（循环）、every（间隔）、at（一次性）
         cron_expr: Cron 表达式，如 "0 9 * * 1-5"（schedule_kind=cron 时必填）
         every_seconds: 间隔秒数（schedule_kind=every 时必填）
@@ -74,6 +75,7 @@ async def cron_create(
         enabled: 是否启用，默认 true
         description: 任务描述
         depends_on: 逗号分隔的前置任务 ID
+        payload_kind: 执行方式。"direct" 直接投递 message 不经过 agent（适合简单提醒）；"agent_turn" 让 agent 执行任务后投递结果（适合需要推理的任务）。默认 "agent_turn"
     """
     svc = _get_service()
     if not svc:
@@ -97,7 +99,7 @@ async def cron_create(
         every_seconds=every_seconds or None,
         at=at_time or None,
     )
-    payload = CronPayload(kind="agent_turn", message=message)
+    payload = CronPayload(kind=payload_kind, message=message)
     chat_id = _current_chat_id.get("")
     delivery = CronDelivery(mode="announce", to=chat_id) if chat_id else CronDelivery()
     if not chat_id:

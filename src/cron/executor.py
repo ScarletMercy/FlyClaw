@@ -32,6 +32,16 @@ _TRANSIENT_PATTERNS = [
 
 _DEFAULT_TIMEOUT = 600
 _AGENT_TURN_TIMEOUT = 3600
+_SILENT_MARKER = "[SILENT]"
+
+_CRON_EXECUTION_HINT = (
+    "\n\n## 定时任务执行指引\n"
+    "[重要：你正在执行一个定时任务，不是在跟用户聊天。"
+    "你的最终回复将被自动投递给用户。"
+    "不要回复'收到'、'好的'之类的废话，直接产出用户期望看到的内容。"
+    "例如，如果任务是'提醒我起床'，你应该回复类似'该起床了！'这样的提醒文字。"
+    "如果确实没有任何需要报告的内容，回复 [SILENT]（仅此一词）以抑制投递。]"
+)
 
 
 def _is_transient_error(error_str: str) -> bool:
@@ -69,6 +79,8 @@ async def execute_cron_job(
     system_prompt = config.agents.system_prompt
 
     is_task_job = job.name.startswith("task:")
+    if not is_task_job:
+        system_prompt += _CRON_EXECUTION_HINT
     if is_task_job:
         try:
             if agent_loop.is_thread_busy(thread_id):
@@ -126,9 +138,22 @@ async def execute_cron_job(
     if job.payload.kind == "agent_turn":
         timeout = max(timeout, _AGENT_TURN_TIMEOUT)
 
+    if job.payload.kind == "direct":
+        output = job.payload.message or ""
+        finished_at = time.time()
+        if output.strip():
+            await _deliver_result(job, output, channel)
+        return CronRunResult(
+            job_id=job.id,
+            status="success",
+            output=output,
+            started_at=started_at,
+            finished_at=finished_at,
+        )
+
     input_state = None
     if job.payload.kind == "agent_turn":
-        new_msg = {"role": "user", "content": job.payload.message or ""}
+        new_msg = {"role": "user", "content": f"[定时任务触发]\n{job.payload.message or ''}"}
         input_state = AgentState(
             messages=[new_msg],
             system_prompt=system_prompt,
@@ -173,6 +198,9 @@ async def execute_cron_job(
             timeout=timeout,
         )
         output = _extract_assistant_text(result.messages)
+        if output and output.strip().upper().startswith(_SILENT_MARKER):
+            logger.info("Job '%s': agent returned [SILENT], skipping delivery", job.name)
+            output = ""
         finished_at = time.time()
 
         cr = CronRunResult(

@@ -39,11 +39,6 @@ def _screenshot_dir() -> str:
     return str(d)
 
 
-async def _run_sync(fn, *args, **kwargs):
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
-
-
 async def windows_screenshot() -> str:
     """Take a screenshot of the entire screen. Returns the saved file path.
 
@@ -58,7 +53,7 @@ async def windows_screenshot() -> str:
             img = ImageGrab.grab()
             img.save(path)
 
-        await _run_sync(_grab)
+        await asyncio.to_thread(_grab)
         return f"Screenshot saved: {path}"
     except Exception as e:
         return f"Error taking screenshot: {e}"
@@ -73,7 +68,7 @@ async def windows_press(key: str) -> str:
     if pyautogui is None:
         return "Error: pyautogui not available on this platform."
     try:
-        pyautogui.press(key.lower())
+        await asyncio.to_thread(pyautogui.press, key.lower())
         return f"Pressed: {key}"
     except Exception as e:
         return f"Error pressing key: {e}"
@@ -117,7 +112,7 @@ async def windows_hotkey(keys: str) -> str:
             logger.warning(f"[HOTKEY] 被阻止: {blocked}")
             return f"Error: {blocked}，已屏蔽此组合键。"
 
-        pyautogui.hotkey(*key_list)
+        await asyncio.to_thread(pyautogui.hotkey, *key_list)
         logger.info(f"[HOTKEY] 执行完成: {'+'.join(key_list)}")
         return f"Hotkey: {'+'.join(key_list)}"
     except Exception as e:
