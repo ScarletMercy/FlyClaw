@@ -139,6 +139,12 @@ class MessageHandler:
         self._pending_queue: dict[str, list[str]] = {}
         self._interrupted_threads: dict[str, str] = {}
         self._approval_saved_ctx: dict[str, tuple] = {}
+        # Threads that passed the busy check and are about to enter
+        # _run_agent_turn.  Prevents TOCTOU: between the locked() check and
+        # the actual lock.acquire() inside agent_loop.run() there is an await
+        # (load) — without this marker a second coroutine could also pass the
+        # check and race for the lock.
+        self._claiming_threads: set[str] = set()
 
     def _get_channel(self, channel_prefix: str):
         if channel_prefix == "qq":
@@ -331,19 +337,15 @@ class MessageHandler:
                 channel=channel_prefix,
             )
 
-            existing = await self._container.state_store.load(thread_id)
-            if existing:
-                if existing.pending_approval:
-                    await reply_fn("⏳ 有待审批的操作，请先回复审批后再发新消息。")
-                    return
-                input_state.messages = existing.messages + input_state.messages
+            # -- Busy check BEFORE await load() to avoid TOCTOU race ----------
+            # acquire_thread() is async (creates Lock if needed), but once it
+            # returns we can check locked() synchronously — no yield between
+            # the check and the load below, so no other coroutine can slip in.
+            thread_lock = await self._container.state_store.acquire_thread(thread_id)
 
-            # Handle busy agent: interrupt / queue / steer
-            # Also treat as busy when drain_pending is still processing an
-            # interrupted message or queued messages — prevents new messages
-            # from racing in and grabbing the lock before drain runs.
             if (
-                self._container.agent_loop.is_thread_busy(thread_id)
+                thread_lock.locked()
+                or thread_id in self._claiming_threads
                 or thread_id in self._interrupted_threads
                 or thread_id in self._pending_queue
                 or thread_id in self._approval_handler_threads
@@ -356,18 +358,32 @@ class MessageHandler:
                 )
                 return
 
-            await self._run_agent_turn(
-                input_state=input_state,
-                thread_id=thread_id,
-                session_key=session_key,
-                chat_id=chat_id,
-                sender_id=sender_id,
-                chat_type=chat_type,
-                channel_prefix=channel_prefix,
-                reply_fn=reply_fn,
-                system_prompt=system_prompt,
-                original_text=text,
-            )
+            # Soft-claim: mark this thread as "about to run" so that any
+            # coroutine resuming from its own acquire_thread() while we are
+            # inside await load() will see the claim and take the busy path.
+            self._claiming_threads.add(thread_id)
+            try:
+                existing = await self._container.state_store.load(thread_id)
+                if existing:
+                    if existing.pending_approval:
+                        await reply_fn("⏳ 有待审批的操作，请先回复审批后再发新消息。")
+                        return
+                    input_state.messages = existing.messages + input_state.messages
+
+                await self._run_agent_turn(
+                    input_state=input_state,
+                    thread_id=thread_id,
+                    session_key=session_key,
+                    chat_id=chat_id,
+                    sender_id=sender_id,
+                    chat_type=chat_type,
+                    channel_prefix=channel_prefix,
+                    reply_fn=reply_fn,
+                    system_prompt=system_prompt,
+                    original_text=text,
+                )
+            finally:
+                self._claiming_threads.discard(thread_id)
 
         return on_message
 
@@ -956,6 +972,13 @@ class MessageHandler:
             except Exception:
                 pass
         finally:
+            # Guarantee session approval cache is cleared on any exit path
+            # (normal return already cleared by loop.py:375; this catches
+            # timeout / consecutive-deny / exception exits that skip it).
+            try:
+                get_approval_manager().clear_session(thread_id)
+            except Exception:
+                pass
             self._approval_handler_threads.discard(thread_id)
             self._approval_saved_ctx.pop(thread_id, None)
             if drain_ctx is not None:

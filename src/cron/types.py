@@ -6,13 +6,15 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
+_DEFAULT_TZ = "Asia/Shanghai"
+
 
 class CronSchedule(BaseModel):
     kind: Literal["at", "every", "cron"]
     at: Optional[str] = None
     every_seconds: Optional[int] = None
     expr: Optional[str] = None
-    tz: Optional[str] = Field(default="Asia/Shanghai")
+    tz: Optional[str] = Field(default=_DEFAULT_TZ)
 
     @model_validator(mode="after")
     def validate_schedule_fields(self):
@@ -34,7 +36,7 @@ class CronSchedule(BaseModel):
             try:
                 dt = datetime.fromisoformat(raw)
                 if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=zoneinfo.ZoneInfo(self.tz or "Asia/Shanghai"))
+                    dt = dt.replace(tzinfo=zoneinfo.ZoneInfo(self.tz or _DEFAULT_TZ))
                 return DateTrigger(run_date=dt)
             except ValueError:
                 pass
@@ -42,7 +44,7 @@ class CronSchedule(BaseModel):
             for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
                 try:
                     dt = datetime.strptime(raw, fmt)
-                    dt = dt.replace(tzinfo=zoneinfo.ZoneInfo(self.tz or "Asia/Shanghai"))
+                    dt = dt.replace(tzinfo=zoneinfo.ZoneInfo(self.tz or _DEFAULT_TZ))
                     return DateTrigger(run_date=dt)
                 except ValueError:
                     continue

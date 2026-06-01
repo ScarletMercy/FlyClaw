@@ -224,6 +224,15 @@ async def prune_sessions(
             thread_ids_to_remove = [r[0] for r in to_prune]
             placeholders = ",".join("?" for _ in thread_ids_to_remove)
 
+            # Clean up tool cache files for pruned threads
+            try:
+                from src.agent.tool_cache import clear_thread_cache
+
+                for tid in thread_ids_to_remove:
+                    clear_thread_cache(tid)
+            except Exception as e:
+                logger.warning("Tool cache cleanup failed (non-fatal): %s", e)
+
             # Async cleanup session_index.db first (dependent DB; failure here is tolerable)
             if session_index_path:
                 try:

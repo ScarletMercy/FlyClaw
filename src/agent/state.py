@@ -166,6 +166,18 @@ class StateStore:
     async def list_threads(self) -> list[str]:
         return await asyncio.to_thread(self._list_threads_sync)
 
+    # -- Public sync aliases for CLI / non-async callers ------------------
+
+    def load_sync(self, thread_id: str) -> AgentState | None:
+        """Sync wrapper for CLI and other non-async callers."""
+        return self._load_sync(thread_id)
+
+    def list_threads_sync(self) -> list[str]:
+        """Sync wrapper for CLI and other non-async callers."""
+        return self._list_threads_sync()
+
+    # ----------------------------------------------------------------------
+
     def close(self) -> None:
         if self._db:
             self._db.close()

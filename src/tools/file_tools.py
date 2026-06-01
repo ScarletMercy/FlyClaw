@@ -67,6 +67,11 @@ async def read_file(path: str, offset: int = 0, head_limit: int = 500) -> str:
         ext = os.path.splitext(resolved)[1].lower()
         if ext in _BINARY_EXTS:
             return f"Error: binary file: {path}"
+        # Null-byte probe: catch binary files with unknown extensions
+        async with aiofiles.open(resolved, "rb") as raw:
+            chunk = await raw.read(8192)
+            if b"\x00" in chunk:
+                return f"Error: binary file: {path}"
         selected: list[str] = []
         total = 0
         async with aiofiles.open(resolved, "r", encoding="utf-8") as f:

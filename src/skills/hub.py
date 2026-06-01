@@ -106,7 +106,7 @@ async def _guarded_http_get(url: str, *, timeout: int = 20) -> Optional[httpx.Re
     return None
 
 
-def _read_index_cache(key: str) -> Optional[Any]:
+async def _read_index_cache(key: str) -> Optional[Any]:
     cache_file = INDEX_CACHE_DIR / f"{key}.json"
     if not cache_file.exists():
         return None
@@ -114,16 +114,17 @@ def _read_index_cache(key: str) -> Optional[Any]:
         stat = cache_file.stat()
         if time.time() - stat.st_mtime > INDEX_CACHE_TTL:
             return None
-        return json.loads(cache_file.read_text(encoding="utf-8"))
+        return json.loads(await asyncio.to_thread(cache_file.read_text, encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
 
 
-def _write_index_cache(key: str, data: Any) -> None:
+async def _write_index_cache(key: str, data: Any) -> None:
     INDEX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_file = INDEX_CACHE_DIR / f"{key}.json"
     try:
-        cache_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        text = json.dumps(data, ensure_ascii=False)
+        await asyncio.to_thread(cache_file.write_text, text, encoding="utf-8")
     except OSError:
         pass
 
@@ -191,7 +192,7 @@ class SkillsShSource(SkillSource):
             return await self._featured_skills(limit)
 
         cache_key = f"skills_sh_search_{hashlib.md5(f'{query}|{limit}'.encode()).hexdigest()}"
-        cached = _read_index_cache(cache_key)
+        cached = await _read_index_cache(cache_key)
         if cached is not None:
             return [SkillMeta(**item) for item in cached][:limit]
 
@@ -218,7 +219,7 @@ class SkillsShSource(SkillSource):
             if meta:
                 results.append(meta)
 
-        _write_index_cache(cache_key, [_skill_meta_to_dict(m) for m in results])
+        await _write_index_cache(cache_key, [_skill_meta_to_dict(m) for m in results])
         return results
 
     async def fetch(self, identifier: str) -> Optional[SkillBundle]:
@@ -329,7 +330,7 @@ class SkillsShSource(SkillSource):
 
     async def _featured_skills(self, limit: int) -> list[SkillMeta]:
         cache_key = "skills_sh_featured"
-        cached = _read_index_cache(cache_key)
+        cached = await _read_index_cache(cache_key)
         if cached is not None:
             return [SkillMeta(**item) for item in cached][:limit]
 
@@ -367,7 +368,7 @@ class SkillsShSource(SkillSource):
             if len(results) >= limit:
                 break
 
-        _write_index_cache(cache_key, [_skill_meta_to_dict(m) for m in results])
+        await _write_index_cache(cache_key, [_skill_meta_to_dict(m) for m in results])
         return results
 
     def _meta_from_search_item(self, item: dict) -> Optional[SkillMeta]:
@@ -402,7 +403,7 @@ class SkillsShSource(SkillSource):
 
     async def _fetch_detail_page(self, identifier: str) -> Optional[dict]:
         cache_key = f"skills_sh_detail_{hashlib.md5(identifier.encode()).hexdigest()}"
-        cached = _read_index_cache(cache_key)
+        cached = await _read_index_cache(cache_key)
         if isinstance(cached, dict):
             return cached
         try:
@@ -414,7 +415,7 @@ class SkillsShSource(SkillSource):
             return None
         detail = self._parse_detail_page(identifier, resp.text)
         if detail:
-            _write_index_cache(cache_key, detail)
+            await _write_index_cache(cache_key, detail)
         return detail
 
     def _parse_detail_page(self, identifier: str, html: str) -> Optional[dict]:
@@ -497,7 +498,7 @@ class ClawHubSource(SkillSource):
                 return [direct]
 
         cache_key = f"clawhub_search_{hashlib.md5(f'{query}|{limit}'.encode()).hexdigest()}"
-        cached = _read_index_cache(cache_key)
+        cached = await _read_index_cache(cache_key)
         if cached is not None:
             return await self._finalize_search_results(
                 query,
@@ -542,7 +543,7 @@ class ClawHubSource(SkillSource):
             )
 
         final_results = await self._finalize_search_results(query, results, limit)
-        _write_index_cache(cache_key, [_skill_meta_to_dict(s) for s in final_results])
+        await _write_index_cache(cache_key, [_skill_meta_to_dict(s) for s in final_results])
         return final_results
 
     async def fetch(self, identifier: str) -> Optional[SkillBundle]:

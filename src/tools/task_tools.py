@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import logging
 from contextvars import ContextVar
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
+
+from src.utils.tz import get_tz
 from typing import Optional
 
 from src._container import get_container
@@ -47,7 +49,7 @@ def _parse_plan_json(raw: str) -> Optional[dict]:
     return None
 
 
-def _parse_relative_time(at_str: str) -> Optional[str]:
+def _parse_relative_time(at_str: str, tz_name: str = "Asia/Shanghai") -> Optional[str]:
     at_str = at_str.strip()
     try:
         datetime.fromisoformat(at_str)
@@ -57,7 +59,7 @@ def _parse_relative_time(at_str: str) -> Optional[str]:
 
     import re
 
-    now = datetime.now(timezone(timedelta(hours=8)))
+    now = datetime.now(get_tz(tz_name))
 
     m = re.match(r"(\d+)\s*分钟", at_str)
     if m:
@@ -166,17 +168,18 @@ async def _task_plan_impl(goal: str, plan_json: str) -> str:
     if len(active) >= max_parallel:
         return json.dumps({"error": f"已达最大并行任务数 {max_parallel}，请等待现有任务完成或取消"}, ensure_ascii=False)
 
-    now = datetime.now(timezone(timedelta(hours=8)))
+    tz_name = container.config.agents.timezone
+    now = datetime.now(get_tz(tz_name))
     checkpoints = []
     for rc in raw_cps[:20]:
         at_str = str(rc.get("at", ""))
-        resolved = _parse_relative_time(at_str)
+        resolved = _parse_relative_time(at_str, tz_name=tz_name)
         if not resolved:
             continue
         try:
             resolved_dt = datetime.fromisoformat(resolved)
             if resolved_dt.tzinfo is None:
-                resolved_dt = resolved_dt.replace(tzinfo=timezone(timedelta(hours=8)))
+                resolved_dt = resolved_dt.replace(tzinfo=get_tz(tz_name))
             if resolved_dt <= now:
                 continue
         except (ValueError, TypeError):

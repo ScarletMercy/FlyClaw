@@ -208,12 +208,13 @@ class AgentLoop:
         if config and hasattr(config, "tools"):
             gr_cfg = getattr(config.tools, "guardrails", None)
         if gr_cfg and getattr(gr_cfg, "enabled", False):
-            self._guardrails = ToolLoopGuardrails(
+            self._guardrails_defaults = dict(
                 repeat_fail_block=getattr(gr_cfg, "repeat_fail_block", 5),
                 storm_block=getattr(gr_cfg, "storm_block", 8),
             )
         else:
-            self._guardrails = ToolLoopGuardrails()
+            self._guardrails_defaults = {}
+        self._guardrails_map: dict[str, ToolLoopGuardrails] = {}
 
         self._auto_deny_approval: bool = False
 
@@ -251,9 +252,15 @@ class AgentLoop:
             await asyncio.wait_for(lock.acquire(), timeout=timeout)
         except asyncio.TimeoutError:
             raise RuntimeError(f"Thread {thread_id} is busy (lock timeout {timeout}s)")
+        _approval_paused = False
         try:
             return await self._run_inner(state, thread_id, max_rounds)
+        except ApprovalPending:
+            _approval_paused = True
+            raise
         finally:
+            if not _approval_paused:
+                self._cleanup_guardrails(thread_id)
             lock.release()
 
     async def resume(self, thread_id: str, decision: str) -> AgentState:
@@ -271,6 +278,7 @@ class AgentLoop:
         try:
             return await self._resume_inner(thread_id, decision)
         finally:
+            self._cleanup_guardrails(thread_id)
             lock.release()
 
     def get_store(self) -> StateStore:
@@ -282,6 +290,18 @@ class AgentLoop:
     def is_thread_busy(self, thread_id: str) -> bool:
         lock = self._store._locks.get(thread_id)
         return lock is not None and lock.locked()
+
+    def _get_guardrails(self, thread_id: str) -> ToolLoopGuardrails:
+        """Return per-thread guardrails, creating on first access."""
+        gr = self._guardrails_map.get(thread_id)
+        if gr is None:
+            gr = ToolLoopGuardrails(**self._guardrails_defaults)
+            self._guardrails_map[thread_id] = gr
+        return gr
+
+    def _cleanup_guardrails(self, thread_id: str) -> None:
+        """Remove guardrails for a finished thread."""
+        self._guardrails_map.pop(thread_id, None)
 
     # ------------------------------------------------------------------
     # Internals
@@ -324,7 +344,7 @@ class AgentLoop:
         tool_round = 0
         ie = self._store.get_interrupt_flag(thread_id).get_event()
 
-        self._guardrails.reset()
+        self._get_guardrails(thread_id).reset()
 
         for _ in range(max_rounds):
             self._repair_orphan_tool_results(state)
@@ -1042,7 +1062,7 @@ class AgentLoop:
             hint = ", ".join(available[:10])
             return f"[error] Unknown tool: {tool_name}. Available: {hint}{'...' if len(available) > 10 else ''}"
 
-        guard = self._guardrails.check(tool_name, args)
+        guard = self._get_guardrails(thread_id).check(tool_name, args)
         if guard is not None:
             return guard.synthetic_result
 
@@ -1078,7 +1098,9 @@ class AgentLoop:
                 result = redact(result)
             except Exception:
                 pass
-            self._guardrails.record(tool_name, args, success=True, result=result if isinstance(result, str) else "")
+            self._get_guardrails(thread_id).record(
+                tool_name, args, success=True, result=result if isinstance(result, str) else ""
+            )
 
             if tool_name in _SKILL_TOOL_NAMES and self._skill_nudge_interval > 0:
                 self._iters_since_skill = 0
@@ -1104,6 +1126,50 @@ class AgentLoop:
             from src.tools.memory_tools import MemoryDeleteNeedsApproval
 
             if isinstance(e, (ApprovalNeededError, MemoryDeleteNeedsApproval)):
+                # ── 审批绕过检查：owner 等高权限用户可跳过审批 ──
+                try:
+                    bypass_user = await self._resolve_user(state.sender_id)
+                    if bypass_user:
+                        from src.auth.rbac import get_rbac
+
+                        rbac = get_rbac()
+                        if rbac and rbac.check_approval_bypass(bypass_user):
+                            cmd = getattr(e, "command_preview", "") or getattr(e, "command", "")
+
+                            # memory_delete 内部无条件 raise，re-execute 无意义，
+                            # 直接执行删除（与 resume 路径一致）
+                            if isinstance(e, MemoryDeleteNeedsApproval) and e.keys:
+                                from src.tools.memory_tools import get_memory_store
+
+                                mem_store = await get_memory_store()
+                                deleted = []
+                                for k in e.keys:
+                                    await mem_store.forget(k)
+                                    deleted.append(k)
+                                result = json.dumps(
+                                    {"ok": True, "deleted": deleted, "count": len(deleted)},
+                                    ensure_ascii=False,
+                                )
+                            else:
+                                from src.tools.approval import get_approval_manager
+
+                                mgr = get_approval_manager()
+                                mgr.approve_session(thread_id, tool_name, cmd)
+                                result = await tool_def.execute(args)
+
+                            # 审计日志在执行成功后才写入，避免 re-raise 时产生虚假记录
+                            logger.info(
+                                "[approval-bypass] user=%s role=%s tool=%s cmd=%.200s",
+                                bypass_user.user_id,
+                                bypass_user.role.value,
+                                tool_name,
+                                cmd,
+                            )
+                            return result
+                except Exception as exc:
+                    logger.debug("approval bypass check failed, falling back to normal flow: %s", exc)
+
+                # ── 正常审批流程 ──
                 await emit_async(
                     "tool.approval_pending",
                     thread_id=thread_id,
@@ -1113,7 +1179,7 @@ class AgentLoop:
                 )
                 return await self._handle_approval(e, tc, state, thread_id)
             logger.error("Tool %s failed: %s", tool_name, e)
-            self._guardrails.record(tool_name, args, success=False)
+            self._get_guardrails(thread_id).record(tool_name, args, success=False)
 
             await emit_async(
                 "tool.exec_failed",

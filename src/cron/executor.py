@@ -88,7 +88,7 @@ async def execute_cron_job(
                 import zoneinfo
                 from datetime import datetime, timedelta
 
-                tz_name = job.schedule.tz or "Asia/Shanghai"
+                tz_name = job.schedule.tz or getattr(config.agents, "timezone", "UTC")
                 new_at = (datetime.now(zoneinfo.ZoneInfo(tz_name)) + timedelta(minutes=defer_minutes)).strftime(
                     "%Y-%m-%d %H:%M:%S"
                 )

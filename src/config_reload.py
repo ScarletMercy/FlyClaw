@@ -123,7 +123,11 @@ class ReloadExecutor:
             from src.auth.rbac import RBAC
             from src.auth.store import AuthStore
 
+            old_store = self._app.rbac.store if self._app.rbac else None
             store = AuthStore(self._app.config.auth.db_path)
             self._app.rbac = RBAC(store, self._app.config)
+            if old_store:
+                await old_store.close()
+                logger.info("Old AuthStore connection closed on reload")
         except Exception as e:
             logger.warning("Auth reload failed: %s", e)

@@ -144,12 +144,11 @@ class ApprovalManager:
         try:
             await asyncio.wait_for(pending.event.wait(), timeout=effective_timeout)
         except asyncio.TimeoutError:
-            if pending.event.is_set():
-                decision = pending.decision
-            else:
+            if not pending.event.is_set():
                 logger.warning("Approval timed out: %s", request_id)
                 self._pending.pop(request_id, None)
                 return ("timeout", "")
+            # Race: event was set just as timeout fired — fall through to normal path
         decision = pending.decision
         user_response = pending.user_response
         self._pending.pop(request_id, None)

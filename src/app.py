@@ -567,6 +567,19 @@ class ServiceContainer:
 
     async def _start_session_maintenance(self):
         await self.session_tracker.start_periodic_cleanup(self.state_store)
+
+        # Sweep orphaned tool cache dirs left behind by crashes / killed processes
+        if self.state_store:
+            try:
+                from src.agent.tool_cache import clear_orphaned_caches
+
+                live_ids = set(await self.state_store.list_threads())
+                removed = clear_orphaned_caches(live_ids)
+                if removed:
+                    logger.info("启动清理: 移除 %d 个孤立工具缓存目录", removed)
+            except Exception as e:
+                logger.warning("启动时工具缓存清理失败: %s", e)
+
         if self.config.session.auto_prune and self.state_store:
             try:
                 from src.session.pruner import should_prune_now, prune_sessions, vacuum_database
@@ -680,12 +693,21 @@ class ServiceContainer:
             if self.cron_service:
                 await self.cron_service.stop()
             await self.session_tracker.stop()
+            if self.rbac:
+                await self.rbac.store.close()
             if self.qq:
                 await self.qq.stop()
             if self.weixin:
                 await self.weixin.stop()
             if self.state_store:
                 self.state_store.close()
+            # Clear all tool cache temp files on shutdown
+            try:
+                from src.agent.tool_cache import clear_all_caches
+
+                clear_all_caches()
+            except Exception:
+                pass
             if self.session_index:
                 await self.session_index.close()
                 self.session_index = None

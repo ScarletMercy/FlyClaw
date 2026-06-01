@@ -56,16 +56,24 @@ class AuthStore:
         self._path = Path(db_path).expanduser().resolve()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()
+        self._init_lock = asyncio.Lock()
         self._conn: Optional[aiosqlite.Connection] = None
 
     async def _get_conn(self) -> aiosqlite.Connection:
-        if self._conn is None:
-            self._conn = await aiosqlite.connect(str(self._path))
-            self._conn.row_factory = aiosqlite.Row
-            await self._conn.execute("PRAGMA journal_mode=WAL")
-            await self._conn.executescript(_SCHEMA)
-            await self._conn.commit()
-        return self._conn
+        if self._conn is not None:
+            return self._conn
+        async with self._init_lock:
+            # Double-checked locking: 在锁内再次检查，
+            # 防止多个协程同时通过第一次检查后重复创建连接
+            if self._conn is not None:
+                return self._conn
+            conn = await aiosqlite.connect(str(self._path))
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA journal_mode=WAL")
+            await conn.executescript(_SCHEMA)
+            await conn.commit()
+            self._conn = conn
+            return conn
 
     # ── Users ──────────────────────────────────────────────
 

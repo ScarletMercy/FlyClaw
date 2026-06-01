@@ -72,13 +72,15 @@ class CronService:
                 except Exception as e:
                     logger.error("Failed to send failure alert: %s", e)
 
-    async def start(self):
-        import zoneinfo
+    def _get_scheduler_tz(self):
+        """Get the scheduler timezone from config."""
+        from src.utils.tz import get_tz
 
-        try:
-            tz = zoneinfo.ZoneInfo("Asia/Shanghai")
-        except Exception:
-            tz = "UTC"
+        tz_name = (self._config.agents.timezone if self._config else None) or "UTC"
+        return get_tz(tz_name)
+
+    async def start(self):
+        tz = self._get_scheduler_tz()
         self._scheduler = AsyncIOScheduler(timezone=tz)
         jobs = await self.store.load_jobs()
 
@@ -470,12 +472,7 @@ class CronService:
 
     async def reschedule(self):
         """Reload jobs from store and reschedule. Used during config reload without closing the store."""
-        import zoneinfo
-
-        try:
-            tz = zoneinfo.ZoneInfo("Asia/Shanghai")
-        except Exception:
-            tz = "UTC"
+        tz = self._get_scheduler_tz()
         self._scheduler = AsyncIOScheduler(timezone=tz)
         jobs = await self.store.load_jobs()
         # Crash recovery scan (same logic as start())

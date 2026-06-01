@@ -264,12 +264,67 @@ async def get_memory_store(db_path: str = "~/.flyclaw/data/memories.db") -> Memo
 
 
 def auto_extract_memory(user_input: str, ai_response: str) -> Optional[tuple[str, str]]:
+    """从用户输入中提取值得记忆的事实片段。
+
+    匹配到模式后，只返回包含匹配的句子/分句，而非全文。
+    """
     if not user_input or len(user_input.strip()) < 4:
         return None
     for category, pattern in _MEMORY_PATTERNS:
-        if pattern.search(user_input):
-            return user_input.strip(), category
+        m = pattern.search(user_input)
+        if m:
+            # 提取包含匹配的句子/分句，而非整段输入
+            extracted = _extract_matched_clause(user_input, m.start(), m.end())
+            if extracted:  # 防止提取结果为空字符串
+                return extracted, category
     return None
+
+
+def _extract_matched_clause(text: str, match_start: int, match_end: int) -> str:
+    """从文本中提取包含匹配位置的子句/句子。
+
+    优先按标点切分取最短包含匹配的片段；若切分后片段过短（<4字）
+    则向上扩展到前一个分隔符，确保语义完整。
+    """
+    if not text:
+        return text
+
+    def _is_separator(pos: int) -> bool:
+        """判断 pos 位置是否为分句/句子边界。"""
+        ch = text[pos]
+        # 中文句级标点：句号、叹号、问号、分号、换行
+        if ch in "。！？；\n!?;":
+            return True
+        # 中英文逗号
+        if ch in "，,":
+            return True
+        # 英文句号：仅当后面是空格或行尾时视为句子结束
+        # （避免截断 URL、邮箱、版本号中的点号）
+        if ch == ".":
+            if pos + 1 >= len(text):
+                return True
+            if text[pos + 1] == " ":
+                return True
+        return False
+
+    # 从匹配位置向两侧扩展，找到最近的分隔符
+    start = match_start
+    while start > 0 and not _is_separator(start - 1):
+        start -= 1
+    # 跳过紧贴匹配的逗号/分隔符（取分隔符后面的内容）
+    while start < match_start and text[start] in "，,":
+        start += 1
+    end = match_end
+    while end < len(text) and not _is_separator(end):
+        end += 1
+    clause = text[start:end].strip().rstrip("，,")
+    # 如果提取的片段太短（可能只是触发词），扩展到前一个分隔符
+    if len(clause) < 4 and start > 0:
+        prev = start - 1
+        while prev > 0 and not _is_separator(prev - 1):
+            prev -= 1
+        clause = text[prev:end].strip().rstrip("，,")
+    return clause
 
 
 _JUDGE_PROMPT = """\
@@ -377,8 +432,8 @@ async def extract_session_end_memories(
         for msg in user_messages:
             result = auto_extract_memory(msg, "")
             if result:
-                _, category = result
-                await save_memory(msg.strip(), category=category)
+                content, category = result
+                await save_memory(content, category=category)
                 extracted += 1
         return extracted
 

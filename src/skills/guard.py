@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src.security.credential_patterns import CREDENTIAL_PATTERNS
+from src.security import normalize_unicode
 
 from .types import Finding, ScanResult
 
@@ -711,6 +712,7 @@ def scan_file(file_path: Path, rel_path: str = "") -> list[Finding]:
     except (UnicodeDecodeError, OSError):
         return []
 
+    content = normalize_unicode(content)
     findings: list[Finding] = []
     lines = content.split("\n")
     seen: set[tuple[str, int]] = set()

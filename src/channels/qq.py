@@ -169,6 +169,7 @@ class _QQWebSocketClient:
         self._last_seq: Optional[int] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._recv_task: Optional[asyncio.Task] = None
+        self._heartbeat_acked: bool = True
         self._running = False
         self._reconnect_attempts = 0
         self._reconnecting = False  # Guard against concurrent reconnect loops
@@ -295,13 +296,26 @@ class _QQWebSocketClient:
         while self._running:
             try:
                 await asyncio.sleep(interval)
-                if self._ws and self._running:
-                    payload = {"op": OP_HEARTBEAT, "d": self._last_seq}
-                    await self._ws.send(json.dumps(payload))
+                if not self._ws or not self._running:
+                    continue
+
+                # 检查上一个心跳是否收到 ACK
+                if not self._heartbeat_acked:
+                    self._log.warning("Heartbeat ACK timeout, triggering reconnect")
+                    await self._cleanup()
+                    await self._schedule_reconnect()
+                    break
+
+                self._heartbeat_acked = False
+                payload = {"op": OP_HEARTBEAT, "d": self._last_seq}
+                await self._ws.send(json.dumps(payload))
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                self._log.debug("Heartbeat error: %s", e)
+                self._log.warning("Heartbeat error: %s", e)
+                if self._running:
+                    await self._cleanup()
+                    await self._schedule_reconnect()
                 break
 
     def _spawn_task(self, coro) -> asyncio.Task:
@@ -351,7 +365,7 @@ class _QQWebSocketClient:
                             self._log.error("Dispatch handler error for %s: %s", t, e)
 
                 elif op == OP_HEARTBEAT_ACK:
-                    pass
+                    self._heartbeat_acked = True
 
                 elif op == OP_RECONNECT:
                     self._log.warning("QQ gateway requested reconnect")
@@ -386,6 +400,7 @@ class _QQWebSocketClient:
             except asyncio.CancelledError:
                 pass
         self._heartbeat_task = None
+        self._heartbeat_acked = True
         for task in list(self._inflight):
             task.cancel()
         for task in list(self._inflight):

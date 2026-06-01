@@ -10,6 +10,8 @@ import re
 import sys
 from pathlib import Path
 
+from src.security import normalize_unicode
+
 logger = logging.getLogger("flyclaw.prompt")
 
 _CONTEXT_THREAT_PATTERNS: list[tuple[str, str]] = [
@@ -40,12 +42,13 @@ _CONTEXT_INVISIBLE_CHARS = {
 
 
 def _scan_context_content(content: str, filename: str) -> str:
+    scan_text = normalize_unicode(content)
     findings: list[str] = []
     for char in _CONTEXT_INVISIBLE_CHARS:
-        if char in content:
+        if char in scan_text:
             findings.append(f"invisible unicode U+{ord(char):04X}")
     for pattern, pid in _CONTEXT_THREAT_PATTERNS:
-        if re.search(pattern, content, re.IGNORECASE):
+        if re.search(pattern, scan_text, re.IGNORECASE):
             findings.append(pid)
     if findings:
         logger.warning("Context file %s blocked: %s", filename, ", ".join(findings))

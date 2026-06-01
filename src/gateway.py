@@ -138,17 +138,34 @@ async def acp_websocket(ws: WebSocket):
 
 
 class TokenBucketRateLimiter:
+    """令牌桶限速器，带过期 bucket 自动清理。"""
+
+    # bucket 在令牌充满后最多保留这么久（秒），超过即回收
+    _IDLE_TTL = 300  # 5 minutes
+
     def __init__(self, rate: float = 10.0, capacity: int = 20):
         self.rate = rate
         self.capacity = capacity
         self._buckets: dict[str, dict] = {}
         self._lock = asyncio.Lock()
 
+    def _evict_idle(self, now: float) -> None:
+        """删除已充满且闲置超过 _IDLE_TTL 的 bucket。"""
+        expired = [
+            k
+            for k, b in self._buckets.items()
+            if b["tokens"] >= self.capacity and (now - b["last_update"]) > self._IDLE_TTL
+        ]
+        for k in expired:
+            del self._buckets[k]
+
     async def acquire(self, key: str) -> bool:
         async with self._lock:
             now = time.time()
             if key not in self._buckets:
                 self._buckets[key] = {"tokens": self.capacity - 1.0, "last_update": now}
+                # 新 key 加入时顺手清理（摊还，每次调用 O(n) 但 n 被控制在合理范围）
+                self._evict_idle(now)
                 return True
             bucket = self._buckets[key]
             elapsed = now - bucket["last_update"]

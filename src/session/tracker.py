@@ -270,7 +270,7 @@ class SessionRegistry:
             return []
         channel_prefix, _, user_hash = parts
 
-        threads = store._list_threads_sync()
+        threads = store.list_threads_sync()
         registered = set()
         us = self._users.get(user_key)
         if us:
@@ -297,7 +297,7 @@ class SessionRegistry:
             return []
         channel_prefix = parts[0]
 
-        threads = store._list_threads_sync()
+        threads = store.list_threads_sync()
         registered = set()
         us = self._users.get(user_key)
         if us:
