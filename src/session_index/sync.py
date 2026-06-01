@@ -110,7 +110,7 @@ async def startup_sync(
     tool_max_chars: int = 500,
 ) -> int:
     try:
-        thread_ids = await asyncio.to_thread(state_store.list_threads)
+        thread_ids = await state_store.list_threads()
     except Exception as e:
         logger.warning("Failed to list threads: %s", e)
         return 0
@@ -134,7 +134,7 @@ async def startup_sync(
     synced = 0
     for tid in to_sync:
         try:
-            state = await asyncio.to_thread(state_store.load, tid)
+            state = await state_store.load(tid)
             if state is None or not state.messages:
                 continue
 

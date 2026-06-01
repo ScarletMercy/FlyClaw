@@ -102,7 +102,7 @@ class ReloadExecutor:
             from src.skills.prompt import build_skills_prompt
 
             dirs = self._app._build_skill_directories()
-            skills = discover_skills(dirs, self._app.config)
+            skills = await discover_skills(dirs, self._app.config)
             self._app.skills_cache = skills
             self._app.agent_loop._skills_prompt = build_skills_prompt(skills)
 

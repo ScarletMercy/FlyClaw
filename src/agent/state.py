@@ -133,7 +133,7 @@ class StateStore:
 
         await asyncio.to_thread(_do_save)
 
-    def load(self, thread_id: str) -> AgentState | None:
+    def _load_sync(self, thread_id: str) -> AgentState | None:
         assert self._db is not None
         row = self._db.execute(
             "SELECT messages, metadata FROM sessions WHERE thread_id = ?",
@@ -146,19 +146,25 @@ class StateStore:
         meta["messages"] = messages
         return AgentState.model_validate(meta)
 
-    async def aload(self, thread_id: str) -> AgentState | None:
-        return await asyncio.to_thread(self.load, thread_id)
+    async def load(self, thread_id: str) -> AgentState | None:
+        return await asyncio.to_thread(self._load_sync, thread_id)
 
-    def delete(self, thread_id: str) -> bool:
+    def _delete_sync(self, thread_id: str) -> bool:
         assert self._db is not None
         cursor = self._db.execute("DELETE FROM sessions WHERE thread_id = ?", (thread_id,))
         self._db.commit()
         return cursor.rowcount > 0
 
-    def list_threads(self) -> list[str]:
+    async def delete(self, thread_id: str) -> bool:
+        return await asyncio.to_thread(self._delete_sync, thread_id)
+
+    def _list_threads_sync(self) -> list[str]:
         assert self._db is not None
         rows = self._db.execute("SELECT thread_id FROM sessions ORDER BY updated_at DESC").fetchall()
         return [r[0] for r in rows]
+
+    async def list_threads(self) -> list[str]:
+        return await asyncio.to_thread(self._list_threads_sync)
 
     def close(self) -> None:
         if self._db:

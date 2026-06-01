@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
@@ -10,7 +11,6 @@ import shutil
 import time
 import zipfile
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -67,7 +67,7 @@ def _validate_bundle_rel_path(rel_path: str) -> str:
     return _normalize_bundle_path(rel_path, field_name="bundle file path", allow_nested=True)
 
 
-def _guarded_http_get(url: str, *, timeout: int = 20) -> Optional[httpx.Response]:
+async def _guarded_http_get(url: str, *, timeout: int = 20) -> Optional[httpx.Response]:
     try:
         from src.security.url_safety import is_safe_url
 
@@ -79,29 +79,30 @@ def _guarded_http_get(url: str, *, timeout: int = 20) -> Optional[httpx.Response
         pass
 
     current_url = url
-    for _ in range(_MAX_REDIRECTS + 1):
-        try:
-            resp = httpx.get(current_url, timeout=timeout, follow_redirects=False)
-        except httpx.HTTPError:
-            return None
-        if resp.status_code in _REDIRECT_CODES:
-            location = resp.headers.get("location")
-            if not location:
-                return None
-            from urllib.parse import urljoin
-
-            current_url = urljoin(current_url, location)
+    async with httpx.AsyncClient() as client:
+        for _ in range(_MAX_REDIRECTS + 1):
             try:
-                from src.security.url_safety import is_safe_url
-
-                safe, _ = is_safe_url(current_url)
-                if not safe:
-                    logger.warning("Blocked unsafe redirect target: %s", current_url)
+                resp = await client.get(current_url, timeout=timeout, follow_redirects=False)
+            except httpx.HTTPError:
+                return None
+            if resp.status_code in _REDIRECT_CODES:
+                location = resp.headers.get("location")
+                if not location:
                     return None
-            except ImportError:
-                pass
-            continue
-        return resp
+                from urllib.parse import urljoin
+
+                current_url = urljoin(current_url, location)
+                try:
+                    from src.security.url_safety import is_safe_url
+
+                    safe, _ = is_safe_url(current_url)
+                    if not safe:
+                        logger.warning("Blocked unsafe redirect target: %s", current_url)
+                        return None
+                except ImportError:
+                    pass
+                continue
+            return resp
     return None
 
 
@@ -143,11 +144,11 @@ def _skill_meta_to_dict(meta: SkillMeta) -> dict:
 
 class SkillSource(ABC):
     @abstractmethod
-    def search(self, query: str, limit: int = 10) -> list[SkillMeta]: ...
+    async def search(self, query: str, limit: int = 10) -> list[SkillMeta]: ...
     @abstractmethod
-    def fetch(self, identifier: str) -> Optional[SkillBundle]: ...
+    async def fetch(self, identifier: str) -> Optional[SkillBundle]: ...
     @abstractmethod
-    def inspect(self, identifier: str) -> Optional[SkillMeta]: ...
+    async def inspect(self, identifier: str) -> Optional[SkillMeta]: ...
     @abstractmethod
     def source_id(self) -> str: ...
     def trust_level_for(self, identifier: str) -> str:
@@ -185,9 +186,9 @@ class SkillsShSource(SkillSource):
                 return "trusted"
         return "community"
 
-    def search(self, query: str, limit: int = 10) -> list[SkillMeta]:
+    async def search(self, query: str, limit: int = 10) -> list[SkillMeta]:
         if not query.strip():
-            return self._featured_skills(limit)
+            return await self._featured_skills(limit)
 
         cache_key = f"skills_sh_search_{hashlib.md5(f'{query}|{limit}'.encode()).hexdigest()}"
         cached = _read_index_cache(cache_key)
@@ -195,11 +196,12 @@ class SkillsShSource(SkillSource):
             return [SkillMeta(**item) for item in cached][:limit]
 
         try:
-            resp = httpx.get(
-                self.SEARCH_URL,
-                params={"q": query, "limit": limit},
-                timeout=20,
-            )
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    self.SEARCH_URL,
+                    params={"q": query, "limit": limit},
+                    timeout=20,
+                )
             if resp.status_code != 200:
                 return []
             data = resp.json()
@@ -219,7 +221,7 @@ class SkillsShSource(SkillSource):
         _write_index_cache(cache_key, [_skill_meta_to_dict(m) for m in results])
         return results
 
-    def fetch(self, identifier: str) -> Optional[SkillBundle]:
+    async def fetch(self, identifier: str) -> Optional[SkillBundle]:
         canonical = self._normalize_identifier(identifier)
         parts = canonical.split("/", 2)
         if len(parts) < 3:
@@ -227,12 +229,12 @@ class SkillsShSource(SkillSource):
         repo = f"{parts[0]}/{parts[1]}"
         skill_path = parts[2]
 
-        detail = self._fetch_detail_page(canonical)
+        detail = await self._fetch_detail_page(canonical)
         if isinstance(detail, dict):
             repo = detail.get("repo", repo)
 
         for candidate_path in self._candidate_paths(skill_path):
-            files = self._fetch_from_raw(repo, candidate_path)
+            files = await self._fetch_from_raw(repo, candidate_path)
             if files and "SKILL.md" in files:
                 skill_name = candidate_path.rstrip("/").split("/")[-1]
                 return SkillBundle(
@@ -246,7 +248,7 @@ class SkillsShSource(SkillSource):
 
         return None
 
-    def inspect(self, identifier: str) -> Optional[SkillMeta]:
+    async def inspect(self, identifier: str) -> Optional[SkillMeta]:
         canonical = self._normalize_identifier(identifier)
         parts = canonical.split("/", 2)
         if len(parts) < 3:
@@ -254,7 +256,7 @@ class SkillsShSource(SkillSource):
 
         repo = f"{parts[0]}/{parts[1]}"
         skill_path = parts[2]
-        detail = self._fetch_detail_page(canonical)
+        detail = await self._fetch_detail_page(canonical)
         if isinstance(detail, dict):
             repo = detail.get("repo", repo)
             body_summary = detail.get("body_summary")
@@ -302,37 +304,38 @@ class SkillsShSource(SkillSource):
                 unique.append(p)
         return unique
 
-    def _fetch_from_raw(self, repo: str, skill_path: str) -> Optional[dict[str, str]]:
+    async def _fetch_from_raw(self, repo: str, skill_path: str) -> Optional[dict[str, str]]:
         files: dict[str, str] = {}
         for branch in ("main", "master"):
             skill_md_url = f"https://raw.githubusercontent.com/{repo}/{branch}/{skill_path}/SKILL.md"
-            resp = _guarded_http_get(skill_md_url, timeout=15)
+            resp = await _guarded_http_get(skill_md_url, timeout=15)
             if resp and resp.status_code == 200:
                 files["SKILL.md"] = resp.text
-                for ref_candidate in self._try_ref_files(repo, branch, skill_path):
+                for ref_candidate in await self._try_ref_files(repo, branch, skill_path):
                     name, content = ref_candidate
                     files[f"references/{name}"] = content
                 return files
         return None
 
-    def _try_ref_files(self, repo: str, branch: str, skill_path: str) -> list[tuple[str, str]]:
+    async def _try_ref_files(self, repo: str, branch: str, skill_path: str) -> list[tuple[str, str]]:
         results: list[tuple[str, str]] = []
         common_files = ["api.md", "guide.md", "examples.md"]
         for fname in common_files:
             url = f"https://raw.githubusercontent.com/{repo}/{branch}/{skill_path}/references/{fname}"
-            resp = _guarded_http_get(url, timeout=10)
+            resp = await _guarded_http_get(url, timeout=10)
             if resp and resp.status_code == 200:
                 results.append((fname, resp.text))
         return results
 
-    def _featured_skills(self, limit: int) -> list[SkillMeta]:
+    async def _featured_skills(self, limit: int) -> list[SkillMeta]:
         cache_key = "skills_sh_featured"
         cached = _read_index_cache(cache_key)
         if cached is not None:
             return [SkillMeta(**item) for item in cached][:limit]
 
         try:
-            resp = httpx.get(self.BASE_URL, timeout=20)
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(self.BASE_URL, timeout=20)
             if resp.status_code != 200:
                 return []
         except httpx.HTTPError:
@@ -397,13 +400,14 @@ class SkillsShSource(SkillSource):
             extra={"installs": installs, "detail_url": f"{self.BASE_URL}/{canonical}"},
         )
 
-    def _fetch_detail_page(self, identifier: str) -> Optional[dict]:
+    async def _fetch_detail_page(self, identifier: str) -> Optional[dict]:
         cache_key = f"skills_sh_detail_{hashlib.md5(identifier.encode()).hexdigest()}"
         cached = _read_index_cache(cache_key)
         if isinstance(cached, dict):
             return cached
         try:
-            resp = httpx.get(f"{self.BASE_URL}/{identifier}", timeout=20)
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(f"{self.BASE_URL}/{identifier}", timeout=20)
             if resp.status_code != 200:
                 return None
         except httpx.HTTPError:
@@ -485,28 +489,29 @@ class ClawHubSource(SkillSource):
     def trust_level_for(self, identifier: str) -> str:
         return "community"
 
-    def search(self, query: str, limit: int = 10) -> list[SkillMeta]:
+    async def search(self, query: str, limit: int = 10) -> list[SkillMeta]:
         query = query.strip()
         if query:
-            direct = self._exact_slug_meta(query)
+            direct = await self._exact_slug_meta(query)
             if direct:
                 return [direct]
 
         cache_key = f"clawhub_search_{hashlib.md5(f'{query}|{limit}'.encode()).hexdigest()}"
         cached = _read_index_cache(cache_key)
         if cached is not None:
-            return self._finalize_search_results(
+            return await self._finalize_search_results(
                 query,
                 [SkillMeta(**s) for s in cached],
                 limit,
             )
 
         try:
-            resp = httpx.get(
-                f"{self.BASE_URL}/skills",
-                params={"search": query, "limit": limit},
-                timeout=15,
-            )
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{self.BASE_URL}/skills",
+                    params={"search": query, "limit": limit},
+                    timeout=15,
+                )
             if resp.status_code != 200:
                 return []
             data = resp.json()
@@ -536,29 +541,32 @@ class ClawHubSource(SkillSource):
                 )
             )
 
-        final_results = self._finalize_search_results(query, results, limit)
+        final_results = await self._finalize_search_results(query, results, limit)
         _write_index_cache(cache_key, [_skill_meta_to_dict(s) for s in final_results])
         return final_results
 
-    def fetch(self, identifier: str) -> Optional[SkillBundle]:
+    async def fetch(self, identifier: str) -> Optional[SkillBundle]:
         slug = identifier.split("/")[-1]
-        skill_data = self._get_json(f"{self.BASE_URL}/skills/{slug}")
-        if not isinstance(skill_data, dict):
-            return None
+        async with httpx.AsyncClient() as client:
+            skill_data = await self._get_json_async(client, f"{self.BASE_URL}/skills/{slug}")
+            if not isinstance(skill_data, dict):
+                return None
 
-        latest_version = self._resolve_latest_version(slug, skill_data)
-        if not latest_version:
-            return None
+            latest_version = await self._resolve_latest_version_async(client, slug, skill_data)
+            if not latest_version:
+                return None
 
-        files = self._download_zip(slug, latest_version)
-        if "SKILL.md" not in files:
-            version_data = self._get_json(f"{self.BASE_URL}/skills/{slug}/versions/{latest_version}")
-            if isinstance(version_data, dict):
-                files = self._extract_files(version_data) or files
-                if "SKILL.md" not in files:
-                    nested = version_data.get("version", {})
-                    if isinstance(nested, dict):
-                        files = self._extract_files(nested) or files
+            files = await self._download_zip(client, slug, latest_version)
+            if "SKILL.md" not in files:
+                version_data = await self._get_json_async(
+                    client, f"{self.BASE_URL}/skills/{slug}/versions/{latest_version}"
+                )
+                if isinstance(version_data, dict):
+                    files = await self._extract_files_async(client, version_data) or files
+                    if "SKILL.md" not in files:
+                        nested = version_data.get("version", {})
+                        if isinstance(nested, dict):
+                            files = await self._extract_files_async(client, nested) or files
 
         if "SKILL.md" not in files:
             return None
@@ -571,9 +579,10 @@ class ClawHubSource(SkillSource):
             trust_level="community",
         )
 
-    def inspect(self, identifier: str) -> Optional[SkillMeta]:
+    async def inspect(self, identifier: str) -> Optional[SkillMeta]:
         slug = identifier.split("/")[-1]
-        data = self._coerce_skill_payload(self._get_json(f"{self.BASE_URL}/skills/{slug}"))
+        async with httpx.AsyncClient() as client:
+            data = self._coerce_skill_payload(await self._get_json_async(client, f"{self.BASE_URL}/skills/{slug}"))
         if not isinstance(data, dict):
             return None
         tags = self._normalize_tags(data.get("tags", []))
@@ -664,20 +673,20 @@ class ClawHubSource(SkillSource):
             deduped.append(r)
         return deduped
 
-    def _exact_slug_meta(self, query: str) -> Optional[SkillMeta]:
+    async def _exact_slug_meta(self, query: str) -> Optional[SkillMeta]:
         slug = query.strip().split("/")[-1]
         if slug and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", slug):
-            return self.inspect(slug)
+            return await self.inspect(slug)
         return None
 
-    def _finalize_search_results(self, query: str, results: list[SkillMeta], limit: int) -> list[SkillMeta]:
+    async def _finalize_search_results(self, query: str, results: list[SkillMeta], limit: int) -> list[SkillMeta]:
         query_norm = query.strip()
         if not query_norm:
             return self._dedupe_results(results)[:limit]
         filtered = [m for m in results if self._search_score(query_norm, m) > 0]
         filtered.sort(key=lambda m: (-self._search_score(query_norm, m), m.name.lower()))
         filtered = self._dedupe_results(filtered)
-        exact = self._exact_slug_meta(query_norm)
+        exact = await self._exact_slug_meta(query_norm)
         if exact:
             filtered = [m for m in filtered if self._search_score(query_norm, m) >= 20]
             filtered = self._dedupe_results([exact] + filtered)
@@ -685,16 +694,18 @@ class ClawHubSource(SkillSource):
             return filtered[:limit]
         return self._dedupe_results(results)[:limit]
 
-    def _get_json(self, url: str, timeout: int = 20) -> Optional[Any]:
+    async def _get_json_async(self, client: httpx.AsyncClient, url: str, timeout: int = 20) -> Optional[Any]:
         try:
-            resp = httpx.get(url, timeout=timeout)
+            resp = await client.get(url, timeout=timeout)
             if resp.status_code != 200:
                 return None
             return resp.json()
         except (httpx.HTTPError, json.JSONDecodeError):
             return None
 
-    def _resolve_latest_version(self, slug: str, skill_data: dict) -> Optional[str]:
+    async def _resolve_latest_version_async(
+        self, client: httpx.AsyncClient, slug: str, skill_data: dict
+    ) -> Optional[str]:
         latest = skill_data.get("latestVersion")
         if isinstance(latest, dict):
             version = latest.get("version")
@@ -705,7 +716,7 @@ class ClawHubSource(SkillSource):
             latest_tag = tags.get("latest")
             if isinstance(latest_tag, str) and latest_tag:
                 return latest_tag
-        versions_data = self._get_json(f"{self.BASE_URL}/skills/{slug}/versions")
+        versions_data = await self._get_json_async(client, f"{self.BASE_URL}/skills/{slug}/versions")
         if isinstance(versions_data, list) and versions_data:
             first = versions_data[0]
             if isinstance(first, dict):
@@ -714,7 +725,7 @@ class ClawHubSource(SkillSource):
                     return version
         return None
 
-    def _extract_files(self, version_data: dict) -> dict[str, str]:
+    async def _extract_files_async(self, client: httpx.AsyncClient, version_data: dict) -> dict[str, str]:
         files: dict[str, str] = {}
         file_list = version_data.get("files")
         if isinstance(file_list, dict):
@@ -733,17 +744,20 @@ class ClawHubSource(SkillSource):
                 continue
             raw_url = file_meta.get("rawUrl") or file_meta.get("downloadUrl") or file_meta.get("url")
             if isinstance(raw_url, str) and raw_url.startswith("http"):
-                resp = _guarded_http_get(raw_url, timeout=20)
-                if resp and resp.status_code == 200:
-                    files[fname] = resp.text
+                try:
+                    resp = await client.get(raw_url, timeout=20, follow_redirects=True)
+                    if resp.status_code == 200:
+                        files[fname] = resp.text
+                except httpx.HTTPError:
+                    continue
         return files
 
-    def _download_zip(self, slug: str, version: str) -> dict[str, str]:
+    async def _download_zip(self, client: httpx.AsyncClient, slug: str, version: str) -> dict[str, str]:
         files: dict[str, str] = {}
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                resp = httpx.get(
+                resp = await client.get(
                     f"{self.BASE_URL}/download",
                     params={"slug": slug, "version": version},
                     timeout=30,
@@ -756,7 +770,7 @@ class ClawHubSource(SkillSource):
                         retry_after = 5
                     retry_after = min(retry_after, 15)
                     logger.debug("ClawHub rate-limited for %s, retry %ds", slug, retry_after)
-                    time.sleep(retry_after)
+                    await asyncio.sleep(retry_after)
                     continue
                 if resp.status_code != 200:
                     return files
@@ -792,7 +806,7 @@ class UrlSource(SkillSource):
     def trust_level_for(self, identifier: str) -> str:
         return "community"
 
-    def search(self, query: str, limit: int = 10) -> list[SkillMeta]:
+    async def search(self, query: str, limit: int = 10) -> list[SkillMeta]:
         return []
 
     def _matches(self, identifier: str) -> bool:
@@ -807,10 +821,10 @@ class UrlSource(SkillSource):
             return False
         return path.lower().endswith(".md")
 
-    def inspect(self, identifier: str) -> Optional[SkillMeta]:
+    async def inspect(self, identifier: str) -> Optional[SkillMeta]:
         if not self._matches(identifier):
             return None
-        text = self._fetch_text(identifier.strip())
+        text = await self._fetch_text(identifier.strip())
         if text is None:
             return None
         fm = _parse_frontmatter_quick(text)
@@ -825,11 +839,11 @@ class UrlSource(SkillSource):
             path=name or "",
         )
 
-    def fetch(self, identifier: str) -> Optional[SkillBundle]:
+    async def fetch(self, identifier: str) -> Optional[SkillBundle]:
         if not self._matches(identifier):
             return None
         url = identifier.strip()
-        text = self._fetch_text(url)
+        text = await self._fetch_text(url)
         if text is None:
             return None
         fm = _parse_frontmatter_quick(text)
@@ -851,8 +865,8 @@ class UrlSource(SkillSource):
         )
 
     @staticmethod
-    def _fetch_text(url: str) -> Optional[str]:
-        resp = _guarded_http_get(url, timeout=20)
+    async def _fetch_text(url: str) -> Optional[str]:
+        resp = await _guarded_http_get(url, timeout=20)
         if resp and resp.status_code == 200:
             return resp.text
         return None
@@ -1066,7 +1080,7 @@ def create_sources() -> list[SkillSource]:
     return [SkillsShSource(), ClawHubSource(), UrlSource()]
 
 
-def _search_sources(
+async def _search_sources(
     sources: list[SkillSource],
     query: str,
     limit: int,
@@ -1074,24 +1088,16 @@ def _search_sources(
 ) -> list[SkillMeta]:
     if not sources:
         return []
+    tasks = [asyncio.create_task(src.search(query, limit)) for src in sources]
+    done, pending = await asyncio.wait(tasks, timeout=timeout)
+    for p in pending:
+        p.cancel()
     all_results: list[SkillMeta] = []
-    pool = ThreadPoolExecutor(max_workers=min(len(sources), 4))
-    try:
-        futures = {}
-        for src in sources:
-            fut = pool.submit(src.search, query, limit)
-            futures[fut] = src.source_id()
+    for t in done:
         try:
-            for fut in as_completed(futures, timeout=timeout):
-                try:
-                    results = fut.result(timeout=0)
-                    all_results.extend(results)
-                except Exception:
-                    pass
-        except TimeoutError:
+            all_results.extend(t.result())
+        except Exception:
             pass
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
     return all_results
 
 
@@ -1107,7 +1113,7 @@ def _dedup_results(results: list[SkillMeta]) -> list[SkillMeta]:
     return list(seen.values())
 
 
-def parallel_search(
+async def parallel_search(
     sources: list[SkillSource],
     query: str,
     limit: int = 10,
@@ -1126,11 +1132,11 @@ def parallel_search(
     primary = [s for s in active if s.source_id() in ("clawhub", "url")]
     fallback = [s for s in active if s.source_id() not in ("clawhub", "url")]
 
-    primary_results = _search_sources(primary, query, limit, timeout)
+    primary_results = await _search_sources(primary, query, limit, timeout)
     if primary_results:
         return _dedup_results(primary_results)[:limit]
 
-    fallback_results = _search_sources(fallback, query, limit, timeout)
+    fallback_results = await _search_sources(fallback, query, limit, timeout)
     return _dedup_results(fallback_results)[:limit]
 
 

@@ -74,7 +74,7 @@ class TestApplyToolPolicy:
         assert len(result) == 1
         assert result[0].name == "web_search"
 
-    def test_rbac_filtering_with_user(self, tmp_path):
+    async def test_rbac_filtering_with_user(self, tmp_path):
         """When user is passed, RBAC filtering is applied."""
         from src.auth.models import User, UserRole
         from src.auth.rbac import RBAC
@@ -96,9 +96,9 @@ class TestApplyToolPolicy:
             # Guest has no tools allowed by RBAC
             assert len(result) == 0
 
-        store.close()
+        await store.close()
 
-    def test_rbac_allows_owner_all_tools(self, tmp_path):
+    async def test_rbac_allows_owner_all_tools(self, tmp_path):
         from src.auth.models import User, UserRole
         from src.auth.rbac import RBAC
         from src.auth.store import AuthStore
@@ -118,4 +118,4 @@ class TestApplyToolPolicy:
             result = apply_tool_policy(tools, config=config, user=owner)
             assert len(result) == 3
 
-        store.close()
+        await store.close()

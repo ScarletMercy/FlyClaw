@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import fnmatch
-import io
 import logging
 import os
-import threading
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
+
+import aiofiles
+import aiofiles.os
 
 logger = logging.getLogger("flyclaw.file_tools")
 
 _BASE_DIR = os.path.abspath(os.environ.get("FLYCLAW_WORKSPACE", "."))
-_edit_condition = threading.Condition()
+_edit_condition = asyncio.Condition()
 
 
 def set_workspace(path: str):
@@ -47,7 +49,7 @@ def _resolve_path(path: str) -> str:
     raise ValueError(f"当前为沙盒模式，无法访问工作目录之外的路径：{path}（允许范围：{_BASE_DIR}、{cache_root}）")
 
 
-def read_file(path: str, offset: int = 0, head_limit: int = 500) -> str:
+async def read_file(path: str, offset: int = 0, head_limit: int = 500) -> str:
     """Read file contents. Returns specified line range.
 
     Args:
@@ -65,21 +67,18 @@ def read_file(path: str, offset: int = 0, head_limit: int = 500) -> str:
         ext = os.path.splitext(resolved)[1].lower()
         if ext in _BINARY_EXTS:
             return f"Error: binary file: {path}"
-        # Open once; null-byte probe + text reading share the same handle
         selected: list[str] = []
         total = 0
-        with open(resolved, "rb") as raw:
-            chunk = raw.read(8192)
-            if b"\x00" in chunk:
-                return f"Error: binary file: {path}"
-            raw.seek(0)
-            f = io.TextIOWrapper(raw, encoding="utf-8")
-            for idx, line in enumerate(f):
+        async with aiofiles.open(resolved, "r", encoding="utf-8") as f:
+            idx = 0
+            async for line in f:
                 total += 1
                 if idx < offset:
+                    idx += 1
                     continue
                 if len(selected) < head_limit:
                     selected.append(line)
+                idx += 1
         if total == 0:
             return f"File: {path} (empty, 0 lines)"
         if offset >= total:
@@ -100,7 +99,7 @@ def read_file(path: str, offset: int = 0, head_limit: int = 500) -> str:
         return f"Error reading {path}: {e}"
 
 
-def write_file(path: str, content: str) -> str:
+async def write_file(path: str, content: str) -> str:
     """Write content to a file. Creates parent directories if needed.
 
     Args:
@@ -113,16 +112,16 @@ def write_file(path: str, content: str) -> str:
         return f"Error: {e}"
     from src.tools.snapshot import snapshot_before_write
 
-    snapshot_before_write(_BASE_DIR)
-    with _edit_condition:
+    await asyncio.to_thread(snapshot_before_write, _BASE_DIR)
+    async with _edit_condition:
         try:
             parent = os.path.dirname(resolved)
             if parent:
-                os.makedirs(parent, exist_ok=True)
-            with open(resolved, "w", encoding="utf-8") as f:
-                f.write(content)
-                f.flush()
-                os.fsync(f.fileno())
+                await aiofiles.os.makedirs(parent, exist_ok=True)
+            async with aiofiles.open(resolved, "w", encoding="utf-8") as f:
+                await f.write(content)
+                await f.flush()
+                await asyncio.to_thread(os.fsync, f.fileno())
             _edit_condition.notify_all()
             lines = content.count("\n") + (0 if content.endswith("\n") else 1)
             return f"Written {lines} lines to {path}"
@@ -132,7 +131,7 @@ def write_file(path: str, content: str) -> str:
             return f"Error writing {path}: {e}"
 
 
-def edit_file(path: str, old_string: str, new_string: str) -> str:
+async def edit_file(path: str, old_string: str, new_string: str) -> str:
     """Replace a specific text segment in a file with new text.
 
     Args:
@@ -146,14 +145,14 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
         return f"Error: {e}"
     from src.tools.snapshot import snapshot_before_write
 
-    snapshot_before_write(_BASE_DIR)
-    with _edit_condition:
-        if not _edit_condition.wait_for(lambda: os.path.exists(resolved), timeout=10.0):
+    await asyncio.to_thread(snapshot_before_write, _BASE_DIR)
+    async with _edit_condition:
+        if not await _edit_condition.wait_for(lambda: os.path.exists(resolved), timeout=10.0):
             return f"Error: file not found: {path} (resolved to: {resolved}, workspace: {_BASE_DIR})"
 
         try:
-            with open(resolved, "r", encoding="utf-8") as f:
-                content = f.read()
+            async with aiofiles.open(resolved, "r", encoding="utf-8") as f:
+                content = await f.read()
         except FileNotFoundError:
             return f"Error: file not found: {path} (resolved to: {resolved}, workspace: {_BASE_DIR})"
         except Exception as e:
@@ -167,8 +166,8 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
 
         new_content = content.replace(old_string, new_string, 1)
         try:
-            with open(resolved, "w", encoding="utf-8") as f:
-                f.write(new_content)
+            async with aiofiles.open(resolved, "w", encoding="utf-8") as f:
+                await f.write(new_content)
             old_lines = old_string.count("\n") + 1
             new_lines = new_string.count("\n") + 1
             return f"Replaced {old_lines} lines with {new_lines} lines in {path}"
@@ -176,7 +175,7 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
             return f"Error writing {path}: {e}"
 
 
-def list_dir(path: str = ".") -> str:
+async def list_dir(path: str = ".") -> str:
     """List directory contents.
 
     Args:
@@ -187,16 +186,16 @@ def list_dir(path: str = ".") -> str:
     except ValueError as e:
         return f"Error: {e}"
     try:
-        entries = sorted(os.listdir(resolved))
+        entries = sorted(await aiofiles.os.listdir(resolved))
         if not entries:
             return f"Directory {path} is empty"
         lines = []
         for name in entries:
             full = os.path.join(resolved, name)
-            if os.path.isdir(full):
+            if await aiofiles.os.path.isdir(full):
                 lines.append(f"  {name}/")
-            elif os.path.isfile(full):
-                size = os.path.getsize(full)
+            elif await aiofiles.os.path.isfile(full):
+                size = (await aiofiles.os.stat(full)).st_size
                 if size > 1024 * 1024:
                     lines.append(f"  {name}  ({size / 1024 / 1024:.1f}MB)")
                 elif size > 1024:
@@ -286,13 +285,13 @@ def _is_binary(filepath: str) -> bool:
         return True
 
 
-def _path_not_found_hint(path: str, resolved: str) -> str:
+async def _path_not_found_hint(path: str, resolved: str) -> str:
     parent = os.path.dirname(resolved)
     basename = os.path.basename(path)
     hint = ""
-    if os.path.isdir(parent):
+    if await aiofiles.os.path.isdir(parent):
         try:
-            entries = sorted(os.listdir(parent))
+            entries = sorted(await aiofiles.os.listdir(parent))
         except OSError:
             entries = []
         lower_b = basename.lower()
@@ -302,7 +301,7 @@ def _path_not_found_hint(path: str, resolved: str) -> str:
     return f"Error: 路径不存在: {path}{hint}"
 
 
-def grep(
+async def grep(
     pattern: str,
     path: str = ".",
     glob_pattern: str = "*",
@@ -320,10 +319,10 @@ def grep(
         offset: 跳过前 N 条结果（默认 0）
         output_mode: "content" 显示匹配行，"files_with_matches" 仅列出匹配的文件路径
     """
-    return _grep_impl(pattern, path, glob_pattern, head_limit, offset, output_mode)
+    return await _grep_impl(pattern, path, glob_pattern, head_limit, offset, output_mode)
 
 
-def glob(pattern: str = "*", path: str = ".", head_limit: int = 50, offset: int = 0) -> str:
+async def glob(pattern: str = "*", path: str = ".", head_limit: int = 50, offset: int = 0) -> str:
     """按文件名模式递归搜索文件（glob 模式，按修改时间倒序）。
 
     Args:
@@ -332,10 +331,10 @@ def glob(pattern: str = "*", path: str = ".", head_limit: int = 50, offset: int 
         head_limit: 最大返回条数（默认 50）
         offset: 跳过前 N 条结果（默认 0）
     """
-    return _glob_impl(pattern, path, head_limit, offset)
+    return await _glob_impl(pattern, path, head_limit, offset)
 
 
-def _grep_impl(
+async def _grep_impl(
     pattern: str,
     path: str = ".",
     glob_pattern: str = "*",
@@ -347,8 +346,8 @@ def _grep_impl(
         resolved = _resolve_path(path)
     except ValueError as e:
         return f"Error: {e}"
-    if not os.path.exists(resolved):
-        return _path_not_found_hint(path, resolved)
+    if not await aiofiles.os.path.exists(resolved):
+        return await _path_not_found_hint(path, resolved)
 
     import re
 
@@ -358,23 +357,26 @@ def _grep_impl(
         return f"Error: invalid regex pattern: {e}"
 
     # Single file path — search directly
-    if os.path.isfile(resolved):
-        if _is_binary(resolved):
+    if await aiofiles.os.path.isfile(resolved):
+        if await asyncio.to_thread(_is_binary, resolved):
             return f"Error: binary file: {path}"
         basename = os.path.basename(resolved)
         if output_mode == "files_with_matches":
             try:
-                with open(resolved, "r", encoding="utf-8", errors="ignore") as f:
-                    if any(regex.search(line) for line in f):
-                        return f"Found 1 of 1 file(s) matching pattern in {path}:\n  {basename}"
+                async with aiofiles.open(resolved, "r", encoding="utf-8", errors="ignore") as f:
+                    async for line in f:
+                        if regex.search(line):
+                            return f"Found 1 of 1 file(s) matching pattern in {path}:\n  {basename}"
             except (PermissionError, OSError):
                 return f"Error: permission denied: {path}"
             return f"No files matching '{pattern}'"
 
         results = []
         try:
-            with open(resolved, "r", encoding="utf-8", errors="ignore") as f:
-                for i, line in enumerate(f, 1):
+            async with aiofiles.open(resolved, "r", encoding="utf-8", errors="ignore") as f:
+                i = 0
+                async for line in f:
+                    i += 1
                     if regex.search(line):
                         results.append(f"{basename}:{i}: {line.rstrip()[:200]}")
                         if len(results) >= _GREP_HARD_LIMIT:
@@ -393,40 +395,47 @@ def _grep_impl(
             suffix = f"\n... (截断，共 {total} 条，可用 offset={offset + head_limit} 查看更多)"
         return header + "\n".join(page) + suffix
 
-    if not os.path.isdir(resolved):
+    if not await aiofiles.os.path.isdir(resolved):
         return f"Error: not a file or directory: {path}"
 
     if output_mode == "files_with_matches":
-        return _grep_files_with_matches(regex, resolved, path, glob_pattern, head_limit, offset, pattern=pattern)
+        return await _grep_files_with_matches(regex, resolved, path, glob_pattern, head_limit, offset, pattern=pattern)
 
-    results = []
-    truncated = False
-    try:
-        for root, dirs, files in os.walk(resolved):
-            if truncated:
-                break
-            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _EXCLUDED_DIRS]
-            for fname in files:
+    # Directory walk — run in thread to avoid blocking event loop
+    def _walk_grep():
+        results = []
+        truncated = False
+        try:
+            for root, dirs, files in os.walk(resolved):
                 if truncated:
                     break
-                if not fnmatch.fnmatch(fname, glob_pattern):
-                    continue
-                filepath = os.path.join(root, fname)
-                if _is_binary(filepath):
-                    continue
-                rel = os.path.relpath(filepath, resolved)
-                try:
-                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                        for i, line in enumerate(f, 1):
-                            if regex.search(line):
-                                results.append(f"{rel}:{i}: {line.rstrip()[:200]}")
-                                if len(results) >= _GREP_HARD_LIMIT:
-                                    truncated = True
-                                    break
-                except (PermissionError, OSError):
-                    continue
-    except Exception as e:
-        return f"Error searching: {e}"
+                dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _EXCLUDED_DIRS]
+                for fname in files:
+                    if truncated:
+                        break
+                    if not fnmatch.fnmatch(fname, glob_pattern):
+                        continue
+                    filepath = os.path.join(root, fname)
+                    if _is_binary(filepath):
+                        continue
+                    rel = os.path.relpath(filepath, resolved)
+                    try:
+                        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                            for i, line in enumerate(f, 1):
+                                if regex.search(line):
+                                    results.append(f"{rel}:{i}: {line.rstrip()[:200]}")
+                                    if len(results) >= _GREP_HARD_LIMIT:
+                                        truncated = True
+                                        break
+                    except (PermissionError, OSError):
+                        continue
+        except Exception as e:
+            return results, truncated, str(e)
+        return results, truncated, None
+
+    results, truncated, error = await asyncio.to_thread(_walk_grep)
+    if error:
+        return f"Error searching: {error}"
 
     total = len(results)
     if not total:
@@ -443,34 +452,40 @@ def _grep_impl(
     return header + "\n".join(page) + suffix
 
 
-def _grep_files_with_matches(
+async def _grep_files_with_matches(
     regex, resolved: str, path: str, glob_pattern: str, head_limit: int, offset: int, pattern: str = ""
 ) -> str:
-    files = []
-    try:
-        for root, dirs, fnames in os.walk(resolved):
-            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _EXCLUDED_DIRS]
-            for fname in fnames:
-                if not fnmatch.fnmatch(fname, glob_pattern):
-                    continue
-                filepath = os.path.join(root, fname)
-                if _is_binary(filepath):
-                    continue
-                try:
-                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                        for line in f:
-                            if regex.search(line):
-                                rel = os.path.relpath(filepath, resolved)
-                                files.append(rel)
-                                break
-                except (PermissionError, OSError):
-                    continue
+    def _walk():
+        files = []
+        try:
+            for root, dirs, fnames in os.walk(resolved):
+                dirs[:] = [d for d in dirs if not d.startswith(".") and d not in _EXCLUDED_DIRS]
+                for fname in fnames:
+                    if not fnmatch.fnmatch(fname, glob_pattern):
+                        continue
+                    filepath = os.path.join(root, fname)
+                    if _is_binary(filepath):
+                        continue
+                    try:
+                        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                            for line in f:
+                                if regex.search(line):
+                                    rel = os.path.relpath(filepath, resolved)
+                                    files.append(rel)
+                                    break
+                    except (PermissionError, OSError):
+                        continue
+                    if len(files) >= _GREP_HARD_LIMIT:
+                        break
                 if len(files) >= _GREP_HARD_LIMIT:
                     break
-            if len(files) >= _GREP_HARD_LIMIT:
-                break
-    except Exception as e:
-        return f"Error searching: {e}"
+        except Exception as e:
+            return files, str(e)
+        return files, None
+
+    files, error = await asyncio.to_thread(_walk)
+    if error:
+        return f"Error searching: {error}"
 
     total = len(files)
     if not total:
@@ -487,52 +502,56 @@ def _grep_files_with_matches(
     return header + "\n".join(f"  {f}" for f in page) + suffix
 
 
-def _glob_impl(pattern: str, path: str = ".", head_limit: int = 50, offset: int = 0) -> str:
+async def _glob_impl(pattern: str, path: str = ".", head_limit: int = 50, offset: int = 0) -> str:
     try:
         resolved = _resolve_path(path)
     except ValueError as e:
         return f"Error: {e}"
-    if not os.path.exists(resolved):
-        return _path_not_found_hint(path, resolved)
-    if not os.path.isdir(resolved):
+    if not await aiofiles.os.path.exists(resolved):
+        return await _path_not_found_hint(path, resolved)
+    if not await aiofiles.os.path.isdir(resolved):
         return f"Error: not a directory: {path}"
-    try:
-        all_matches = []
-        truncated = False
-        for m in Path(resolved).rglob(pattern):
-            parts = m.relative_to(resolved).parts
-            if any(p.startswith(".") and p not in (".", "..") for p in parts):
-                continue
-            if any(p in _EXCLUDED_DIRS for p in parts):
-                continue
-            all_matches.append(m)
-            if len(all_matches) >= _GLOB_HARD_LIMIT:
-                truncated = True
-                break
-        if not all_matches:
-            return f"No files matched '{pattern}' in {path}"
-        all_matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-        total = len(all_matches)
-        if offset >= total:
-            return f"Error: offset {offset} exceeds total matches ({total})"
-        page = all_matches[offset : offset + head_limit]
-        lines = []
-        for m in page:
-            rel = str(m.relative_to(resolved))
-            if m.is_dir():
-                lines.append(f"  {rel}/")
-            else:
-                size = m.stat().st_size
-                lines.append(f"  {rel}  ({size}B)")
-        header = f"Found {len(page)} of {total} match(es) for '{pattern}':\n"
-        suffix = ""
-        if truncated:
-            suffix = f"\n... (结果过多，仅收集前 {total} 条，可用更精确的 pattern 缩小范围)"
-        elif offset + head_limit < total:
-            suffix = f"\n... (截断，共 {total} 条，可用 offset={offset + head_limit} 查看更多)"
-        return header + "\n".join(lines) + suffix
-    except Exception as e:
-        return f"Error: {e}"
+
+    def _do_glob():
+        try:
+            all_matches = []
+            truncated = False
+            for m in Path(resolved).rglob(pattern):
+                parts = m.relative_to(resolved).parts
+                if any(p.startswith(".") and p not in (".", "..") for p in parts):
+                    continue
+                if any(p in _EXCLUDED_DIRS for p in parts):
+                    continue
+                all_matches.append(m)
+                if len(all_matches) >= _GLOB_HARD_LIMIT:
+                    truncated = True
+                    break
+            if not all_matches:
+                return f"No files matched '{pattern}' in {path}"
+            all_matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            total = len(all_matches)
+            if offset >= total:
+                return f"Error: offset {offset} exceeds total matches ({total})"
+            page = all_matches[offset : offset + head_limit]
+            lines = []
+            for m in page:
+                rel = str(m.relative_to(resolved))
+                if m.is_dir():
+                    lines.append(f"  {rel}/")
+                else:
+                    size = m.stat().st_size
+                    lines.append(f"  {rel}  ({size}B)")
+            header = f"Found {len(page)} of {total} match(es) for '{pattern}':\n"
+            suffix = ""
+            if truncated:
+                suffix = f"\n... (结果过多，仅收集前 {total} 条，可用更精确的 pattern 缩小范围)"
+            elif offset + head_limit < total:
+                suffix = f"\n... (截断，共 {total} 条，可用 offset={offset + head_limit} 查看更多)"
+            return header + "\n".join(lines) + suffix
+        except Exception as e:
+            return f"Error: {e}"
+
+    return await asyncio.to_thread(_do_glob)
 
 
 def get_tools() -> list:

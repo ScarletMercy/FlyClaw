@@ -15,6 +15,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal, Optional
 
+import aiofiles
+import aiofiles.os
+
 from src.skills.loader import load_skill
 from src.skills.types import Skill, SkillMetadata
 
@@ -80,7 +83,7 @@ class SkillManager:
         self.skills_dir = skills_dir
         self.skills_dir.mkdir(parents=True, exist_ok=True)
 
-    def create_skill(
+    async def create_skill(
         self,
         name: str,
         description: str,
@@ -100,7 +103,7 @@ class SkillManager:
 
         # 检查是否已存在
         skill_dir = self.skills_dir / name
-        if skill_dir.exists():
+        if await aiofiles.os.path.exists(skill_dir):
             return None, f"Skill already exists: {name}"
 
         # 安全检查
@@ -116,17 +119,18 @@ class SkillManager:
         # 创建 SKILL.md
         skill_md = skill_dir / "SKILL.md"
         frontmatter = _format_skill_frontmatter(name, description, category)
-        skill_md.write_text(frontmatter + content, encoding="utf-8")
+        async with aiofiles.open(skill_md, "w", encoding="utf-8") as f:
+            await f.write(frontmatter + content)
 
         # 加载并返回
-        skill = load_skill(skill_dir, "user")
+        skill = await load_skill(skill_dir, "user")
         if skill:
             # 记录创建信息
-            self._record_usage(name, created_by=created_by)
+            await self._record_usage(name, created_by=created_by)
             return skill, None
         return None, "Failed to load created skill"
 
-    def edit_skill(
+    async def edit_skill(
         self,
         name: str,
         content: str,
@@ -140,7 +144,7 @@ class SkillManager:
         skill_dir = self.skills_dir / name
         skill_md = skill_dir / "SKILL.md"
 
-        if not skill_md.exists():
+        if not await aiofiles.os.path.exists(skill_md):
             return None, f"Skill not found: {name}"
 
         # 安全检查
@@ -149,23 +153,24 @@ class SkillManager:
             logger.warning("Injection warning for skill edit '%s': %s", name, injection_warning)
 
         # 读取现有 frontmatter
-        existing = load_skill(skill_dir, "user")
+        existing = await load_skill(skill_dir, "user")
         if not existing:
             return None, "Failed to load existing skill"
 
         # 更新内容
         desc = description or existing.description
         frontmatter = _format_skill_frontmatter(name, desc, "")
-        skill_md.write_text(frontmatter + content, encoding="utf-8")
+        async with aiofiles.open(skill_md, "w", encoding="utf-8") as f:
+            await f.write(frontmatter + content)
 
         # 重新加载
-        skill = load_skill(skill_dir, "user")
+        skill = await load_skill(skill_dir, "user")
         if skill:
-            self._record_usage(name, action="edited")
+            await self._record_usage(name, action="edited")
             return skill, None
         return None, "Failed to reload edited skill"
 
-    def delete_skill(self, name: str) -> tuple[bool, Optional[str]]:
+    async def delete_skill(self, name: str) -> tuple[bool, Optional[str]]:
         """删除技能（仅用户创建的）。
 
         Returns:
@@ -175,11 +180,11 @@ class SkillManager:
         base = str(self.skills_dir.resolve()) + os.sep
         if not (str(skill_dir) + os.sep).startswith(base):
             return False, f"Invalid skill name: {name}"
-        if not skill_dir.exists():
+        if not await aiofiles.os.path.exists(skill_dir):
             return False, f"Skill not found: {name}"
 
         # 检查来源（只允许删除用户技能）
-        skill = load_skill(skill_dir, "user")
+        skill = await load_skill(skill_dir, "user")
         if skill and skill.source not in ("user", "agents-project"):
             return False, f"Cannot delete system skill: {name}"
 
@@ -187,24 +192,24 @@ class SkillManager:
 
         try:
             shutil.rmtree(skill_dir)
-            self._record_usage(name, action="deleted")
+            await self._record_usage(name, action="deleted")
             return True, None
         except Exception as e:
             return False, f"Failed to delete skill: {str(e)}"
 
-    def list_skills(self) -> list[Skill]:
+    async def list_skills(self) -> list[Skill]:
         """列出所有用户技能。"""
         from src.skills.loader import discover_skills
         from src._container import get_container
 
-        if not self.skills_dir.exists():
+        if not await aiofiles.os.path.exists(self.skills_dir):
             return []
 
         container = get_container()
-        skills = discover_skills([("user", self.skills_dir)], container.config)
+        skills = await discover_skills([("user", self.skills_dir)], container.config)
         return skills
 
-    def patch_skill(
+    async def patch_skill(
         self,
         name: str,
         old_string: str,
@@ -214,7 +219,7 @@ class SkillManager:
     ) -> tuple[bool, Optional[str]]:
         """Targeted find-and-replace in SKILL.md or a supporting file."""
         skill_dir = self.skills_dir / name
-        if not skill_dir.exists():
+        if not await aiofiles.os.path.exists(skill_dir):
             return False, f"Skill not found: {name}"
 
         target = skill_dir / "SKILL.md"
@@ -222,13 +227,14 @@ class SkillManager:
             resolved = (skill_dir / file_path).resolve()
             if not resolved.is_relative_to(skill_dir.resolve()):
                 return False, "Path traversal not allowed"
-            if not resolved.parent.exists():
+            if not await aiofiles.os.path.exists(resolved.parent):
                 resolved.parent.mkdir(parents=True, exist_ok=True)
             target = resolved
-        if not target.exists():
+        if not await aiofiles.os.path.exists(target):
             return False, f"File not found: {file_path or 'SKILL.md'}"
 
-        content = target.read_text(encoding="utf-8")
+        async with aiofiles.open(target, encoding="utf-8") as f:
+            content = await f.read()
         if old_string not in content:
             return False, f"old_string not found in {target.name}"
 
@@ -237,11 +243,12 @@ class SkillManager:
             return False, f"Found {count} matches; set replace_all=True or provide more context"
 
         new_content = content.replace(old_string, new_string)
-        target.write_text(new_content, encoding="utf-8")
-        self.bump_patch(name)
+        async with aiofiles.open(target, "w", encoding="utf-8") as f:
+            await f.write(new_content)
+        await self.bump_patch(name)
         return True, None
 
-    def write_supporting_file(
+    async def write_supporting_file(
         self,
         name: str,
         file_path: str,
@@ -249,7 +256,7 @@ class SkillManager:
     ) -> tuple[bool, Optional[str]]:
         """Write a supporting file under a skill (references/templates/scripts/assets)."""
         skill_dir = self.skills_dir / name
-        if not skill_dir.exists():
+        if not await aiofiles.os.path.exists(skill_dir):
             return False, f"Skill not found: {name}"
         parts = Path(file_path).parts
         if not parts or parts[0] not in SUPPORTING_DIRS:
@@ -258,48 +265,51 @@ class SkillManager:
         if not target.is_relative_to(skill_dir.resolve()):
             return False, "Path traversal not allowed"
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(file_content, encoding="utf-8")
-        self.bump_patch(name)
+        async with aiofiles.open(target, "w", encoding="utf-8") as f:
+            await f.write(file_content)
+        await self.bump_patch(name)
         return True, None
 
-    def remove_supporting_file(self, name: str, file_path: str) -> tuple[bool, Optional[str]]:
+    async def remove_supporting_file(self, name: str, file_path: str) -> tuple[bool, Optional[str]]:
         """Remove a supporting file from a skill."""
         skill_dir = self.skills_dir / name
-        if not skill_dir.exists():
+        if not await aiofiles.os.path.exists(skill_dir):
             return False, f"Skill not found: {name}"
         target = (skill_dir / file_path).resolve()
         if not target.is_relative_to(skill_dir.resolve()):
             return False, "Path traversal not allowed"
-        if not target.exists():
+        if not await aiofiles.os.path.exists(target):
             return False, f"File not found: {file_path}"
         target.unlink()
         return True, None
 
-    def _record_usage(self, skill_name: str, action: str = "created", created_by: str = "agent") -> None:
-        """记录技能使用信息到 .usage.json。"""
+    async def _read_usage(self) -> dict:
+        """异步读取并解析 .usage.json。"""
         usage_file = self.skills_dir / ".usage.json"
-        usage_data = {}
+        if not await aiofiles.os.path.exists(usage_file):
+            return {}
+        try:
+            async with aiofiles.open(usage_file, encoding="utf-8") as f:
+                return json.loads(await f.read())
+        except Exception:
+            return {}
 
-        if usage_file.exists():
-            try:
-                usage_data = json.loads(usage_file.read_text(encoding="utf-8"))
-            except Exception:
-                usage_data = {}
+    async def _write_usage(self, usage_data: dict) -> None:
+        """异步序列化并写入 .usage.json。"""
+        usage_file = self.skills_dir / ".usage.json"
+        try:
+            async with aiofiles.open(usage_file, "w", encoding="utf-8") as f:
+                await f.write(json.dumps(usage_data, indent=2, ensure_ascii=False))
+        except Exception as e:
+            logger.warning("Failed to write skill usage: %s", e)
+
+    async def _record_usage(self, skill_name: str, action: str = "created", created_by: str = "agent") -> None:
+        """记录技能使用信息到 .usage.json。"""
+        usage_data = await self._read_usage()
 
         if skill_name not in usage_data:
-            usage_data[skill_name] = {
-                "use_count": 0,
-                "view_count": 0,
-                "patch_count": 0,
-                "last_used_at": None,
-                "last_viewed_at": None,
-                "last_patched_at": None,
-                "created_by": created_by,
-                "state": "active",
-                "pinned": False,
-                "created_at": datetime.now().isoformat(),
-                "archived_at": None,
-            }
+            usage_data[skill_name] = self._empty_record()
+            usage_data[skill_name]["created_by"] = created_by
 
         record = usage_data[skill_name]
         record["last_used_at"] = datetime.now().isoformat()
@@ -313,59 +323,40 @@ class SkillManager:
             record["view_count"] = record.get("view_count", 0) + 1
             record["last_viewed_at"] = datetime.now().isoformat()
 
-        try:
-            usage_file.write_text(json.dumps(usage_data, indent=2), encoding="utf-8")
-        except Exception as e:
-            logger.warning("Failed to save skill usage: %s", e)
+        await self._write_usage(usage_data)
 
-    def get_usage(self, skill_name: str) -> Optional[dict]:
+    async def get_usage(self, skill_name: str) -> Optional[dict]:
         """获取技能使用统计。"""
-        usage_file = self.skills_dir / ".usage.json"
-        if not usage_file.exists():
-            return None
+        usage_data = await self._read_usage()
+        return usage_data.get(skill_name)
 
-        try:
-            usage_data = json.loads(usage_file.read_text(encoding="utf-8"))
-            return usage_data.get(skill_name)
-        except Exception:
-            return None
-
-    def bump_view(self, skill_name: str) -> None:
-        self._mutate_usage(
+    async def bump_view(self, skill_name: str) -> None:
+        await self._mutate_usage(
             skill_name,
             lambda r: (r.update(view_count=r.get("view_count", 0) + 1, last_viewed_at=datetime.now().isoformat()),),
         )
 
-    def bump_use(self, skill_name: str) -> None:
-        self._mutate_usage(
+    async def bump_use(self, skill_name: str) -> None:
+        await self._mutate_usage(
             skill_name,
             lambda r: (r.update(use_count=r.get("use_count", 0) + 1, last_used_at=datetime.now().isoformat()),),
         )
 
-    def bump_patch(self, skill_name: str) -> None:
-        self._mutate_usage(
+    async def bump_patch(self, skill_name: str) -> None:
+        await self._mutate_usage(
             skill_name,
             lambda r: (r.update(patch_count=r.get("patch_count", 0) + 1, last_patched_at=datetime.now().isoformat()),),
         )
 
-    def mark_agent_created(self, skill_name: str) -> None:
-        self._mutate_usage(skill_name, lambda r: r.update(created_by="agent"))
+    async def mark_agent_created(self, skill_name: str) -> None:
+        await self._mutate_usage(skill_name, lambda r: r.update(created_by="agent"))
 
-    def _mutate_usage(self, skill_name: str, mutator) -> None:
-        usage_file = self.skills_dir / ".usage.json"
-        usage_data: dict = {}
-        if usage_file.exists():
-            try:
-                usage_data = json.loads(usage_file.read_text(encoding="utf-8"))
-            except Exception:
-                usage_data = {}
+    async def _mutate_usage(self, skill_name: str, mutator) -> None:
+        usage_data = await self._read_usage()
         if skill_name not in usage_data:
             usage_data[skill_name] = self._empty_record()
         mutator(usage_data[skill_name])
-        try:
-            usage_file.write_text(json.dumps(usage_data, indent=2), encoding="utf-8")
-        except Exception as e:
-            logger.warning("Failed to mutate skill usage: %s", e)
+        await self._write_usage(usage_data)
 
     def _empty_record(self) -> dict:
         return {
@@ -410,8 +401,8 @@ def get_tools() -> list:
         skills = container.skills_cache or []
         for s in skills:
             if s.name == name:
-                manager.bump_view(name)
-                usage = manager.get_usage(name) or {}
+                await manager.bump_view(name)
+                usage = await manager.get_usage(name) or {}
                 body_with_paths = s.body + f"\n\n## Skill Path Info\n- **Skill Directory**: {s.base_dir}"
                 return json.dumps(
                     {
@@ -469,14 +460,14 @@ def get_tools() -> list:
         if action == "create":
             if not name or not content:
                 return json.dumps({"error": "name and content are required for create"})
-            skill, error = manager.create_skill(name, description or name, content, category)
+            skill, error = await manager.create_skill(name, description or name, content, category)
             if error:
                 return json.dumps({"error": error})
             from src.skills.provenance import is_background_review
 
             if is_background_review():
-                manager.mark_agent_created(name)
-            _reload_skills(container)
+                await manager.mark_agent_created(name)
+            await _reload_skills(container)
             return json.dumps(
                 {
                     "success": True,
@@ -489,10 +480,10 @@ def get_tools() -> list:
         elif action == "edit":
             if not name or not content:
                 return json.dumps({"error": "name and content are required for edit"})
-            skill, error = manager.edit_skill(name, content, description or None)
+            skill, error = await manager.edit_skill(name, content, description or None)
             if error:
                 return json.dumps({"error": error})
-            _reload_skills(container)
+            await _reload_skills(container)
             return json.dumps(
                 {
                     "success": True,
@@ -505,7 +496,7 @@ def get_tools() -> list:
         elif action == "patch":
             if not name or not old_string or not new_string:
                 return json.dumps({"error": "name, old_string, and new_string are required for patch"})
-            ok, error = manager.patch_skill(
+            ok, error = await manager.patch_skill(
                 name,
                 old_string,
                 new_string,
@@ -514,16 +505,16 @@ def get_tools() -> list:
             )
             if error:
                 return json.dumps({"error": error})
-            _reload_skills(container)
+            await _reload_skills(container)
             return json.dumps({"success": True, "action": "patched", "skill": name})
 
         elif action == "delete":
             if not name:
                 return json.dumps({"error": "name is required for delete"})
-            success, error = manager.delete_skill(name)
+            success, error = await manager.delete_skill(name)
             if error:
                 return json.dumps({"error": error})
-            _reload_skills(container)
+            await _reload_skills(container)
             return json.dumps({"success": True, "action": "deleted", "skill": name})
 
         elif action == "toggle":
@@ -554,8 +545,8 @@ def get_tools() -> list:
                     config.skills.disabled.append(name)
                     action_result = "disabled"
             try:
-                save_config(config)
-                _reload_skills(container)
+                await asyncio.to_thread(save_config, config)
+                await _reload_skills(container)
             except Exception as e:
                 return json.dumps({"error": f"Failed to save config: {str(e)}"})
             return json.dumps(
@@ -570,7 +561,7 @@ def get_tools() -> list:
         elif action == "write_file":
             if not name or not file_path or not file_content:
                 return json.dumps({"error": "name, file_path, and file_content are required for write_file"})
-            ok, error = manager.write_supporting_file(name, file_path, file_content)
+            ok, error = await manager.write_supporting_file(name, file_path, file_content)
             if error:
                 return json.dumps({"error": error})
             return json.dumps({"success": True, "action": "wrote_file", "skill": name, "file": file_path})
@@ -578,7 +569,7 @@ def get_tools() -> list:
         elif action == "remove_file":
             if not name or not file_path:
                 return json.dumps({"error": "name and file_path are required for remove_file"})
-            ok, error = manager.remove_supporting_file(name, file_path)
+            ok, error = await manager.remove_supporting_file(name, file_path)
             if error:
                 return json.dumps({"error": error})
             return json.dumps({"success": True, "action": "removed_file", "skill": name, "file": file_path})
@@ -633,8 +624,7 @@ def get_tools() -> list:
                 from src.skills.hub import create_sources, parallel_search
 
                 sources = create_sources()
-                results = await asyncio.to_thread(
-                    parallel_search,
+                results = await parallel_search(
                     sources,
                     query,
                     limit=20,
@@ -668,7 +658,7 @@ def get_tools() -> list:
                 src = resolve_source(identifier, sources)
                 if not src:
                     return json.dumps({"error": f"No source found for identifier: {identifier}"})
-                meta = await asyncio.to_thread(src.inspect, identifier)
+                meta = await src.inspect(identifier)
                 if not meta:
                     return json.dumps({"error": f"Skill not found: {identifier}"})
                 return json.dumps(
@@ -698,33 +688,33 @@ def get_tools() -> list:
                 from src.skills.hub import (
                     create_sources,
                     resolve_source,
-                    quarantine_bundle,
                     install_from_quarantine,
-                    ensure_hub_dirs,
                 )
-                from src.skills.guard import scan_skill, should_allow_install, format_scan_report
+                from src.skills.guard import should_allow_install, format_scan_report
 
                 sources = create_sources()
                 src = resolve_source(identifier, sources)
                 if not src:
                     return json.dumps({"error": f"No source found for identifier: {identifier}"})
-                bundle = await asyncio.to_thread(src.fetch, identifier)
+                bundle = await src.fetch(identifier)
                 if not bundle and src.source_id() == "skills-sh":
                     clawhub = next((s for s in sources if s.source_id() == "clawhub"), None)
                     if clawhub:
-                        bundle = await asyncio.to_thread(clawhub.fetch, identifier)
+                        bundle = await clawhub.fetch(identifier)
                 if not bundle:
                     return json.dumps({"error": f"Failed to fetch skill: {identifier}"})
                 if not bundle.name:
                     return json.dumps({"error": "Could not determine skill name from remote content"})
 
-                ensure_hub_dirs()
-                quarantine_path = quarantine_bundle(bundle)
-
                 guard_enabled = getattr(container.config.skills.hub, "guard_enabled", True)
 
+                quarantine_path, scan_result = await asyncio.to_thread(
+                    _hub_prepare_and_scan,
+                    bundle,
+                    guard_enabled,
+                )
+
                 if guard_enabled:
-                    scan_result = scan_skill(quarantine_path, source=bundle.source)
                     allowed, reason = should_allow_install(scan_result, force=force)
                     if not allowed:
                         report = format_scan_report(scan_result)
@@ -735,25 +725,15 @@ def get_tools() -> list:
                             },
                             ensure_ascii=False,
                         )
-                else:
-                    from src.skills.types import ScanResult
 
-                    scan_result = ScanResult(
-                        skill_name=bundle.name,
-                        source=bundle.source,
-                        trust_level=bundle.trust_level,
-                        verdict="safe",
-                        scanned_at="",
-                        summary="Guard disabled",
-                    )
-
-                install_dir = install_from_quarantine(
+                install_dir = await asyncio.to_thread(
+                    install_from_quarantine,
                     quarantine_path,
                     bundle.name,
                     bundle,
                     scan_result,
                 )
-                _reload_skills_from_manager()
+                await _reload_skills_from_manager()
 
                 return json.dumps(
                     {
@@ -776,7 +756,7 @@ def get_tools() -> list:
                 if quarantine_path and quarantine_path.exists():
                     import shutil
 
-                    shutil.rmtree(quarantine_path, ignore_errors=True)
+                    await asyncio.to_thread(shutil.rmtree, quarantine_path, ignore_errors=True)
 
         elif action == "scan_hub":
             if not name:
@@ -786,28 +766,14 @@ def get_tools() -> list:
             try:
                 from src.skills.guard import scan_skill, format_scan_report
 
-                skills = container.skills_cache or []
-                skill_dir = None
-                skill_source = "community"
-                for s in skills:
-                    if s.name == name:
-                        skill_dir = s.base_dir
-                        skill_source = getattr(s, "source", "community")
-                        break
+                skill_dir, skill_source = await asyncio.to_thread(
+                    _hub_lookup_skill_dir,
+                    name,
+                    container.skills_cache,
+                )
                 if not skill_dir:
-                    from src.skills.hub import HubLockFile, SKILLS_DIR
-
-                    lock = HubLockFile()
-                    entry = lock.get_installed(name)
-                    install_path = entry.get("install_path") if entry else None
-                    if install_path:
-                        candidate = (SKILLS_DIR / install_path).resolve()
-                        if candidate.is_relative_to(SKILLS_DIR.resolve()):
-                            skill_dir = candidate
-                            skill_source = entry.get("trust_level", "community")
-                    if not skill_dir:
-                        return json.dumps({"error": f"Skill not found: {name}"})
-                result = scan_skill(skill_dir, source=skill_source)
+                    return json.dumps({"error": f"Skill not found: {name}"})
+                result = await asyncio.to_thread(scan_skill, skill_dir, source=skill_source)
                 report = format_scan_report(result)
                 return json.dumps(
                     {
@@ -827,9 +793,11 @@ def get_tools() -> list:
                 return json.dumps({"error": "source (URL or path) is required for install"})
             try:
                 if source.startswith(("http://", "https://")):
-                    return _install_from_url(source)
+                    result = await asyncio.to_thread(_install_from_url, source)
                 else:
-                    return _install_from_path(source)
+                    result = await asyncio.to_thread(_install_from_path, source)
+                await _reload_skills_from_manager()
+                return result
             except Exception as e:
                 logger.error("Skill install failed: %s", e)
                 return json.dumps({"error": f"Install failed: {str(e)}"})
@@ -852,7 +820,7 @@ def get_tools() -> list:
             try:
                 import shutil
 
-                shutil.rmtree(skill_dir)
+                await asyncio.to_thread(shutil.rmtree, skill_dir)
             except Exception as e:
                 return json.dumps({"error": f"Failed to remove skill directory: {str(e)}"})
             config = container.config
@@ -862,18 +830,12 @@ def get_tools() -> list:
                 if name in config.skills.channel_disabled[ch]:
                     config.skills.channel_disabled[ch].remove(name)
             try:
-                save_config(config)
-                _reload_skills(container)
+                await asyncio.to_thread(save_config, config)
+                await _reload_skills(container)
             except Exception as e:
                 return json.dumps({"error": f"Failed to save config: {str(e)}"})
             try:
-                from src.skills.hub import HubLockFile, append_audit_log
-
-                lock = HubLockFile()
-                entry = lock.get_installed(name)
-                if entry:
-                    lock.record_uninstall(name)
-                    append_audit_log("UNINSTALL", name, entry["source"], entry["trust_level"], "n/a", "user_request")
+                await asyncio.to_thread(_hub_uninstall_lock_cleanup, name)
             except Exception:
                 pass
             return json.dumps({"success": True, "uninstalled": name})
@@ -892,14 +854,76 @@ def get_tools() -> list:
     ]
 
 
-def _reload_skills(container) -> None:
+def _hub_prepare_and_scan(bundle, guard_enabled):
+    """Sync helper: ensure dirs, quarantine bundle, scan skill.
+
+    Returns (quarantine_path, scan_result).
+    """
+    from src.skills.hub import ensure_hub_dirs, quarantine_bundle
+    from src.skills.guard import scan_skill
+
+    ensure_hub_dirs()
+    qpath = quarantine_bundle(bundle)
+
+    if guard_enabled:
+        scan_result = scan_skill(qpath, source=bundle.source)
+    else:
+        from src.skills.types import ScanResult
+
+        scan_result = ScanResult(
+            skill_name=bundle.name,
+            source=bundle.source,
+            trust_level=bundle.trust_level,
+            verdict="safe",
+            scanned_at="",
+            summary="Guard disabled",
+        )
+    return qpath, scan_result
+
+
+def _hub_lookup_skill_dir(name, skills_cache):
+    """Sync helper: find skill directory from cache or lock file.
+
+    Returns (skill_dir, skill_source) or (None, None) if not found.
+    """
+    for s in skills_cache or []:
+        if s.name == name:
+            return s.base_dir, getattr(s, "source", "community")
+
+    from src.skills.hub import HubLockFile, SKILLS_DIR
+
+    lock = HubLockFile()
+    entry = lock.get_installed(name)
+    if not entry:
+        return None, None
+    install_path = entry.get("install_path")
+    if not install_path:
+        return None, None
+    candidate = (SKILLS_DIR / install_path).resolve()
+    if not candidate.is_relative_to(SKILLS_DIR.resolve()):
+        return None, None
+    return candidate, entry.get("trust_level", "community")
+
+
+def _hub_uninstall_lock_cleanup(name):
+    """Sync helper: update lock file and audit log for uninstall."""
+    from src.skills.hub import HubLockFile, append_audit_log
+
+    lock = HubLockFile()
+    entry = lock.get_installed(name)
+    if entry:
+        lock.record_uninstall(name)
+        append_audit_log("UNINSTALL", name, entry["source"], entry["trust_level"], "n/a", "user_request")
+
+
+async def _reload_skills(container) -> None:
     """Reload skills and update all dependent components."""
     from src.skills.loader import discover_skills
     from src.skills.prompt import build_skills_prompt
     from src.prompt import _build_skills_section
 
     dirs = container._build_skill_directories()
-    skills = discover_skills(dirs, container.config)
+    skills = await discover_skills(dirs, container.config)
     container.skills_cache = skills
     if container.agent_loop:
         container.agent_loop._skills_prompt = build_skills_prompt(skills)
@@ -950,7 +974,6 @@ def _install_from_path(path: str) -> str:
         if dest.exists():
             return json.dumps({"error": f"Skill already exists: {dest}"})
         shutil.copytree(p, dest)
-        _reload_skills_from_manager()
         return json.dumps({"success": True, "installed": str(dest)})
     elif p.suffix == ".zip":
         return _install_from_zip(p)
@@ -978,16 +1001,15 @@ def _install_from_zip(zip_path: Path) -> str:
             if name.startswith("/") or ".." in Path(name).parts:
                 return json.dumps({"error": f"Zip entry contains unsafe path: {name}"})
         zf.extractall(dest)
-    _reload_skills_from_manager()
     return json.dumps({"success": True, "installed": str(dest)})
 
 
-def _reload_skills_from_manager() -> None:
+async def _reload_skills_from_manager() -> None:
     """Reload skills (used by install functions that don't have container access)."""
     try:
         from src._container import get_container
 
         container = get_container()
-        _reload_skills(container)
+        await _reload_skills(container)
     except Exception as e:
         logger.warning("Failed to reload skills after install: %s", e)

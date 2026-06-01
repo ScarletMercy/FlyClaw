@@ -147,13 +147,13 @@ def cmd_sessions(args):
 
     store = StateStore(str(db_path))
     try:
-        threads = store.list_threads()
+        threads = store._list_threads_sync()
         if not threads:
             print("未找到会话")
             return 0
         print(f"会话列表 ({len(threads)}):\n")
         for tid in threads:
-            state = store.load(tid)
+            state = store._load_sync(tid)
             msg_count = len(state.messages) if state else 0
             print(f"  {tid}: {msg_count} 条消息")
     finally:

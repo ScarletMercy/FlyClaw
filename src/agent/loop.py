@@ -341,7 +341,7 @@ class AgentLoop:
                 continue
 
             # 2. Build tool list
-            active_tools = self._filter_tools(state)
+            active_tools = await self._filter_tools(state)
             openai_tools = [t.to_openai_tool() for t in active_tools] if active_tools else None
 
             # 3. Call model (with retry)
@@ -467,7 +467,7 @@ class AgentLoop:
 
     async def _resume_inner(self, thread_id: str, decision: str) -> AgentState:
         """Internal resume logic, called with thread lock held."""
-        state = await self._store.aload(thread_id)
+        state = await self._store.load(thread_id)
         if state is None:
             raise RuntimeError(f"No saved state for thread {thread_id}")
 
@@ -713,7 +713,7 @@ class AgentLoop:
             history = await self._compressor.compress(history, self._ctx_window_tokens)
 
         memory_summary = await self._fetch_memory_summary()
-        system_text = self._build_system_prompt(state, self._get_active_tool_defs(state), memory_summary)
+        system_text = self._build_system_prompt(state, await self._get_active_tool_defs(state), memory_summary)
         history = self._sanitize_surrogates(history)
         return [{"role": "system", "content": system_text}] + list(history)
 
@@ -829,17 +829,17 @@ class AgentLoop:
     # Tool handling
     # ------------------------------------------------------------------
 
-    def _get_active_tool_defs(self, state: AgentState) -> list[ToolDef]:
-        return self._filter_tools(state)
+    async def _get_active_tool_defs(self, state: AgentState) -> list[ToolDef]:
+        return await self._filter_tools(state)
 
-    def _filter_tools(self, state: AgentState) -> list[ToolDef]:
+    async def _filter_tools(self, state: AgentState) -> list[ToolDef]:
         tools = self._tools
 
         if self._config:
             from src.tools.policy import apply_tool_policy
 
             sender_id = state.sender_id
-            user = self._resolve_user(sender_id)
+            user = await self._resolve_user(sender_id)
             tools = apply_tool_policy(tools, sender_id, self._config, user=user)
 
         channel = state.channel
@@ -850,7 +850,7 @@ class AgentLoop:
 
         return tools
 
-    def _resolve_user(self, sender_id: str):
+    async def _resolve_user(self, sender_id: str):
         if not self._config or not getattr(self._config, "auth", None) or not self._config.auth.enabled:
             return None
         try:
@@ -858,7 +858,7 @@ class AgentLoop:
 
             rbac = get_rbac()
             if rbac:
-                return rbac.resolve_user(sender_id)
+                return await rbac.resolve_user(sender_id)
         except Exception as exc:
             logger.debug("resolve_user failed: %s", exc)
         return None

@@ -274,7 +274,7 @@ class TestParallelApprovalPending:
             with pytest.raises(ApprovalPending):
                 await loop.run(state, "par_ap")
 
-        loaded = await store.aload("par_ap")
+        loaded = await store.load("par_ap")
         assert loaded is not None
         tool_msgs = [m for m in loaded.messages if m.get("role") == "tool"]
         tool_ids = {m.get("tool_call_id") for m in tool_msgs}

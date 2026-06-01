@@ -86,7 +86,7 @@ class TestChatCompletionsAuth:
             )
             mock_app_obj.config = AppConfig()
             mock_app_obj.state_store = MagicMock()
-            mock_app_obj.state_store.aload = AsyncMock(return_value=None)
+            mock_app_obj.state_store.load = AsyncMock(return_value=None)
             mock_app_obj.state_store.save = AsyncMock()
             mock_app.return_value = mock_app_obj
 

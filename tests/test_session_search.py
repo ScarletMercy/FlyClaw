@@ -372,7 +372,7 @@ class TestSyncMessages:
 
 
 class TestPruneSessionsOrder:
-    def test_prune_deletes_from_checkpoints_even_when_index_fails(self, tmp_path):
+    async def test_prune_deletes_from_checkpoints_even_when_index_fails(self, tmp_path):
         from src.session.pruner import prune_sessions
 
         cp_path = str(tmp_path / "checkpoints.db")
@@ -382,7 +382,7 @@ class TestPruneSessionsOrder:
         _insert_session(cp_path, "t1", old_time)
 
         with patch("src.session.pruner.prune_session_index", side_effect=Exception("index db broken")):
-            stats = prune_sessions(
+            stats = await prune_sessions(
                 cp_path,
                 older_than_days=1,
                 session_index_path=idx_path,
@@ -391,8 +391,8 @@ class TestPruneSessionsOrder:
         assert stats["sessions_removed"] == 1
         assert _count_sessions(cp_path) == 0
 
-    def test_prune_deletes_index_before_checkpoints(self, tmp_path):
-        from src.session.pruner import prune_sessions
+    async def test_prune_deletes_index_before_checkpoints(self, tmp_path):
+        from src.session.pruner import prune_sessions, prune_session_index as original_prune_session_index
 
         cp_path = str(tmp_path / "checkpoints.db")
         idx_path = str(tmp_path / "session_index.db")
@@ -400,16 +400,13 @@ class TestPruneSessionsOrder:
         _insert_session(cp_path, "t1", 0.0)
 
         call_order = []
-        original_prune_session_index = __import__(
-            "src.session.pruner", fromlist=["prune_session_index"]
-        ).prune_session_index
 
-        def tracking_prune(path, tids):
+        async def tracking_prune(path, tids):
             call_order.append(("index", tids))
-            return original_prune_session_index(path, tids)
+            return await original_prune_session_index(path, tids)
 
         with patch("src.session.pruner.prune_session_index", side_effect=tracking_prune):
-            prune_sessions(cp_path, older_than_days=1, session_index_path=idx_path)
+            await prune_sessions(cp_path, older_than_days=1, session_index_path=idx_path)
 
         assert len(call_order) == 1
         assert call_order[0][0] == "index"

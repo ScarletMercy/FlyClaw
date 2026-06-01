@@ -343,7 +343,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
                     channel="ws",
                 )
                 store = loop.get_store()
-                existing = await store.aload(thread_id)
+                existing = await store.load(thread_id)
                 if existing:
                     input_state.messages = existing.messages + input_state.messages
                 result_state = await loop.run(input_state, thread_id)
@@ -505,7 +505,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             body = await request.json()
             if not body.get("code") or not body.get("device_id"):
                 return JSONResponse({"error": "code and device_id required"}, status_code=400)
-            user = rbac.store.verify_pairing(
+            user = await rbac.store.verify_pairing(
                 body["code"], body["device_id"], platform=body.get("platform", "web"), name=body.get("name", "")
             )
             return (
@@ -519,7 +519,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
     @app.get("/api/users")
     async def list_users(rbac=Depends(require_rbac)):
         try:
-            return [u.model_dump() for u in rbac.store.list_users()]
+            return [u.model_dump() for u in await rbac.store.list_users()]
         except Exception:
             return []
 
@@ -531,14 +531,14 @@ def create_gateway(app_config, agent_loop, cron_service=None):
                 try:
                     from src.auth.models import UserRole
 
-                    rbac.store.update_user_role(user_id, UserRole(body["role"]))
+                    await rbac.store.update_user_role(user_id, UserRole(body["role"]))
                 except ValueError:
                     return JSONResponse({"error": f"invalid role: {body['role']}"}, status_code=400)
             if body.get("allowed_tools") is not None or body.get("denied_tools") is not None:
-                rbac.store.update_user_tools(
+                await rbac.store.update_user_tools(
                     user_id, allowed_tools=body.get("allowed_tools"), denied_tools=body.get("denied_tools")
                 )
-            user = rbac.store.get_user(user_id)
+            user = await rbac.store.get_user(user_id)
             return user.model_dump() if user else JSONResponse({"error": "user not found"}, status_code=404)
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
@@ -546,21 +546,21 @@ def create_gateway(app_config, agent_loop, cron_service=None):
     @app.delete("/api/users/{user_id}")
     async def delete_user(user_id: str, rbac=Depends(require_rbac)):
         try:
-            return {"removed": rbac.store.delete_user(user_id)}
+            return {"removed": await rbac.store.delete_user(user_id)}
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.get("/api/users/{user_id}/devices")
     async def list_user_devices(user_id: str, rbac=Depends(require_rbac)):
         try:
-            return [d.model_dump() for d in rbac.store.list_user_devices(user_id)]
+            return [d.model_dump() for d in await rbac.store.list_user_devices(user_id)]
         except Exception:
             return []
 
     @app.delete("/api/devices/{device_id}")
     async def delete_device(device_id: str, rbac=Depends(require_rbac)):
         try:
-            return {"removed": rbac.store.delete_device(device_id)}
+            return {"removed": await rbac.store.delete_device(device_id)}
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 

@@ -89,11 +89,11 @@ class ServiceContainer:
 
         return dirs
 
-    def _reload_skills(self) -> list:
+    async def _reload_skills(self) -> list:
         from src.skills.types import Skill
 
         dirs = self._build_skill_directories()
-        self.skills_cache = discover_skills(dirs, self.config)
+        self.skills_cache = await discover_skills(dirs, self.config)
         active = [s for s in self.skills_cache if not s.metadata.disable_model_invocation]
         if active:
             logger.info("技能已加载: %d 个活跃, 共 %d 个", len(active), len(self.skills_cache))
@@ -253,7 +253,7 @@ class ServiceContainer:
         except Exception as e:
             logger.warning("记忆系统初始化失败: %s", e)
 
-    def _setup_auth(self):
+    async def _setup_auth(self):
         if not self.config.auth.enabled:
             return
         from src.auth.store import AuthStore
@@ -383,7 +383,7 @@ class ServiceContainer:
         self._setup_plugins()
         self._setup_agents()
         await self._setup_memory()
-        self._setup_auth()
+        await self._setup_auth()
 
         # Phase 2: client + tools + skills
         if self.config.model.fallbacks:
@@ -402,7 +402,7 @@ class ServiceContainer:
 
         skills: list = []
         if self.config.skills.enabled:
-            skills = self._reload_skills()
+            skills = await self._reload_skills()
 
         skills_prompt = ""
         if skills:
@@ -496,7 +496,7 @@ class ServiceContainer:
                 if self.agent_loop:
                     self.agent_loop.invalidate_memory_cache()
                 try:
-                    state = await self.state_store.aload(tid)
+                    state = await self.state_store.load(tid)
                 except Exception:
                     state = None
                 if state and state.messages:
@@ -548,7 +548,7 @@ class ServiceContainer:
                 result = await curator.review_skills()
                 if result.get("changes"):
                     logger.info("Curator auto-review: %s", result["changes"])
-                self._reload_skills()
+                await self._reload_skills()
         except Exception as e:
             logger.warning("Curator auto-review failed: %s", e)
 
@@ -573,18 +573,18 @@ class ServiceContainer:
 
                 cp_path = self.config.checkpointer.path
                 si_path = self.config.session_search.index_path if self.config.session_search.enabled else None
-                if should_prune_now(cp_path, self.config.session.min_interval_hours):
+                if await should_prune_now(cp_path, self.config.session.min_interval_hours):
                     logger.info(
                         "自动清理: 检查超过 %d 天的会话",
                         self.config.session.retention_days,
                     )
-                    stats = prune_sessions(
+                    stats = await prune_sessions(
                         cp_path,
                         older_than_days=self.config.session.retention_days,
                         session_index_path=si_path,
                     )
                     if stats["sessions_removed"] > 0 and self.config.session.vacuum_after_prune:
-                        vacuum_database(cp_path)
+                        await vacuum_database(cp_path)
                         logger.info(
                             "自动清理完成: 已移除 %d 个会话",
                             stats["sessions_removed"],

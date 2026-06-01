@@ -27,6 +27,7 @@ dependencies = [
     "edge-tts>=6.0",
     "playwright>=1.40",
     "playwright-stealth>=1.0",
+    "aiofiles>=25.1.0",
 ]
 
 [project.optional-dependencies]

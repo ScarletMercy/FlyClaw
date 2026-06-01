@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import time
@@ -259,7 +260,7 @@ async def browser_screenshot(path: str = "") -> str:
 
         cfg = load_config()
         workspace = os.path.expanduser(cfg.agents.workspace)
-        os.makedirs(workspace, exist_ok=True)
+        await asyncio.to_thread(os.makedirs, workspace, exist_ok=True)
         path = os.path.join(workspace, f"screenshot_{int(time.time())}.png")
 
     try:

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import logging
 import tempfile
-from pathlib import Path
+import aiofiles
+import aiofiles.os
 
 logger = logging.getLogger("flyclaw.tts_tools")
 
@@ -32,8 +33,12 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
             tmp_path = tmp.name
         await communicate.save(tmp_path)
-        audio_bytes = Path(tmp_path).read_bytes()
-        Path(tmp_path).unlink(missing_ok=True)
+        async with aiofiles.open(tmp_path, "rb") as f:
+            audio_bytes = await f.read()
+        try:
+            await aiofiles.os.remove(tmp_path)
+        except OSError:
+            pass
     except Exception as e:
         logger.error("edge-tts synthesis failed: %s", e)
         return f"[error] TTS synthesis failed: {e}"
@@ -53,13 +58,17 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
         if _weixin_channel:
             try:
                 with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
-                    f.write(audio_bytes)
                     tmp_file = f.name
+                async with aiofiles.open(tmp_file, "wb") as f:
+                    await f.write(audio_bytes)
                 try:
                     if await _weixin_channel.send_voice(chat_id, tmp_file):
                         return f"Voice sent ({len(audio_bytes)} bytes, voice={voice})"
                 finally:
-                    Path(tmp_file).unlink(missing_ok=True)
+                    try:
+                        await aiofiles.os.remove(tmp_file)
+                    except OSError:
+                        pass
             except Exception as e:
                 logger.error("WeChat voice send failed: %s", e)
 

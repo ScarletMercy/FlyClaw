@@ -140,7 +140,7 @@ class TestStateStore:
             channel="qq",
         )
         asyncio.run(store.save("t1", state))
-        loaded = store.load("t1")
+        loaded = store._load_sync("t1")
         assert loaded is not None
         assert loaded.messages[0]["content"] == "hello"
         assert loaded.sender_id == "u1"
@@ -148,21 +148,21 @@ class TestStateStore:
 
     def test_load_unknown_returns_none(self, tmp_path):
         store = StateStore(str(tmp_path / "test.db"))
-        assert store.load("nonexistent") is None
+        assert store._load_sync("nonexistent") is None
 
     def test_delete(self, tmp_path):
         store = StateStore(str(tmp_path / "test.db"))
         state = AgentState(messages=[{"role": "user", "content": "x"}])
         asyncio.run(store.save("t1", state))
-        assert store.delete("t1") is True
-        assert store.load("t1") is None
+        assert store._delete_sync("t1") is True
+        assert store._load_sync("t1") is None
 
     def test_list_threads(self, tmp_path):
         store = StateStore(str(tmp_path / "test.db"))
         for i in range(3):
             state = AgentState(messages=[{"role": "user", "content": str(i)}])
             asyncio.run(store.save(f"t{i}", state))
-        threads = store.list_threads()
+        threads = store._list_threads_sync()
         assert len(threads) == 3
 
     def test_model_validate_tolerates_extra_keys(self, tmp_path):
@@ -192,7 +192,7 @@ class TestStateStore:
             ),
         )
         store._db.commit()
-        loaded = store.load("t1")
+        loaded = store._load_sync("t1")
         assert loaded is not None
         assert loaded.messages[0]["content"] == "hi"
 
@@ -207,7 +207,7 @@ class TestMemoryStateStore:
         store = MemoryStateStore()
         state = AgentState(messages=[{"role": "user", "content": "test"}])
         asyncio.run(store.save("t1", state))
-        loaded = store.load("t1")
+        loaded = store._load_sync("t1")
         assert loaded is not None
         assert loaded.messages[0]["content"] == "test"
 

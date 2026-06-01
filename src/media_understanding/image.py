@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 
@@ -19,7 +20,9 @@ async def understand_image(
 ) -> MediaResult:
     try:
         resize_threshold = 4 * 1024 * 1024
-        processed_data, processed_mime = _preprocess_image(image_data, mime_type, max_bytes=resize_threshold)
+        processed_data, processed_mime = await asyncio.to_thread(
+            _preprocess_image, image_data, mime_type, max_bytes=resize_threshold
+        )
         if max_bytes > 0 and len(processed_data) > max_bytes:
             return _media_error(
                 MediaCapability.IMAGE,

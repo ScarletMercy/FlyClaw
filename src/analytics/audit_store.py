@@ -6,15 +6,36 @@ Used by the Dashboard audit log and analytics features.
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
-import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import aiosqlite
+
 logger = logging.getLogger("flyclaw.analytics.audit")
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS tool_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    sender_id TEXT NOT NULL DEFAULT '',
+    channel TEXT NOT NULL DEFAULT '',
+    success INTEGER NOT NULL,
+    duration_ms REAL NOT NULL,
+    args_preview TEXT NOT NULL DEFAULT '',
+    error TEXT,
+    timestamp REAL NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool_name);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_thread ON tool_calls(thread_id);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_ts ON tool_calls(timestamp);
+CREATE INDEX IF NOT EXISTS idx_tool_calls_success ON tool_calls(success);
+"""
 
 
 @dataclass
@@ -32,36 +53,28 @@ class AuditEntry:
 
 
 class AuditStore:
-    """SQLite-backed audit log store."""
+    """SQLite-backed audit log store (async)."""
 
     def __init__(self, db_path: str = "~/.flyclaw/data/audit.db"):
         self.db_path = Path(db_path).expanduser().resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+        self._conn: Optional[aiosqlite.Connection] = None
 
-    def _init_db(self):
-        """Initialize the audit table."""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS tool_calls (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    thread_id TEXT NOT NULL,
-                    tool_name TEXT NOT NULL,
-                    sender_id TEXT NOT NULL DEFAULT '',
-                    channel TEXT NOT NULL DEFAULT '',
-                    success INTEGER NOT NULL,
-                    duration_ms REAL NOT NULL,
-                    args_preview TEXT NOT NULL DEFAULT '',
-                    error TEXT,
-                    timestamp REAL NOT NULL
-                )
-            """)
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_tool ON tool_calls(tool_name)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_thread ON tool_calls(thread_id)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_ts ON tool_calls(timestamp)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_tool_calls_success ON tool_calls(success)")
+    async def _get_conn(self) -> aiosqlite.Connection:
+        if self._conn is None:
+            self._conn = await aiosqlite.connect(str(self.db_path))
+            self._conn.row_factory = aiosqlite.Row
+            await self._conn.execute("PRAGMA journal_mode=WAL")
+            await self._conn.executescript(_SCHEMA)
+            await self._conn.commit()
+        return self._conn
 
-    def record_call(
+    async def close(self) -> None:
+        if self._conn is not None:
+            await self._conn.close()
+            self._conn = None
+
+    async def record_call(
         self,
         thread_id: str,
         tool_name: str,
@@ -73,26 +86,27 @@ class AuditStore:
         error: Optional[str] = None,
     ) -> int:
         """Record a tool call. Returns the new entry ID."""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            cursor = conn.execute(
-                """INSERT INTO tool_calls 
-                   (thread_id, tool_name, sender_id, channel, success, duration_ms, args_preview, error, timestamp)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    thread_id,
-                    tool_name,
-                    sender_id,
-                    channel,
-                    int(success),
-                    duration_ms,
-                    args_preview[:500],
-                    error,
-                    time.time(),
-                ),
-            )
-            return cursor.lastrowid
+        conn = await self._get_conn()
+        cursor = await conn.execute(
+            """INSERT INTO tool_calls
+               (thread_id, tool_name, sender_id, channel, success, duration_ms, args_preview, error, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                thread_id,
+                tool_name,
+                sender_id,
+                channel,
+                int(success),
+                duration_ms,
+                args_preview[:500],
+                error,
+                time.time(),
+            ),
+        )
+        await conn.commit()
+        return cursor.lastrowid
 
-    def query(
+    async def query(
         self,
         tool_name: Optional[str] = None,
         sender_id: Optional[str] = None,
@@ -104,7 +118,7 @@ class AuditStore:
     ) -> list[AuditEntry]:
         """Query audit entries with filters."""
         conditions = []
-        params = []
+        params: list = []
 
         if tool_name:
             conditions.append("tool_name = ?")
@@ -123,8 +137,8 @@ class AuditStore:
             params.append(to_ts)
 
         where = " AND ".join(conditions) if conditions else "1=1"
-        query = f"""
-            SELECT id, thread_id, tool_name, sender_id, channel, success, 
+        sql = f"""
+            SELECT id, thread_id, tool_name, sender_id, channel, success,
                    duration_ms, args_preview, error, timestamp
             FROM tool_calls
             WHERE {where}
@@ -133,9 +147,9 @@ class AuditStore:
         """
         params.extend([limit, offset])
 
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(query, params).fetchall()
+        conn = await self._get_conn()
+        async with conn.execute(sql, params) as cursor:
+            rows = await cursor.fetchall()
 
         return [
             AuditEntry(
@@ -153,43 +167,49 @@ class AuditStore:
             for r in rows
         ]
 
-    def get_stats(self, days: int = 7) -> dict:
+    async def get_stats(self, days: int = 7) -> dict:
         """Get audit statistics for the last N days."""
         from_ts = time.time() - (days * 86400)
+        conn = await self._get_conn()
 
-        with sqlite3.connect(str(self.db_path)) as conn:
-            # Total calls
-            total = conn.execute("SELECT COUNT(*) FROM tool_calls WHERE timestamp >= ?", (from_ts,)).fetchone()[0]
+        # Total calls
+        async with conn.execute("SELECT COUNT(*) FROM tool_calls WHERE timestamp >= ?", (from_ts,)) as cur:
+            row = await cur.fetchone()
+            total = row[0]
 
-            # Success rate
-            success_count = conn.execute(
-                "SELECT COUNT(*) FROM tool_calls WHERE timestamp >= ? AND success = 1", (from_ts,)
-            ).fetchone()[0]
+        # Success count
+        async with conn.execute(
+            "SELECT COUNT(*) FROM tool_calls WHERE timestamp >= ? AND success = 1", (from_ts,)
+        ) as cur:
+            row = await cur.fetchone()
+            success_count = row[0]
 
-            # Average duration
-            avg_duration = (
-                conn.execute("SELECT AVG(duration_ms) FROM tool_calls WHERE timestamp >= ?", (from_ts,)).fetchone()[0]
-                or 0
-            )
+        # Average duration
+        async with conn.execute("SELECT AVG(duration_ms) FROM tool_calls WHERE timestamp >= ?", (from_ts,)) as cur:
+            row = await cur.fetchone()
+            avg_duration = row[0] or 0
 
-            # Top tools
-            top_tools = conn.execute(
-                """SELECT tool_name, 
-                          COUNT(*) as count,
-                          CAST(SUM(success) AS FLOAT) / COUNT(*) as success_rate,
-                          AVG(duration_ms) as avg_duration_ms
-                   FROM tool_calls 
-                   WHERE timestamp >= ? 
-                   GROUP BY tool_name 
-                   ORDER BY count DESC 
-                   LIMIT 10""",
-                (from_ts,),
-            ).fetchall()
+        # Top tools
+        async with conn.execute(
+            """SELECT tool_name,
+                      COUNT(*) as count,
+                      CAST(SUM(success) AS FLOAT) / COUNT(*) as success_rate,
+                      AVG(duration_ms) as avg_duration_ms
+               FROM tool_calls
+               WHERE timestamp >= ?
+               GROUP BY tool_name
+               ORDER BY count DESC
+               LIMIT 10""",
+            (from_ts,),
+        ) as cur:
+            top_tools = await cur.fetchall()
 
-            # Error count
-            error_count = conn.execute(
-                "SELECT COUNT(*) FROM tool_calls WHERE timestamp >= ? AND success = 0", (from_ts,)
-            ).fetchone()[0]
+        # Error count
+        async with conn.execute(
+            "SELECT COUNT(*) FROM tool_calls WHERE timestamp >= ? AND success = 0", (from_ts,)
+        ) as cur:
+            row = await cur.fetchone()
+            error_count = row[0]
 
         return {
             "total_calls": total,
@@ -209,13 +229,13 @@ class AuditStore:
             "period_days": days,
         }
 
-    def prune(self, older_than_days: int = 90) -> int:
+    async def prune(self, older_than_days: int = 90) -> int:
         """Remove entries older than N days. Returns count of removed entries."""
         from_ts = time.time() - (older_than_days * 86400)
-        with sqlite3.connect(str(self.db_path)) as conn:
-            cursor = conn.execute("DELETE FROM tool_calls WHERE timestamp < ?", (from_ts,))
-            conn.commit()
-            return cursor.rowcount
+        conn = await self._get_conn()
+        cursor = await conn.execute("DELETE FROM tool_calls WHERE timestamp < ?", (from_ts,))
+        await conn.commit()
+        return cursor.rowcount
 
 
 # Module-level singleton
@@ -250,8 +270,8 @@ def subscribe_audit_to_events() -> None:
 
     from src.events import subscribe_async
 
-    def _on_tool_completed(event, **ctx):
-        store.record_call(
+    async def _on_tool_completed(event, **ctx):
+        await store.record_call(
             thread_id=ctx.get("thread_id", ""),
             tool_name=ctx.get("tool_name", ""),
             sender_id=ctx.get("sender_id", ""),
@@ -261,8 +281,8 @@ def subscribe_audit_to_events() -> None:
             args_preview=ctx.get("args_preview", ""),
         )
 
-    def _on_tool_failed(event, **ctx):
-        store.record_call(
+    async def _on_tool_failed(event, **ctx):
+        await store.record_call(
             thread_id=ctx.get("thread_id", ""),
             tool_name=ctx.get("tool_name", ""),
             sender_id=ctx.get("sender_id", ""),

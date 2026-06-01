@@ -331,7 +331,7 @@ class MessageHandler:
                 channel=channel_prefix,
             )
 
-            existing = await self._container.state_store.aload(thread_id)
+            existing = await self._container.state_store.load(thread_id)
             if existing:
                 if existing.pending_approval:
                     await reply_fn("⏳ 有待审批的操作，请先回复审批后再发新消息。")
@@ -797,7 +797,7 @@ class MessageHandler:
         # Priority 1: re-run agent for interrupted message
         interrupt_msg = self._interrupted_threads.pop(thread_id, None)
         if interrupt_msg:
-            latest = await self._container.state_store.aload(thread_id)
+            latest = await self._container.state_store.load(thread_id)
             if latest:
                 has_msg = any(
                     m.get("content") == interrupt_msg and m.get("role") == "user" for m in latest.messages[-5:]
@@ -835,7 +835,7 @@ class MessageHandler:
             message_id="",
             channel=channel_prefix,
         )
-        existing = await self._container.state_store.aload(thread_id)
+        existing = await self._container.state_store.load(thread_id)
         if existing:
             next_state.messages = existing.messages + next_state.messages
 
@@ -937,7 +937,7 @@ class MessageHandler:
                     return
                 except ApprovalPending as next_exc:
                     if consecutive_denies >= 3:
-                        state = await self._container.state_store.aload(current_exc.thread_id)
+                        state = await self._container.state_store.load(current_exc.thread_id)
                         if state:
                             state.pending_approval = None
                             await self._container.state_store.save(current_exc.thread_id, state)
@@ -948,7 +948,7 @@ class MessageHandler:
         except Exception:
             logger.exception("Error in _handle_approval_pending for request %s", exc.request_id)
             try:
-                state = await self._container.state_store.aload(exc.thread_id)
+                state = await self._container.state_store.load(exc.thread_id)
                 if state and state.pending_approval:
                     state.pending_approval = None
                     await self._container.state_store.save(exc.thread_id, state)
@@ -984,7 +984,7 @@ class MessageHandler:
         a lock conflict and we silently ignore it.
         """
         try:
-            state = await self._container.state_store.aload(thread_id)
+            state = await self._container.state_store.load(thread_id)
             if not state or not state.pending_approval:
                 logger.debug("_resume_and_reply: no pending_approval for thread %s, skipping", thread_id)
                 return

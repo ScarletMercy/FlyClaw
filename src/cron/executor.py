@@ -163,7 +163,7 @@ async def execute_cron_job(
             message_id=f"cron:{job.id}:{started_at}",
         )
         store = agent_loop.get_store()
-        existing = await store.aload(thread_id)
+        existing = await store.load(thread_id)
         if existing:
             input_state.messages = existing.messages + [new_msg]
     elif job.payload.kind == "system_event":
@@ -177,7 +177,7 @@ async def execute_cron_job(
             message_id=f"cron:{job.id}:{started_at}",
         )
         store = agent_loop.get_store()
-        existing = await store.aload(thread_id)
+        existing = await store.load(thread_id)
         if existing:
             input_state.messages = existing.messages + [new_msg]
     else:

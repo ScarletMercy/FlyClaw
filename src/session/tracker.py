@@ -62,7 +62,7 @@ class SessionTracker:
                     continue
                 for tid in expired:
                     try:
-                        state = await state_store.aload(tid)
+                        state = await state_store.load(tid)
                         message_count_before = len(state.messages) if state else 0
                         if state and state.messages:
                             # Emit session reset event — subscribers load messages from checkpointer.db
@@ -270,7 +270,7 @@ class SessionRegistry:
             return []
         channel_prefix, _, user_hash = parts
 
-        threads = store.list_threads()
+        threads = store._list_threads_sync()
         registered = set()
         us = self._users.get(user_key)
         if us:
@@ -297,7 +297,7 @@ class SessionRegistry:
             return []
         channel_prefix = parts[0]
 
-        threads = store.list_threads()
+        threads = store._list_threads_sync()
         registered = set()
         us = self._users.get(user_key)
         if us:

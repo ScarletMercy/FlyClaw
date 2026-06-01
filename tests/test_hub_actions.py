@@ -51,7 +51,7 @@ class TestSearchHub:
         with (
             patch("src._container.get_container", return_value=_make_container()),
             patch("src.skills.hub.create_sources") as mock_cs,
-            patch("src.skills.hub.parallel_search", return_value=[meta]),
+            patch("src.skills.hub.parallel_search", new_callable=AsyncMock, return_value=[meta]),
         ):
             mock_cs.return_value = [MagicMock()]
             result = await _call_action("search_hub", query="test")
@@ -81,7 +81,7 @@ class TestSearchHub:
         with (
             patch("src._container.get_container", return_value=_make_container()),
             patch("src.skills.hub.create_sources", return_value=[MagicMock()]),
-            patch("src.skills.hub.parallel_search", return_value=[meta]),
+            patch("src.skills.hub.parallel_search", new_callable=AsyncMock, return_value=[meta]),
         ):
             result = await _call_action("search_hub", query="x")
             data = json.loads(result)
@@ -107,7 +107,7 @@ class TestInspectHub:
             repo="foo/bar",
         )
         mock_src = MagicMock()
-        mock_src.inspect.return_value = meta
+        mock_src.inspect = AsyncMock(return_value=meta)
         with (
             patch("src._container.get_container", return_value=_make_container()),
             patch("src.skills.hub.create_sources", return_value=[mock_src]),
@@ -146,7 +146,7 @@ class TestInstallHub:
             summary="",
         )
         mock_src = MagicMock()
-        mock_src.fetch.return_value = bundle
+        mock_src.fetch = AsyncMock(return_value=bundle)
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir()
 
@@ -186,7 +186,7 @@ class TestInstallHub:
             summary="",
         )
         mock_src = MagicMock()
-        mock_src.fetch.return_value = bundle
+        mock_src.fetch = AsyncMock(return_value=bundle)
         q_path = tmp_path / "q"
         q_path.mkdir()
 
@@ -207,7 +207,7 @@ class TestInstallHub:
     @pytest.mark.asyncio
     async def test_fetch_returns_none(self):
         mock_src = MagicMock()
-        mock_src.fetch.return_value = None
+        mock_src.fetch = AsyncMock(return_value=None)
         with (
             patch("src._container.get_container", return_value=_make_container()),
             patch("src.skills.hub.create_sources", return_value=[mock_src]),
@@ -228,7 +228,7 @@ class TestInstallHub:
             metadata={},
         )
         mock_src = MagicMock()
-        mock_src.fetch.return_value = bundle
+        mock_src.fetch = AsyncMock(return_value=bundle)
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir()
         q_path = tmp_path / "q"

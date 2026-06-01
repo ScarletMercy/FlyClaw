@@ -22,7 +22,7 @@ class RBAC:
     def store(self) -> AuthStore:
         return self._store
 
-    def resolve_user(
+    async def resolve_user(
         self,
         sender_id: str,
         display_name: str = "",
@@ -38,7 +38,7 @@ class RBAC:
                 except ValueError:
                     pass
 
-        user = self._store.get_or_create_user(
+        user = await self._store.get_or_create_user(
             user_id=sender_id,
             display_name=display_name,
             default_role=default_role,
@@ -57,7 +57,7 @@ class RBAC:
                     user.role.value,
                     default_role.value,
                 )
-                self._store.update_user_role(user.user_id, default_role)
+                await self._store.update_user_role(user.user_id, default_role)
                 user.role = default_role
 
         return user

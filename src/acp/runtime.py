@@ -62,7 +62,7 @@ class AgentLoopRuntime:
             if session.thread_id:
                 try:
                     store = self._ensure_store()
-                    existing = await store.aload(tid)
+                    existing = await store.load(tid)
                     if existing:
                         existing_messages = existing.messages
                 except Exception:

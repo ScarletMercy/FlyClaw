@@ -1,8 +1,7 @@
 import json
 import pytest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import MagicMock, patch, AsyncMock
 
 from src.skills.hub import (
     _normalize_bundle_path,
@@ -201,38 +200,42 @@ class TestParallelSearch:
     def _mock_source(self, source_id, results=None):
         src = MagicMock()
         src.source_id.return_value = source_id
-        src.search.return_value = results or []
+        src.search = AsyncMock(return_value=results or [])
         return src
 
-    def test_merges_results(self):
+    @pytest.mark.asyncio
+    async def test_merges_results(self):
         s1 = self._mock_source(
             "a", [SkillMeta(name="x", description="d", source="a", identifier="a/x", trust_level="community")]
         )
         s2 = self._mock_source(
             "b", [SkillMeta(name="y", description="d", source="b", identifier="b/y", trust_level="community")]
         )
-        results = parallel_search([s1, s2], "test")
+        results = await parallel_search([s1, s2], "test")
         names = {r.name for r in results}
         assert names == {"x", "y"}
 
-    def test_source_filter(self):
+    @pytest.mark.asyncio
+    async def test_source_filter(self):
         s1 = self._mock_source(
             "a", [SkillMeta(name="x", description="d", source="a", identifier="a/x", trust_level="community")]
         )
         s2 = self._mock_source(
             "b", [SkillMeta(name="y", description="d", source="b", identifier="b/y", trust_level="community")]
         )
-        results = parallel_search([s1, s2], "test", source_filter="a")
+        results = await parallel_search([s1, s2], "test", source_filter="a")
         assert all(r.source == "a" for r in results)
 
-    def test_empty_sources(self):
-        results = parallel_search([], "test")
+    @pytest.mark.asyncio
+    async def test_empty_sources(self):
+        results = await parallel_search([], "test")
         assert results == []
 
-    def test_exception_in_source(self):
+    @pytest.mark.asyncio
+    async def test_exception_in_source(self):
         s1 = self._mock_source("a")
-        s1.search.side_effect = Exception("boom")
-        results = parallel_search([s1], "test")
+        s1.search = AsyncMock(side_effect=Exception("boom"))
+        results = await parallel_search([s1], "test")
         assert results == []
 
 

@@ -107,11 +107,11 @@ class SkillCurator:
 
     async def review_skills(self, dry_run: bool = False) -> dict:
         """审查技能库，执行自动生命周期转换。"""
-        skills = self.manager.list_skills()
+        skills = await self.manager.list_skills()
         changes = []
 
         for skill in skills:
-            usage = self.manager.get_usage(skill.name)
+            usage = await self.manager.get_usage(skill.name)
             if not usage:
                 continue
 
@@ -128,7 +128,7 @@ class SkillCurator:
 
             if current_state == "active" and self._is_stale(last_activity, days=self.stale_after_days):
                 if not dry_run:
-                    self._update_skill_state(skill.name, "stale")
+                    await self._update_skill_state(skill.name, "stale")
                 changes.append(
                     {
                         "skill": skill.name,
@@ -140,7 +140,7 @@ class SkillCurator:
             elif current_state == "stale" and self._is_stale(last_activity, days=self.archive_after_days):
                 if not dry_run:
                     self._archive_skill_dir(skill.name)
-                    self._update_skill_state(skill.name, "archived")
+                    await self._update_skill_state(skill.name, "archived")
                 changes.append(
                     {
                         "skill": skill.name,
@@ -151,7 +151,7 @@ class SkillCurator:
 
             elif current_state == "stale" and not self._is_stale(last_activity, days=self.stale_after_days):
                 if not dry_run:
-                    self._update_skill_state(skill.name, "active")
+                    await self._update_skill_state(skill.name, "active")
                 changes.append(
                     {
                         "skill": skill.name,
@@ -241,22 +241,13 @@ class SkillCurator:
         except Exception:
             return True
 
-    def _update_skill_state(self, skill_name: str, new_state: str) -> None:
-        usage_file = self.skills_dir / ".usage.json"
-        if not usage_file.exists():
-            return
-        try:
-            usage_data = json.loads(usage_file.read_text(encoding="utf-8"))
-            if skill_name in usage_data:
-                usage_data[skill_name]["state"] = new_state
-                if new_state == "archived":
-                    usage_data[skill_name]["archived_at"] = datetime.now().isoformat()
-                usage_file.write_text(
-                    json.dumps(usage_data, indent=2, ensure_ascii=False),
-                    encoding="utf-8",
-                )
-        except Exception as e:
-            logger.warning("Failed to update skill state: %s", e)
+    async def _update_skill_state(self, skill_name: str, new_state: str) -> None:
+        def _set_state(record):
+            record["state"] = new_state
+            if new_state == "archived":
+                record["archived_at"] = datetime.now().isoformat()
+
+        await self.manager._mutate_usage(skill_name, _set_state)
 
     def _archive_skill_dir(self, skill_name: str) -> bool:
         """Move skill directory to .archive/."""

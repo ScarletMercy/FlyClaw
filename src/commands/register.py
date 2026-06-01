@@ -20,7 +20,7 @@ def register_auth_commands(dispatcher, container):
         sender_id = ctx.get("sender_id", "")
         if not sender_id:
             return "无法确定身份。" if zh else "Cannot determine your identity."
-        pairing = store.create_pairing_code(
+        pairing = await store.create_pairing_code(
             user_id=sender_id,
             ttl_seconds=container.config.auth.pairing_ttl_seconds,
         )
@@ -38,14 +38,14 @@ def register_auth_commands(dispatcher, container):
         sender_id = ctx.get("sender_id", "")
         if not sender_id:
             return "未知身份。" if zh else "Unknown identity."
-        user = rbac.resolve_user(sender_id)
+        user = await rbac.resolve_user(sender_id)
         if zh:
             lines = [
                 f"用户ID: {user.user_id}",
                 f"角色: {user.role.value}",
                 f"显示名: {user.display_name or '(未设置)'}",
             ]
-            devices = store.list_user_devices(sender_id)
+            devices = await store.list_user_devices(sender_id)
             if devices:
                 trusted = sum(1 for d in devices if d.trusted)
                 lines.append(f"设备: {len(devices)} 个（{trusted} 个已信任）")
@@ -55,7 +55,7 @@ def register_auth_commands(dispatcher, container):
                 f"Role: {user.role.value}",
                 f"Display: {user.display_name or '(not set)'}",
             ]
-            devices = store.list_user_devices(sender_id)
+            devices = await store.list_user_devices(sender_id)
             if devices:
                 lines.append(f"Devices: {len(devices)} ({sum(1 for d in devices if d.trusted)} trusted)")
         return "\n".join(lines)
@@ -63,7 +63,7 @@ def register_auth_commands(dispatcher, container):
     async def cmd_role(args: str, ctx: dict) -> str:
         zh = container.config.agents.language == "zh"
         sender_id = ctx.get("sender_id", "")
-        caller = rbac.resolve_user(sender_id)
+        caller = await rbac.resolve_user(sender_id)
         if not rbac.check_admin_access(caller):
             return "权限不足，需要管理员权限。" if zh else "Permission denied. Admin access required."
         parts = args.strip().split()
@@ -82,7 +82,7 @@ def register_auth_commands(dispatcher, container):
             return f"Invalid role: {role_str}. Use: owner, admin, user, guest"
         if target_role == UserRole.owner and not caller.is_owner:
             return "只有 owner 可以分配 owner 角色。" if zh else "Only owners can assign the owner role."
-        if store.update_user_role(target_id, target_role):
+        if await store.update_user_role(target_id, target_role):
             if zh:
                 return f"用户 {target_id} 角色已更新为 {target_role.value}"
             return f"User {target_id} role updated to {target_role.value}"
@@ -203,7 +203,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         thread_id = ctx.get("thread_id", "")
         if thread_id:
             try:
-                state = await container.state_store.aload(thread_id)
+                state = await container.state_store.load(thread_id)
                 if state:
                     state.messages = []
                     await container.state_store.save(thread_id, state)
@@ -324,7 +324,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
 
         lines = []
 
-        default_state = await container.state_store.aload(user_key)
+        default_state = await container.state_store.load(user_key)
         has_default = default_state is not None
         default_summary = ""
         if has_default:
@@ -348,7 +348,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
             summary = s["summary"]
             if summary in ("(new)", ""):
                 try:
-                    st = await container.state_store.aload(s["thread_id"])
+                    st = await container.state_store.load(s["thread_id"])
                     if st:
                         for m in st.messages:
                             if m.get("role") == "user":
@@ -432,7 +432,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
 
         cp_path = container.config.checkpointer.path
         si_path = container.config.session_search.index_path if container.config.session_search.enabled else None
-        stats = prune_sessions(cp_path, older_than_days=older_than_days, session_index_path=si_path)
+        stats = await prune_sessions(cp_path, older_than_days=older_than_days, session_index_path=si_path)
 
         if zh:
             lines = [
@@ -443,7 +443,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
             if stats.get("index_sessions_removed", 0) > 0:
                 lines.append(f"  索引已删除: {stats['index_sessions_removed']}")
             if do_vacuum and stats["sessions_removed"] > 0:
-                new_size = vacuum_database(cp_path)
+                new_size = await vacuum_database(cp_path)
                 lines.append(f"  清理后数据库大小: {new_size} 字节")
         else:
             lines = [
@@ -454,7 +454,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
             if stats.get("index_sessions_removed", 0) > 0:
                 lines.append("  Index removed: " + str(stats["index_sessions_removed"]))
             if do_vacuum and stats["sessions_removed"] > 0:
-                new_size = vacuum_database(cp_path)
+                new_size = await vacuum_database(cp_path)
                 lines.append("  Database size after cleanup: " + str(new_size) + " bytes")
 
         return "\n".join(lines)
@@ -788,13 +788,13 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         arg = args.strip()
         if arg:
             # Show diff for a specific snapshot
-            diff_text = mgr.diff(work_dir, arg)
+            diff_text = await mgr.diff(work_dir, arg)
             if diff_text.startswith("Error"):
                 return diff_text
             header = f"快照 {arg} 与当前差异:" if zh else f"Diff from snapshot {arg}:"
             return f"{header}\n{diff_text}"
 
-        snapshots = mgr.list_snapshots(work_dir)
+        snapshots = await mgr.list_snapshots(work_dir)
         if not snapshots:
             return "暂无快照。" if zh else "No snapshots yet."
 
@@ -844,9 +844,9 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         file_path = parts[1].strip() if len(parts) > 1 else ""
 
         if file_path:
-            result = mgr.restore_file(work_dir, snap_id, file_path)
+            result = await mgr.restore_file(work_dir, snap_id, file_path)
         else:
-            result = mgr.restore(work_dir, snap_id)
+            result = await mgr.restore(work_dir, snap_id)
 
         if result.startswith("Restore failed") or result.startswith("No snapshot"):
             return result

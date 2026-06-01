@@ -114,9 +114,9 @@ def register_dashboard(app: FastAPI, application):
         # Historical sessions from state store
         if _app_ref.state_store:
             try:
-                for tid in _app_ref.state_store.list_threads():
+                for tid in await _app_ref.state_store.list_threads():
                     if tid not in active_ids and _chat_pattern.match(tid):
-                        state = await _app_ref.state_store.aload(tid)
+                        state = await _app_ref.state_store.load(tid)
                         msg_count = len(state.messages) if state else 0
                         sessions.append(
                             {
@@ -137,7 +137,7 @@ def register_dashboard(app: FastAPI, application):
         if not _app_ref.state_store:
             raise HTTPException(status_code=500, detail="State store not initialized")
         try:
-            _app_ref.state_store.delete(thread_id)
+            await _app_ref.state_store.delete(thread_id)
             if _app_ref.session_tracker:
                 _app_ref.session_tracker.remove(thread_id)
             if _app_ref.agent_loop:
@@ -355,10 +355,10 @@ def register_dashboard(app: FastAPI, application):
             rbac = get_rbac()
             if rbac is None:
                 return {"enabled": True, "users": []}
-            users = rbac.store.list_users()
+            users = await rbac.store.list_users()
             result = []
             for u in users:
-                devices = rbac.store.list_user_devices(u.user_id)
+                devices = await rbac.store.list_user_devices(u.user_id)
                 result.append(
                     {
                         **u.model_dump(),
@@ -379,7 +379,7 @@ def register_dashboard(app: FastAPI, application):
             rbac = get_rbac()
             if rbac is None:
                 return []
-            return [d.model_dump() for d in rbac.store.list_user_devices(user_id)]
+            return [d.model_dump() for d in await rbac.store.list_user_devices(user_id)]
         except Exception:
             return []
 
@@ -395,7 +395,7 @@ def register_dashboard(app: FastAPI, application):
             if rbac is None:
                 raise HTTPException(status_code=500, detail="RBAC not initialized")
             new_role = UserRole(body.get("role", "guest"))
-            rbac.store.update_user_role(user_id, new_role)
+            await rbac.store.update_user_role(user_id, new_role)
             return {"ok": True, "user_id": user_id, "role": new_role.value}
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -411,7 +411,7 @@ def register_dashboard(app: FastAPI, application):
             rbac = get_rbac()
             if rbac is None:
                 raise HTTPException(status_code=500, detail="RBAC not initialized")
-            removed = rbac.store.delete_user(user_id)
+            removed = await rbac.store.delete_user(user_id)
             return {"ok": removed}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -425,7 +425,7 @@ def register_dashboard(app: FastAPI, application):
             rbac = get_rbac()
             if rbac is None:
                 raise HTTPException(status_code=500, detail="RBAC not initialized")
-            removed = rbac.store.delete_device(device_id)
+            removed = await rbac.store.delete_device(device_id)
             return {"ok": removed}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))
@@ -535,7 +535,7 @@ def register_dashboard(app: FastAPI, application):
         try:
             if not _app_ref.state_store:
                 raise HTTPException(status_code=500, detail="State store not initialized")
-            state = await _app_ref.state_store.aload(thread_id)
+            state = await _app_ref.state_store.load(thread_id)
             if not state:
                 raise HTTPException(status_code=404, detail="Session not found")
             messages = state.messages[offset : offset + limit]
@@ -601,7 +601,7 @@ def register_dashboard(app: FastAPI, application):
             skills = _app_ref.skills_cache or []
             lifecycle_counts = {"active": 0, "stale": 0, "archived": 0}
             for s in skills:
-                usage = curator.manager.get_usage(s.name)
+                usage = await curator.manager.get_usage(s.name)
                 state = usage.get("state", "active") if usage else "active"
                 if state in lifecycle_counts:
                     lifecycle_counts[state] += 1
@@ -680,7 +680,7 @@ def register_dashboard(app: FastAPI, application):
             elif status == "error":
                 success_filter = False
 
-            entries = store.query(
+            entries = await store.query(
                 tool_name=tool_name or None,
                 sender_id=sender_id or None,
                 success=success_filter,
@@ -718,7 +718,7 @@ def register_dashboard(app: FastAPI, application):
             from src.analytics.audit_store import get_audit_store
 
             store = get_audit_store()
-            return store.get_stats(days=days)
+            return await store.get_stats(days=days)
         except Exception as e:
             return {"error": str(e)}
 
@@ -763,7 +763,7 @@ def register_dashboard(app: FastAPI, application):
             # 2. Reload skills (skill config changes)
             # _reload_skills() already updates agent_loop._skills_prompt and dispatcher
             try:
-                _app_ref._reload_skills()
+                await _app_ref._reload_skills()
             except Exception:
                 pass
 

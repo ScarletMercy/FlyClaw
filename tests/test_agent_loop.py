@@ -310,7 +310,7 @@ class TestAgentLoopStatePersistence:
         state = AgentState(messages=[{"role": "user", "content": "save me"}])
         await loop.run(state, "persist_test")
 
-        loaded = await store.aload("persist_test")
+        loaded = await store.load("persist_test")
         assert loaded is not None
         assert any(m.get("content") == "Saved!" for m in loaded.messages)
 

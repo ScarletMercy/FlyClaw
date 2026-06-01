@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
+
+import aiofiles
 
 from .types import Skill, SkillMetadata
 
@@ -43,17 +46,19 @@ def parse_frontmatter(content: str) -> tuple[dict, str]:
     return {}, content
 
 
-def load_skill(skill_dir: Path, source: str) -> Optional[Skill]:
+async def load_skill(skill_dir: Path, source: str) -> Optional[Skill]:
     md_path = skill_dir / "SKILL.md"
-    if not md_path.exists():
+    if not await asyncio.to_thread(md_path.exists):
         return None
 
     try:
-        resolved = md_path.resolve()
-        if resolved.stat().st_size > _MAX_SKILL_FILE_BYTES:
+        resolved = await asyncio.to_thread(md_path.resolve)
+        size = await asyncio.to_thread(lambda: resolved.stat().st_size)
+        if size > _MAX_SKILL_FILE_BYTES:
             logger.warning("Skill file too large, skipping: %s", md_path)
             return None
-        content = resolved.read_text(encoding="utf-8")
+        async with aiofiles.open(resolved, encoding="utf-8") as f:
+            content = await f.read()
         content = content.replace("\r\n", "\n")
     except FileNotFoundError:
         logger.debug("Skill file not found: %s", md_path)
@@ -69,7 +74,7 @@ def load_skill(skill_dir: Path, source: str) -> Optional[Skill]:
     name = frontmatter.get("name", skill_dir.name)
     description = frontmatter.get("description", "")
 
-    extra_parts = _collect_extra_md(skill_dir, resolved)
+    extra_parts = await _collect_extra_md(skill_dir, resolved)
     if extra_parts:
         body = body.rstrip() + "\n\n" + "\n\n".join(extra_parts)
 
@@ -94,10 +99,12 @@ def load_skill(skill_dir: Path, source: str) -> Optional[Skill]:
     )
 
 
-def _collect_extra_md(skill_dir: Path, main_md: Path) -> list[str]:
+async def _collect_extra_md(skill_dir: Path, main_md: Path) -> list[str]:
+    paths = await asyncio.to_thread(lambda: sorted(skill_dir.rglob("*.md")))
     parts: list[str] = []
-    for p in sorted(skill_dir.rglob("*.md")):
-        if p.resolve() == main_md:
+    for p in paths:
+        resolved = await asyncio.to_thread(p.resolve)
+        if resolved == main_md:
             continue
         if p.name.startswith("."):
             continue
@@ -108,47 +115,48 @@ def _collect_extra_md(skill_dir: Path, main_md: Path) -> list[str]:
         if any(seg.startswith(".") for seg in rel.parts):
             continue
         try:
-            text = p.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+            async with aiofiles.open(p, encoding="utf-8") as f:
+                text = (await f.read()).replace("\r\n", "\n").strip()
         except Exception:
             continue
         parts.append(f"--- {rel.as_posix()} ---\n\n{text}")
     return parts
 
 
-def discover_skills(
+async def discover_skills(
     directories: list[tuple[str, Path]],
     config: "AppConfig",
     channel: str | None = None,
 ) -> list[Skill]:
     skills: dict[str, Skill] = {}
     for source_label, directory in directories:
-        if not directory.exists():
+        if not await asyncio.to_thread(directory.exists):
             continue
-        found = _scan_directory(directory, source_label)
+        found = await _scan_directory(directory, source_label)
         for skill in found:
             if not is_skill_disabled(skill.name, config, channel):
                 skills[skill.name] = skill
     return list(skills.values())
 
 
-def _scan_directory(directory: Path, source: str) -> list[Skill]:
+async def _scan_directory(directory: Path, source: str) -> list[Skill]:
     results = []
-    candidate = load_skill(directory, source)
+    candidate = await load_skill(directory, source)
     if candidate:
         results.append(candidate)
         return results
 
     try:
-        entries = sorted(directory.iterdir())
+        entries = await asyncio.to_thread(lambda: sorted(directory.iterdir()))
     except PermissionError:
         return results
 
     for entry in entries:
-        if not entry.is_dir():
+        if not await asyncio.to_thread(entry.is_dir):
             continue
         if entry.name.startswith(".") or entry.name.startswith("_"):
             continue
-        skill = load_skill(entry, source)
+        skill = await load_skill(entry, source)
         if skill:
             results.append(skill)
     return results

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sqlite3
-import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Optional
+
+import aiosqlite
 
 from src.auth.models import Device, PairingCode, User, UserRole
 
@@ -53,44 +55,53 @@ class AuthStore:
     def __init__(self, db_path: str = "~/.flyclaw/data/auth.db"):
         self._path = Path(db_path).expanduser().resolve()
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
-        self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.executescript(_SCHEMA)
-        self._conn.commit()
+        self._lock = asyncio.Lock()
+        self._conn: Optional[aiosqlite.Connection] = None
+
+    async def _get_conn(self) -> aiosqlite.Connection:
+        if self._conn is None:
+            self._conn = await aiosqlite.connect(str(self._path))
+            self._conn.row_factory = aiosqlite.Row
+            await self._conn.execute("PRAGMA journal_mode=WAL")
+            await self._conn.executescript(_SCHEMA)
+            await self._conn.commit()
+        return self._conn
 
     # ── Users ──────────────────────────────────────────────
 
-    def get_user(self, user_id: str) -> Optional[User]:
-        row = self._conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()
+    async def get_user(self, user_id: str) -> Optional[User]:
+        conn = await self._get_conn()
+        async with conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
         if row is None:
             return None
         return self._row_to_user(row)
 
-    def get_or_create_user(
+    async def get_or_create_user(
         self,
         user_id: str,
         display_name: str = "",
         default_role: UserRole = UserRole.guest,
     ) -> User:
-        with self._lock:
-            user = self.get_user(user_id)
+        async with self._lock:
+            user = await self.get_user(user_id)
             if user is not None:
-                self._conn.execute(
+                conn = await self._get_conn()
+                await conn.execute(
                     "UPDATE users SET last_seen = ? WHERE user_id = ?",
                     (time.time(), user_id),
                 )
-                self._conn.commit()
+                await conn.commit()
                 user.touch()
                 return user
             now = time.time()
-            self._conn.execute(
+            conn = await self._get_conn()
+            await conn.execute(
                 "INSERT INTO users (user_id, role, display_name, allowed_tools, denied_tools, created_at, last_seen) "
                 "VALUES (?, ?, ?, '[]', '[]', ?, ?)",
                 (user_id, default_role.value, display_name, now, now),
             )
-            self._conn.commit()
+            await conn.commit()
             logger.info("New user registered: %s (role=%s)", user_id, default_role.value)
             return User(
                 user_id=user_id,
@@ -100,22 +111,23 @@ class AuthStore:
                 last_seen=now,
             )
 
-    def update_user_role(self, user_id: str, role: UserRole) -> bool:
-        with self._lock:
-            cur = self._conn.execute(
+    async def update_user_role(self, user_id: str, role: UserRole) -> bool:
+        async with self._lock:
+            conn = await self._get_conn()
+            cur = await conn.execute(
                 "UPDATE users SET role = ? WHERE user_id = ?",
                 (role.value, user_id),
             )
-            self._conn.commit()
+            await conn.commit()
             return cur.rowcount > 0
 
-    def update_user_tools(
+    async def update_user_tools(
         self,
         user_id: str,
         allowed_tools: Optional[list[str]] = None,
         denied_tools: Optional[list[str]] = None,
     ) -> bool:
-        with self._lock:
+        async with self._lock:
             sets: list[str] = []
             params: list[Any] = []
             if allowed_tools is not None:
@@ -127,24 +139,28 @@ class AuthStore:
             if not sets:
                 return False
             params.append(user_id)
-            cur = self._conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE user_id = ?", params)
-            self._conn.commit()
+            conn = await self._get_conn()
+            cur = await conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE user_id = ?", params)
+            await conn.commit()
             return cur.rowcount > 0
 
-    def list_users(self) -> list[User]:
-        rows = self._conn.execute("SELECT * FROM users ORDER BY last_seen DESC").fetchall()
+    async def list_users(self) -> list[User]:
+        conn = await self._get_conn()
+        async with conn.execute("SELECT * FROM users ORDER BY last_seen DESC") as cursor:
+            rows = await cursor.fetchall()
         return [self._row_to_user(r) for r in rows]
 
-    def delete_user(self, user_id: str) -> bool:
-        with self._lock:
-            self._conn.execute("DELETE FROM devices WHERE user_id = ?", (user_id,))
-            cur = self._conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
-            self._conn.commit()
+    async def delete_user(self, user_id: str) -> bool:
+        async with self._lock:
+            conn = await self._get_conn()
+            await conn.execute("DELETE FROM devices WHERE user_id = ?", (user_id,))
+            cur = await conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+            await conn.commit()
             return cur.rowcount > 0
 
     # ── Devices ─────────────────────────────────────────────
 
-    def register_device(
+    async def register_device(
         self,
         device_id: str,
         user_id: str,
@@ -153,14 +169,15 @@ class AuthStore:
         fingerprint: str = "",
         trusted: bool = False,
     ) -> Device:
-        with self._lock:
+        async with self._lock:
             now = time.time()
-            self._conn.execute(
+            conn = await self._get_conn()
+            await conn.execute(
                 "INSERT OR REPLACE INTO devices (device_id, user_id, platform, name, fingerprint, trusted, paired_at, last_seen) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (device_id, user_id, platform, name, fingerprint, int(trusted), now, now),
             )
-            self._conn.commit()
+            await conn.commit()
             return Device(
                 device_id=device_id,
                 user_id=user_id,
@@ -172,77 +189,86 @@ class AuthStore:
                 last_seen=now,
             )
 
-    def get_device(self, device_id: str) -> Optional[Device]:
-        row = self._conn.execute("SELECT * FROM devices WHERE device_id = ?", (device_id,)).fetchone()
+    async def get_device(self, device_id: str) -> Optional[Device]:
+        conn = await self._get_conn()
+        async with conn.execute("SELECT * FROM devices WHERE device_id = ?", (device_id,)) as cursor:
+            row = await cursor.fetchone()
         if row is None:
             return None
         return self._row_to_device(row)
 
-    def trust_device(self, device_id: str) -> bool:
-        with self._lock:
-            cur = self._conn.execute("UPDATE devices SET trusted = 1 WHERE device_id = ?", (device_id,))
-            self._conn.commit()
+    async def trust_device(self, device_id: str) -> bool:
+        async with self._lock:
+            conn = await self._get_conn()
+            cur = await conn.execute("UPDATE devices SET trusted = 1 WHERE device_id = ?", (device_id,))
+            await conn.commit()
             return cur.rowcount > 0
 
-    def list_user_devices(self, user_id: str) -> list[Device]:
-        rows = self._conn.execute(
+    async def list_user_devices(self, user_id: str) -> list[Device]:
+        conn = await self._get_conn()
+        async with conn.execute(
             "SELECT * FROM devices WHERE user_id = ? ORDER BY last_seen DESC",
             (user_id,),
-        ).fetchall()
+        ) as cursor:
+            rows = await cursor.fetchall()
         return [self._row_to_device(r) for r in rows]
 
-    def delete_device(self, device_id: str) -> bool:
-        with self._lock:
-            cur = self._conn.execute("DELETE FROM devices WHERE device_id = ?", (device_id,))
-            self._conn.commit()
+    async def delete_device(self, device_id: str) -> bool:
+        async with self._lock:
+            conn = await self._get_conn()
+            cur = await conn.execute("DELETE FROM devices WHERE device_id = ?", (device_id,))
+            await conn.commit()
             return cur.rowcount > 0
 
     # ── Pairing ─────────────────────────────────────────────
 
-    def create_pairing_code(
+    async def create_pairing_code(
         self,
         user_id: str,
         device_info: str = "",
         ttl_seconds: int = 300,
     ) -> PairingCode:
-        with self._lock:
-            self._conn.execute("DELETE FROM pairing_codes WHERE expires_at < ?", (time.time(),))
+        async with self._lock:
+            conn = await self._get_conn()
+            await conn.execute("DELETE FROM pairing_codes WHERE expires_at < ?", (time.time(),))
             code = uuid.uuid4().hex
             now = time.time()
             expires_at = now + ttl_seconds
-            self._conn.execute(
+            await conn.execute(
                 "INSERT OR REPLACE INTO pairing_codes (code, user_id, device_info, expires_at, created_at) "
                 "VALUES (?, ?, ?, ?, ?)",
                 (code, user_id, device_info, expires_at, now),
             )
-            self._conn.commit()
+            await conn.commit()
             logger.info("Pairing code created for user %s", user_id)
             return PairingCode(code=code, user_id=user_id, device_info=device_info, expires_at=expires_at)
 
-    def verify_pairing(
+    async def verify_pairing(
         self,
         code: str,
         device_id: str,
         platform: str = "",
         name: str = "",
     ) -> Optional[User]:
-        with self._lock:
-            self._conn.execute("DELETE FROM pairing_codes WHERE expires_at < ?", (time.time(),))
-            row = self._conn.execute("SELECT * FROM pairing_codes WHERE code = ?", (code,)).fetchone()
+        async with self._lock:
+            conn = await self._get_conn()
+            await conn.execute("DELETE FROM pairing_codes WHERE expires_at < ?", (time.time(),))
+            async with conn.execute("SELECT * FROM pairing_codes WHERE code = ?", (code,)) as cursor:
+                row = await cursor.fetchone()
             if row is None:
                 logger.warning("Pairing code not found: %s", code)
                 return None
             if row["expires_at"] < time.time():
-                self._conn.execute("DELETE FROM pairing_codes WHERE code = ?", (code,))
-                self._conn.commit()
+                await conn.execute("DELETE FROM pairing_codes WHERE code = ?", (code,))
+                await conn.commit()
                 logger.warning("Pairing code expired: %s", code)
                 return None
 
             user_id = row["user_id"]
             # Upgrade guest → user on first pairing
-            user = self.get_user(user_id)
+            user = await self.get_user(user_id)
             if user and user.role == UserRole.guest:
-                cur = self._conn.execute(
+                await conn.execute(
                     "UPDATE users SET role = ? WHERE user_id = ?",
                     (UserRole.user.value, user_id),
                 )
@@ -250,27 +276,29 @@ class AuthStore:
 
             # Register device as trusted
             now = time.time()
-            self._conn.execute(
+            await conn.execute(
                 "INSERT OR REPLACE INTO devices (device_id, user_id, platform, name, fingerprint, trusted, paired_at, last_seen) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (device_id, user_id, platform, name, "", 1, now, now),
             )
 
             # Consume the code
-            self._conn.execute("DELETE FROM pairing_codes WHERE code = ?", (code,))
-            self._conn.commit()
+            await conn.execute("DELETE FROM pairing_codes WHERE code = ?", (code,))
+            await conn.commit()
             logger.info("Device %s paired for user %s", device_id, user_id)
 
-            return self.get_user(user_id)
+            return await self.get_user(user_id)
 
-    def is_trusted_device(self, device_id: str) -> bool:
-        row = self._conn.execute("SELECT trusted FROM devices WHERE device_id = ?", (device_id,)).fetchone()
+    async def is_trusted_device(self, device_id: str) -> bool:
+        conn = await self._get_conn()
+        async with conn.execute("SELECT trusted FROM devices WHERE device_id = ?", (device_id,)) as cursor:
+            row = await cursor.fetchone()
         return row is not None and bool(row["trusted"])
 
     # ── Internal helpers ────────────────────────────────────
 
     @staticmethod
-    def _row_to_user(row: sqlite3.Row) -> User:
+    def _row_to_user(row: aiosqlite.Row) -> User:
         return User(
             user_id=row["user_id"],
             role=UserRole(row["role"]),
@@ -282,7 +310,7 @@ class AuthStore:
         )
 
     @staticmethod
-    def _row_to_device(row: sqlite3.Row) -> Device:
+    def _row_to_device(row: aiosqlite.Row) -> Device:
         return Device(
             device_id=row["device_id"],
             user_id=row["user_id"],
@@ -294,5 +322,7 @@ class AuthStore:
             last_seen=row["last_seen"],
         )
 
-    def close(self) -> None:
-        self._conn.close()
+    async def close(self) -> None:
+        if self._conn is not None:
+            await self._conn.close()
+            self._conn = None
