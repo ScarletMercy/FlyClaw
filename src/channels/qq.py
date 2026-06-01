@@ -585,10 +585,11 @@ class QQChannel(Channel):
                 continue
 
             try:
-                async with httpx.AsyncClient(timeout=30, follow_redirects=True) as dl:
-                    resp = await dl.get(download_url, headers=media_headers)
-                    resp.raise_for_status()
-                    audio_data = resp.content
+                from src.security.url_safety import safe_fetch
+
+                resp = await safe_fetch(download_url, timeout=30.0, headers=media_headers)
+                resp.raise_for_status()
+                audio_data = resp.content
 
                 if len(audio_data) < 10:
                     parts.append("\n[语音消息（数据过小）]")

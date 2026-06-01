@@ -291,23 +291,6 @@ def _assert_weixin_cdn_url(url: str) -> None:
         raise ValueError(f"Media URL host {host!r} is not in the WeChat CDN allowlist.")
 
 
-def _validate_outbound_url(url: str) -> None:
-    import ipaddress as _ipaddress
-
-    parsed = urlparse(url)
-    if parsed.scheme.lower() not in ("http", "https"):
-        raise ValueError(f"Disallowed URL scheme: {parsed.scheme!r}")
-    host = parsed.hostname
-    if not host:
-        raise ValueError("URL has no hostname")
-    try:
-        addr = _ipaddress.ip_address(host)
-    except ValueError:
-        return
-    if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-        raise ValueError(f"Private/reserved IP not allowed: {host}")
-
-
 def _media_reference(item: dict[str, Any], key: str) -> dict[str, Any]:
     return (item.get(key) or {}).get("media") or {}
 
@@ -1057,28 +1040,33 @@ class WeixinChannel(Channel):
     async def send_text(self, chat_id: str, text: str, reply_to: Optional[str] = None) -> Any:
         if not self._send_session or not self._token:
             return None
-        try:
-            context_token = self._token_store.get(self._account_id, chat_id)
-            chunks = [
-                c
-                for c in _split_text_for_delivery(
-                    format_message(text), self.MAX_MESSAGE_LENGTH, self._split_multiline_messages
-                )
-                if c and c.strip()
-            ]
-            last_id = None
-            for idx, chunk in enumerate(chunks):
-                client_id = f"flyclaw-weixin-{uuid.uuid4().hex}"
+        context_token = self._token_store.get(self._account_id, chat_id)
+        chunks = [
+            c
+            for c in _split_text_for_delivery(
+                format_message(text), self.MAX_MESSAGE_LENGTH, self._split_multiline_messages
+            )
+            if c and c.strip()
+        ]
+        last_id: Optional[str] = None
+        for idx, chunk in enumerate(chunks):
+            client_id = f"flyclaw-weixin-{uuid.uuid4().hex}"
+            try:
                 await self._send_text_chunk(
                     chat_id=chat_id, chunk=chunk, context_token=context_token, client_id=client_id
                 )
                 last_id = client_id
-                if idx < len(chunks) - 1 and self._send_chunk_delay_seconds > 0:
-                    await asyncio.sleep(self._send_chunk_delay_seconds)
-            return last_id
-        except Exception as exc:
-            logger.error("weixin send_text failed to=%s: %s", _safe_id(chat_id), exc)
-            return None
+            except Exception as exc:
+                logger.warning(
+                    "weixin send_text chunk %d/%d failed to=%s: %s",
+                    idx + 1,
+                    len(chunks),
+                    _safe_id(chat_id),
+                    exc,
+                )
+            if idx < len(chunks) - 1 and self._send_chunk_delay_seconds > 0:
+                await asyncio.sleep(self._send_chunk_delay_seconds)
+        return last_id
 
     async def send_image(self, chat_id: str, image_key: str) -> bool:
         if not image_key:
@@ -1211,6 +1199,8 @@ class WeixinChannel(Channel):
                         )
                         await asyncio.sleep(600)
                         consecutive_failures = 0
+                        sync_buf = ""
+                        _save_sync_buf(self._account_id, sync_buf)
                         continue
                     consecutive_failures += 1
                     logger.warning(
@@ -1737,15 +1727,11 @@ class WeixinChannel(Channel):
         }
 
     async def _download_remote_media(self, url: str) -> str:
-        _validate_outbound_url(url)
-        assert self._send_session is not None
+        from src.security.url_safety import safe_fetch
 
-        async def _do_fetch() -> bytes:
-            async with self._send_session.get(url) as response:
-                response.raise_for_status()
-                return await response.read()
-
-        data = await asyncio.wait_for(_do_fetch(), timeout=30)
+        resp = await safe_fetch(url, timeout=30.0)
+        resp.raise_for_status()
+        data = resp.content
         suffix = Path(url.split("?", 1)[0]).suffix or ".bin"
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
             handle.write(data)

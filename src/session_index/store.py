@@ -155,9 +155,15 @@ class SessionIndexStore:
             db = self._require_db()
             for msg in messages:
                 await db.execute(
-                    "INSERT OR IGNORE INTO messages "
+                    "INSERT INTO messages "
                     "(thread_id, message_id, role, content, tool_name, tool_calls, timestamp) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(message_id) DO UPDATE SET "
+                    "role=excluded.role, "
+                    "content=excluded.content, "
+                    "tool_name=excluded.tool_name, "
+                    "tool_calls=excluded.tool_calls, "
+                    "timestamp=excluded.timestamp",
                     (
                         thread_id,
                         msg["message_id"],

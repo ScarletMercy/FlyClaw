@@ -39,6 +39,9 @@ class CronService:
         self._last_failure_alert: dict[str, float] = {}
         self._running_jobs: set[str] = set()
         self._running_tasks: dict[str, asyncio.Task] = {}
+        # Incremented on every stop/reschedule so stale finally-blocks from
+        # cancelled tasks know not to mutate the new state.
+        self._epoch: int = 0
         if config:
             self._max_transient_retries = config.cron.max_transient_retries
             self._failure_alert_after = config.cron.failure_alert_after
@@ -131,6 +134,9 @@ class CronService:
         """Wait for running job tasks to complete, with timeout and state persistence."""
         if not self._running_tasks:
             return
+        # Bump epoch so stale finally-blocks from cancelled tasks won't
+        # corrupt state created after reschedule.
+        self._epoch += 1
         timeout = self._shutdown_timeout
         logger.info("Draining %d running cron jobs (timeout=%.1fs)", len(self._running_tasks), timeout)
         try:
@@ -204,14 +210,19 @@ class CronService:
     async def _run_job_tracked(self, job_id: str):
         """Wrapper that registers the running task for graceful shutdown."""
         task = asyncio.current_task()
+        epoch = self._epoch
         if task:
             self._running_tasks[job_id] = task
         try:
-            await self._run_job(job_id)
+            await self._run_job(job_id, epoch=epoch)
         finally:
-            self._running_tasks.pop(job_id, None)
+            # Only mutate shared state if we're in the same epoch.
+            # After _drain_running_tasks bumps the epoch, stale tasks must
+            # not touch the new _running_tasks / _running_jobs.
+            if self._epoch == epoch:
+                self._running_tasks.pop(job_id, None)
 
-    async def _run_job(self, job_id: str):
+    async def _run_job(self, job_id: str, *, epoch: int = 0):
         job = self._jobs.get(job_id)
         if job is None:
             logger.error("Job %s not found in memory", job_id)
@@ -356,7 +367,11 @@ class CronService:
                 await self.remove_job(job.id)
         finally:
             job.running_at = None
-            self._running_jobs.discard(job_id)
+            # Only discard from the shared set if we're still in the same epoch.
+            # Otherwise this is a stale task from before a drain/reschedule and
+            # _running_jobs now belongs to the new scheduler incarnation.
+            if self._epoch == epoch:
+                self._running_jobs.discard(job_id)
 
     def list_jobs(self) -> list[CronJob]:
         return list(self._jobs.values())

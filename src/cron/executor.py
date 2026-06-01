@@ -10,8 +10,6 @@ import re
 import time
 from typing import Any, Optional
 
-import httpx
-
 from src.agent.state import AgentState
 from .types import CronJob, CronRunResult
 
@@ -47,12 +45,6 @@ _CRON_EXECUTION_HINT = (
 def _is_transient_error(error_str: str) -> bool:
     lower = error_str.lower()
     return any(re.search(p, lower) for p in _TRANSIENT_PATTERNS)
-
-
-async def _is_safe_webhook_url(url: str) -> tuple[bool, str]:
-    from src.security.url_safety import is_safe_url
-
-    return await asyncio.get_running_loop().run_in_executor(None, is_safe_url, url)
 
 
 def _extract_assistant_text(messages: list[dict]) -> str:
@@ -296,30 +288,34 @@ async def _deliver_result(job: CronJob, output: str, channel: Any = None):
                 logger.warning("No delivery target for cron job '%s'", job.name)
 
         elif delivery.mode == "webhook" and delivery.webhook_url:
-            safe, reason = await _is_safe_webhook_url(delivery.webhook_url)
-            if not safe:
-                logger.error("Webhook URL blocked (SSRF): %s — %s", delivery.webhook_url, reason)
-                if not delivery.best_effort:
-                    raise ValueError(f"Unsafe webhook URL: {reason}")
-                return
-
             payload = json.dumps({"job_id": job.id, "job_name": job.name, "output": output})
             headers = {"Content-Type": "application/json"}
             webhook_secret = getattr(delivery, "webhook_secret", "") or ""
             if webhook_secret:
                 signature = hmac.new(webhook_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()
                 headers["X-flyclaw-Signature"] = f"sha256={signature}"
-            async with httpx.AsyncClient(timeout=30) as client:
-                resp = await client.post(
+
+            from src.security.url_safety import safe_fetch
+
+            try:
+                resp = await safe_fetch(
                     delivery.webhook_url,
-                    content=payload,
+                    method="POST",
+                    content=payload.encode(),
                     headers=headers,
+                    timeout=30.0,
                 )
-                logger.info(
-                    "Delivered cron output to webhook: %s (status=%d)",
-                    delivery.webhook_url,
-                    resp.status_code,
-                )
+            except ValueError as e:
+                logger.error("Webhook URL blocked (SSRF): %s", e)
+                if not delivery.best_effort:
+                    raise ValueError(f"Unsafe webhook URL: {e}")
+                return
+
+            logger.info(
+                "Delivered cron output to webhook: %s (status=%d)",
+                delivery.webhook_url,
+                resp.status_code,
+            )
 
     except Exception as e:
         logger.error("Delivery failed for job '%s': %s", job.name, e)

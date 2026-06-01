@@ -1,29 +1,12 @@
 from __future__ import annotations
 
 import base64
-import ipaddress
 import logging
 import mimetypes
 from pathlib import Path
 from urllib.parse import urlparse
 
 logger = logging.getLogger("flyclaw.tools.media_understanding")
-
-
-def _validate_url(url: str) -> None:
-    """Validate URL to prevent SSRF attacks."""
-    parsed = urlparse(url)
-    if parsed.scheme not in ("https", "http"):
-        raise ValueError(f"Unsupported URL scheme: {parsed.scheme}")
-    hostname = parsed.hostname
-    if not hostname:
-        raise ValueError("Missing hostname in URL")
-    try:
-        ip = ipaddress.ip_address(hostname)
-    except ValueError:
-        return  # hostname is a domain, not an IP
-    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-        raise ValueError("URL points to a private or reserved IP address")
 
 
 def _get_runner():
@@ -65,16 +48,14 @@ async def _resolve_media_input(source: str, default_mime: str) -> tuple[bytes, s
         mime, _ = mimetypes.guess_type(str(path))
         return data, mime or default_mime
 
-    # Remote URL
-    _validate_url(source)
-    import httpx
+    # Remote URL — use DNS-pinned safe_fetch for SSRF protection
+    from src.security.url_safety import safe_fetch
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30)) as client:
-        resp = await client.get(source, follow_redirects=True)
-        if resp.status_code != 200:
-            raise ValueError(f"Failed to download: HTTP {resp.status_code}")
-        mime_type = _strip_mime_params(resp.headers.get("content-type", default_mime))
-        return resp.content, mime_type
+    resp = await safe_fetch(source, timeout=30.0)
+    if resp.status_code != 200:
+        raise ValueError(f"Failed to download: HTTP {resp.status_code}")
+    mime_type = _strip_mime_params(resp.headers.get("content-type", default_mime))
+    return resp.content, mime_type
 
 
 async def describe_media(media_url: str) -> str:

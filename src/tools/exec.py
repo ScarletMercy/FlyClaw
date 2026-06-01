@@ -188,8 +188,28 @@ _DELETE_APPROVAL_PATTERNS = [
 # - Executor: only blocked if denylist also matches (safe subcommands can pass)
 
 _UNPARSEABLE_SHELL_PATTERNS = [
+    # Pipe to shell — with and without space
+    ("|sh", "| sh"),
     ("| sh", "| sh"),
+    ("|bash", "| bash"),
     ("| bash", "| bash"),
+    ("|zsh", "| zsh"),
+    ("| zsh", "| zsh"),
+    ("|dash", "| dash"),
+    ("| dash", "| dash"),
+    ("|ksh", "| ksh"),
+    ("| ksh", "| ksh"),
+    ("|fish", "| fish"),
+    ("| fish", "| fish"),
+    # Pipe to interpreters that can execute arbitrary code
+    ("|python", "| python"),
+    ("| python", "| python"),
+    ("|perl", "| perl"),
+    ("| perl", "| perl"),
+    ("|ruby", "| ruby"),
+    ("| ruby", "| ruby"),
+    ("|node", "| node"),
+    ("| node", "| node"),
 ]
 
 _SHELL_EXECUTOR_PATTERNS = [
@@ -389,19 +409,45 @@ def _is_denylisted(command: str, deny_patterns: list[str]) -> tuple[bool, str]:
     return False, ""
 
 
+_SHELL_SPECIAL_VAR_RE = __import__("re").compile(
+    r"\$\d"  # $0, $1, ... positional parameters
+    r"|\$[!$?#@*%-]",  # $!, $$, $?, $#, $@, $*, $%, $-
+)
+
+
 def _has_unparseable_shell(command: str) -> tuple[bool, str]:
     """Detect unparseable shell constructs that cannot be statically analyzed.
 
-    These are always blocked regardless of approval_mode:
+    These are always blocked regardless of approval_mode because the denylist
+    cannot reason about runtime-expanded content.
+
+    Detected patterns:
     - Command substitution: $(...) and backticks
-    - Pipe to shell: | sh, | bash
+    - Variable expansion with braces: ${...}
+    - Arithmetic expansion: $((...))
+    - Process substitution: <(...) and >(...)
+    - Pipe to shell/interpreter: | sh, | bash, | python, etc.
+    - Shell special variables: $0-$9, $!, $$, $?, $#, $@, $*
     """
     cmd_lower = command.strip().lower()
     for trigger, label in _UNPARSEABLE_SHELL_PATTERNS:
         if trigger in cmd_lower:
             return True, label
-    if "$(" in command or "`" in command:
+    # Order matters: check more-specific patterns before their general forms.
+    # $(( contains $(, so $(( must be checked first.
+    if "${" in command:
+        return True, "variable expansion"
+    if "$((" in command:
+        return True, "arithmetic expansion"
+    if "$(" in command:
         return True, "command substitution"
+    if "`" in command:
+        return True, "backtick substitution"
+    if "<(" in command or ">(" in command:
+        return True, "process substitution"
+    m = _SHELL_SPECIAL_VAR_RE.search(command)
+    if m:
+        return True, f"shell special variable/expansion ({m.group(0)!r})"
     return False, ""
 
 

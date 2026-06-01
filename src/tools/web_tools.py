@@ -171,29 +171,21 @@ async def web_fetch(url: str) -> str:
     except Exception:
         return f"Invalid URL: {url}"
 
-    # SSRF protection
-    from src.security.url_safety import is_safe_url
-
-    safe, reason = is_safe_url(url)
-    if not safe:
-        logger.warning("Blocked URL fetch (SSRF): %s — %s", url, reason)
-        return f"Blocked: {reason}"
-
     # Prefer HTTPS
     if parsed.scheme == "http":
         url = url.replace("http://", "https://", 1)
 
     try:
-        async with httpx.AsyncClient(
-            follow_redirects=True,
+        from src.security.url_safety import safe_fetch
+
+        response = await safe_fetch(
+            url,
             timeout=FETCH_TIMEOUT,
-            max_redirects=10,
             headers={
                 "Accept": "text/markdown, text/html, text/plain, */*",
                 "User-Agent": "flyclaw/1.0",
             },
-        ) as client:
-            response = await client.get(url)
+        )
 
         content_type = response.headers.get("content-type", "")
         raw_bytes = len(response.content)
@@ -212,6 +204,9 @@ async def web_fetch(url: str) -> str:
         elapsed_ms = int((time.time() - start) * 1000)
         return f"Content from {url} ({raw_bytes} bytes, {elapsed_ms}ms):\n\n{markdown_content}\n\n---"
 
+    except ValueError as e:
+        logger.warning("Blocked URL fetch (SSRF): %s — %s", url, e)
+        return f"Blocked: {e}"
     except httpx.TimeoutException:
         return f"Request timed out after {FETCH_TIMEOUT}s"
     except httpx.HTTPError as e:

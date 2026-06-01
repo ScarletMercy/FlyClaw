@@ -165,6 +165,104 @@ class TestSessionIndexStore:
         assert count == 2
         await store.close()
 
+    async def test_add_messages_updates_existing_content(self, tmp_path):
+        """Re-syncing with modified content should update the indexed message (upsert)."""
+        from src.session_index.store import SessionIndexStore
+
+        store = await SessionIndexStore.create(str(tmp_path / "index.db"))
+        await store.upsert_session("t1", "qq", "s1", "c1", "p2p")
+
+        # v1: insert original
+        await store.add_messages(
+            "t1",
+            [
+                {
+                    "message_id": "m1",
+                    "role": "human",
+                    "content": "original content",
+                    "tool_name": None,
+                    "tool_calls": None,
+                    "timestamp": 1000.0,
+                },
+            ],
+        )
+
+        # v2: re-sync with updated content
+        await store.add_messages(
+            "t1",
+            [
+                {
+                    "message_id": "m1",
+                    "role": "human",
+                    "content": "updated content",
+                    "tool_name": None,
+                    "tool_calls": None,
+                    "timestamp": 2000.0,
+                },
+            ],
+        )
+
+        # row count stays 1
+        cursor = await store._db.execute("SELECT COUNT(*) FROM messages")
+        assert (await cursor.fetchone())[0] == 1
+
+        # content was actually updated
+        cursor = await store._db.execute("SELECT content, timestamp FROM messages WHERE message_id = 'm1'")
+        row = await cursor.fetchone()
+        assert row["content"] == "updated content"
+        assert row["timestamp"] == 2000.0
+
+        await store.close()
+
+    async def test_add_messages_upsert_updates_fts(self, tmp_path):
+        """Re-syncing modified content should refresh the FTS index."""
+        from src.session_index.store import SessionIndexStore
+
+        store = await SessionIndexStore.create(str(tmp_path / "index.db"))
+        await store.upsert_session("t1", "qq", "s1", "c1", "p2p")
+
+        await store.add_messages(
+            "t1",
+            [
+                {
+                    "message_id": "m1",
+                    "role": "human",
+                    "content": "deploy with kubernetes",
+                    "tool_name": None,
+                    "tool_calls": None,
+                    "timestamp": 1000.0,
+                },
+            ],
+        )
+        # FTS can find "kubernetes"
+        assert len(await store.search("kubernetes")) >= 1
+
+        # re-sync: content changed from kubernetes → docker
+        await store.add_messages(
+            "t1",
+            [
+                {
+                    "message_id": "m1",
+                    "role": "human",
+                    "content": "deploy with docker",
+                    "tool_name": None,
+                    "tool_calls": None,
+                    "timestamp": 2000.0,
+                },
+            ],
+        )
+
+        # FTS now finds "docker"
+        results = await store.search("docker")
+        assert len(results) >= 1
+        assert "docker" in results[0]["snippet"].lower()
+
+        # FTS no longer finds "kubernetes"
+        results_old = await store.search("kubernetes")
+        assert all("kubernetes" not in r.get("snippet", "").lower() for r in results_old)
+
+        await store.close()
+
     async def test_mark_inactive(self, tmp_path):
         from src.session_index.store import SessionIndexStore
 

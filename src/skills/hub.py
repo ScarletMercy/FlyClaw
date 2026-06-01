@@ -35,7 +35,6 @@ AUDIT_LOG = HUB_DIR / "audit.log"
 INDEX_CACHE_DIR = HUB_DIR / "index-cache"
 INDEX_CACHE_TTL = 3600
 
-_REDIRECT_CODES = {301, 302, 303, 307, 308}
 _MAX_REDIRECTS = 5
 
 
@@ -68,42 +67,13 @@ def _validate_bundle_rel_path(rel_path: str) -> str:
 
 
 async def _guarded_http_get(url: str, *, timeout: int = 20) -> Optional[httpx.Response]:
+    """Fetch *url* with DNS-pinned SSRF protection and redirect validation."""
+    from src.security.url_safety import safe_fetch
+
     try:
-        from src.security.url_safety import is_safe_url
-
-        safe, _ = is_safe_url(url)
-        if not safe:
-            logger.warning("Blocked unsafe hub URL: %s", url)
-            return None
-    except ImportError:
-        pass
-
-    current_url = url
-    async with httpx.AsyncClient() as client:
-        for _ in range(_MAX_REDIRECTS + 1):
-            try:
-                resp = await client.get(current_url, timeout=timeout, follow_redirects=False)
-            except httpx.HTTPError:
-                return None
-            if resp.status_code in _REDIRECT_CODES:
-                location = resp.headers.get("location")
-                if not location:
-                    return None
-                from urllib.parse import urljoin
-
-                current_url = urljoin(current_url, location)
-                try:
-                    from src.security.url_safety import is_safe_url
-
-                    safe, _ = is_safe_url(current_url)
-                    if not safe:
-                        logger.warning("Blocked unsafe redirect target: %s", current_url)
-                        return None
-                except ImportError:
-                    pass
-                continue
-            return resp
-    return None
+        return await safe_fetch(url, timeout=float(timeout), max_redirects=_MAX_REDIRECTS)
+    except (ValueError, httpx.HTTPError):
+        return None
 
 
 async def _read_index_cache(key: str) -> Optional[Any]:

@@ -155,13 +155,15 @@ class ConfigWatcher:
             return
 
         plan = ReloadPlan.build(changes)
-        self._hash = new_hash
         old_config = self._current
-        self._current = new_config
 
         result = self._on_reload(old_config, new_config, plan)
         if asyncio.iscoroutine(result):
             await result
+
+        # 仅在 reload 成功后才提交状态，确保异常时下次能重试
+        self._hash = new_hash
+        self._current = new_config
 
     async def stop(self):
         self._stop_event.set()
