@@ -1126,48 +1126,34 @@ class AgentLoop:
             from src.tools.memory_tools import MemoryDeleteNeedsApproval
 
             if isinstance(e, (ApprovalNeededError, MemoryDeleteNeedsApproval)):
-                # ── 审批绕过检查：owner 等高权限用户可跳过审批 ──
-                try:
-                    bypass_user = await self._resolve_user(state.sender_id)
-                    if bypass_user:
-                        from src.auth.rbac import get_rbac
+                # ── 记忆删除：不可逆操作，始终需要审批 ──
+                if not isinstance(e, MemoryDeleteNeedsApproval):
+                    # ── 审批绕过检查：owner 等高权限用户可跳过审批（仅 exec_command 等命令执行类） ──
+                    try:
+                        bypass_user = await self._resolve_user(state.sender_id)
+                        if bypass_user:
+                            from src.auth.rbac import get_rbac
 
-                        rbac = get_rbac()
-                        if rbac and rbac.check_approval_bypass(bypass_user):
-                            cmd = getattr(e, "command_preview", "") or getattr(e, "command", "")
+                            rbac = get_rbac()
+                            if rbac and rbac.check_approval_bypass(bypass_user):
+                                cmd = getattr(e, "command_preview", "") or getattr(e, "command", "")
 
-                            # memory_delete 内部无条件 raise，re-execute 无意义，
-                            # 直接执行删除（与 resume 路径一致）
-                            if isinstance(e, MemoryDeleteNeedsApproval) and e.keys:
-                                from src.tools.memory_tools import get_memory_store
-
-                                mem_store = await get_memory_store()
-                                deleted = []
-                                for k in e.keys:
-                                    await mem_store.forget(k)
-                                    deleted.append(k)
-                                result = json.dumps(
-                                    {"ok": True, "deleted": deleted, "count": len(deleted)},
-                                    ensure_ascii=False,
-                                )
-                            else:
                                 from src.tools.approval import get_approval_manager
 
                                 mgr = get_approval_manager()
                                 mgr.approve_session(thread_id, tool_name, cmd)
                                 result = await tool_def.execute(args)
 
-                            # 审计日志在执行成功后才写入，避免 re-raise 时产生虚假记录
-                            logger.info(
-                                "[approval-bypass] user=%s role=%s tool=%s cmd=%.200s",
-                                bypass_user.user_id,
-                                bypass_user.role.value,
-                                tool_name,
-                                cmd,
-                            )
-                            return result
-                except Exception as exc:
-                    logger.debug("approval bypass check failed, falling back to normal flow: %s", exc)
+                                logger.info(
+                                    "[approval-bypass] user=%s role=%s tool=%s cmd=%.200s",
+                                    bypass_user.user_id,
+                                    bypass_user.role.value,
+                                    tool_name,
+                                    cmd,
+                                )
+                                return result
+                    except Exception as exc:
+                        logger.debug("approval bypass check failed, falling back to normal flow: %s", exc)
 
                 # ── 正常审批流程 ──
                 await emit_async(

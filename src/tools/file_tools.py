@@ -117,7 +117,7 @@ async def write_file(path: str, content: str) -> str:
         return f"Error: {e}"
     from src.tools.snapshot import snapshot_before_write
 
-    await asyncio.to_thread(snapshot_before_write, _BASE_DIR)
+    await snapshot_before_write(_BASE_DIR)
     async with _edit_condition:
         try:
             parent = os.path.dirname(resolved)
@@ -150,9 +150,11 @@ async def edit_file(path: str, old_string: str, new_string: str) -> str:
         return f"Error: {e}"
     from src.tools.snapshot import snapshot_before_write
 
-    await asyncio.to_thread(snapshot_before_write, _BASE_DIR)
+    await snapshot_before_write(_BASE_DIR)
     async with _edit_condition:
-        if not await _edit_condition.wait_for(lambda: os.path.exists(resolved), timeout=10.0):
+        try:
+            await asyncio.wait_for(_edit_condition.wait_for(lambda: os.path.exists(resolved)), timeout=10.0)
+        except asyncio.TimeoutError:
             return f"Error: file not found: {path} (resolved to: {resolved}, workspace: {_BASE_DIR})"
 
         try:

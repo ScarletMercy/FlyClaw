@@ -6,7 +6,7 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta
 
 from src.utils.tz import get_tz
-from typing import Optional
+from typing import Literal, Optional
 
 from src._container import get_container
 from src.agent.tooldef import ToolDef
@@ -94,28 +94,29 @@ def _parse_relative_time(at_str: str, tz_name: str = "Asia/Shanghai") -> Optiona
     return None
 
 
-_TASK_TOOL_DESCRIPTION = (
-    "管理自主任务执行计划。用 action 参数指定操作。\n\n"
-    "ACTIONS:\n"
-    "- plan: 制定任务计划（步骤+检查点）。需要 goal 和 plan_json\n"
-    "- status: 查看所有活跃任务\n"
-    "- advance: 标记步骤完成。需要 step_index，可选 run_id, result_summary\n"
-    "- cancel: 取消任务。可选 run_id\n"
-)
-
-
 async def task_manage(
-    action: str, goal: str = "", plan_json: str = "", step_index: int = -1, result_summary: str = "", run_id: str = ""
+    action: Literal["plan", "status", "advance", "cancel"],
+    goal: str = "",
+    plan_json: str = "",
+    step_index: int = -1,
+    result_summary: str = "",
+    run_id: str = "",
 ) -> str:
-    """Manage autonomous task plans with a single compressed tool.
+    """管理自主任务执行计划。用 action 参数指定操作。
+
+    ACTIONS:
+    - plan: 制定任务计划（步骤+检查点）。需要 goal 和 plan_json
+    - status: 查看所有活跃任务
+    - advance: 标记步骤完成。需要 step_index，可选 run_id, result_summary
+    - cancel: 取消任务。可选 run_id
 
     Args:
-        action: One of: plan, status, advance, cancel
-        goal: Task goal (required for plan)
-        plan_json: JSON plan with steps and checkpoints (required for plan)
-        step_index: 0-based step index to mark complete (required for advance)
-        result_summary: Brief summary of what was accomplished (for advance)
-        run_id: Task run ID (optional for advance/cancel)
+        action: 操作类型: plan, status, advance, cancel
+        goal: 任务目标（plan 必填）
+        plan_json: 计划 JSON，格式: {"steps": [...], "checkpoints": [{"at": "30分钟后", "prompt": "..."}]}（plan 必填）
+        step_index: 完成的步骤索引，0-based（advance 必填）
+        result_summary: 步骤完成摘要（advance 可选）
+        run_id: 任务 ID（advance/cancel 可选，默认操作第一个活跃任务）
     """
     normalized = (action or "").strip().lower()
 
@@ -380,41 +381,5 @@ async def _task_cancel_impl(run_id: str) -> str:
 
 def get_tools() -> list[ToolDef]:
     return [
-        ToolDef.from_schema(
-            name="task_manage",
-            description=_TASK_TOOL_DESCRIPTION,
-            parameters={
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["plan", "status", "advance", "cancel"],
-                        "description": "操作类型",
-                    },
-                    "goal": {
-                        "type": "string",
-                        "description": "任务目标（plan 必填）",
-                    },
-                    "plan_json": {
-                        "type": "string",
-                        "description": '计划 JSON，格式: {"steps": [...], "checkpoints": [{"at": "30分钟后", "prompt": "..."}]}（plan 必填）',
-                    },
-                    "step_index": {
-                        "type": "integer",
-                        "default": -1,
-                        "description": "完成的步骤索引，0-based（advance 必填）",
-                    },
-                    "result_summary": {
-                        "type": "string",
-                        "description": "步骤完成摘要（advance 可选）",
-                    },
-                    "run_id": {
-                        "type": "string",
-                        "description": "任务 ID（advance/cancel 可选，默认操作第一个活跃任务）",
-                    },
-                },
-                "required": ["action"],
-            },
-            fn=task_manage,
-        ),
+        ToolDef.from_function(task_manage),
     ]

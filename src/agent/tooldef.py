@@ -83,8 +83,6 @@ def _extract_description(fn: Callable) -> str:
         stripped = line.strip()
         if stripped.startswith("Args:") or stripped.startswith("Returns:") or stripped.startswith("Example"):
             break
-        if stripped == "" and desc_parts:
-            break
         if stripped:
             desc_parts.append(stripped)
     return " ".join(desc_parts) if desc_parts else lines[0].strip()

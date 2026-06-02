@@ -7,7 +7,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import aiosqlite
 
@@ -507,41 +507,40 @@ async def save_memory(content: str, key: str = "", category: str = "fact") -> st
 # Unified memory tool (hermes pattern: single tool with action parameter)
 # ---------------------------------------------------------------------------
 
-_MEMORY_TOOL_DESCRIPTION = (
-    "管理持久记忆（跨会话保存）。用 action 参数指定操作。\n\n"
-    "WHEN TO SAVE（主动保存，不要等用户要求）:\n"
-    '- 用户纠正你或说"记住这个""以后别这样"\n'
-    "- 用户分享偏好、习惯、个人细节（名字、角色、时区、编码风格）\n"
-    "- 你发现了环境信息（OS、工具、项目结构）\n"
-    "- 你学到了约定、API 怪癖、工作流\n\n"
-    "ACTIONS:\n"
-    "- save: 保存记忆（自动去重）。需要 content，可选 key/category\n"
-    "- get: 按键取回完整记忆内容。键名即记忆摘要，先用 list 查看键名\n"
-    "- list: 列出记忆。每条记忆的键名就是该条记忆的内容摘要，默认只返回键名。verbose=true 时同时返回完整内容\n"
-    "- delete: 请求删除记忆，用户发 /y 确认，其它消息取消。需要 keys 数组\n\n"
-    "不要保存：任务进度、闲聊、一次性指令、通用知识。"
-)
-
 
 async def memory(
-    action: str,
+    action: Literal["save", "get", "list", "delete"],
     content: str = "",
     key: str = "",
-    category: str = "fact",
+    category: Literal["preference", "identity", "contact", "project", "fact"] = "fact",
     query: str = "",
-    keys: list = None,
+    keys: list[str] | None = None,
     verbose: bool = False,
 ) -> str:
-    """Manage persistent memories that survive across sessions.
+    """管理持久记忆（跨会话保存）。用 action 参数指定操作。
+
+    WHEN TO SAVE（主动保存，不要等用户要求）:
+    - 用户纠正你或说"记住这个""以后别这样"
+    - 用户分享偏好、习惯、个人细节（名字、角色、时区、编码风格）
+    - 你发现了环境信息（OS、工具、项目结构）
+    - 你学到了约定、API 怪癖、工作流
+
+    ACTIONS:
+    - save: 保存记忆（自动去重）。需要 content，可选 key/category
+    - get: 按键取回完整记忆内容。键名即记忆摘要，先用 list 查看键名
+    - list: 列出记忆。每条记忆的键名就是该条记忆的内容摘要，默认只返回键名。verbose=true 时同时返回完整内容
+    - delete: 请求删除记忆，用户发 /y 确认，其它消息取消。需要 keys 数组
+
+    不要保存：任务进度、闲聊、一次性指令、通用知识。
 
     Args:
-        action: Operation to perform: save, get, list, delete
-        content: Memory content (for save)
-        key: Memory key (for save/get)
-        category: Memory category: preference|identity|contact|project|fact (for save, default fact)
-        query: Search keyword (for list)
-        keys: List of memory keys to delete (for delete)
-        verbose: Show full content in list (default: keys only)
+        action: 操作类型: save, get, list, delete
+        content: 记忆内容（save 时必填）
+        key: 记忆键名，即记忆内容摘要（save 可选，get 必填）
+        category: 记忆分类（默认 fact）
+        query: list 用关键词过滤记忆
+        keys: 要删除的记忆键名列表（delete 必填）
+        verbose: list 时是否同时返回完整内容。默认只返回键名
     """
     normalized = (action or "").strip().lower()
 
@@ -591,48 +590,5 @@ async def memory(
 
 def get_tools() -> list[ToolDef]:
     return [
-        ToolDef.from_schema(
-            name="memory",
-            description=_MEMORY_TOOL_DESCRIPTION,
-            parameters={
-                "type": "object",
-                "properties": {
-                    "action": {
-                        "type": "string",
-                        "enum": ["save", "get", "list", "delete"],
-                        "description": "操作类型",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "记忆内容（save 时必填）",
-                    },
-                    "key": {
-                        "type": "string",
-                        "description": "记忆键名，即记忆内容摘要（save 可选，get 必填）",
-                    },
-                    "category": {
-                        "type": "string",
-                        "enum": ["preference", "identity", "contact", "project", "fact"],
-                        "default": "fact",
-                        "description": "记忆分类（默认 fact）",
-                    },
-                    "query": {
-                        "type": "string",
-                        "description": "list 用关键词过滤记忆",
-                    },
-                    "verbose": {
-                        "type": "boolean",
-                        "default": False,
-                        "description": "list 时是否同时返回完整内容。默认只返回键名",
-                    },
-                    "keys": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "要删除的记忆键名列表（delete 必填）",
-                    },
-                },
-                "required": ["action"],
-            },
-            fn=memory,
-        ),
+        ToolDef.from_function(memory),
     ]

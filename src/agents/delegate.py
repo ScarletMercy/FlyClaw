@@ -467,6 +467,20 @@ async def delegate_batch(tasks: str) -> str:
 async def _delegate_unified(
     agent_name: str = "", task: str = "", context: str = "", tasks: str = "", timeout: int | None = None
 ) -> str:
+    """将子任务委派给专业代理。支持单个和批量模式。
+
+    单个任务: 提供 agent_name + task，可选 context。
+    批量并行: 提供 tasks JSON 数组，每个元素: {"agent_name": "...", "task": "...", "context": "..."}
+
+    可用代理: research, coder, reviewer（用 agent_name 指定）。
+
+    Args:
+        agent_name: 子代理名称，如 research、coder、reviewer（单个任务时必填）
+        task: 任务描述（单个任务时必填）
+        context: 背景信息（可选）
+        tasks: 批量任务的 JSON 数组，每个元素: {"agent_name": "...", "task": "...", "context": "..."}（批量模式时必填）
+        timeout: 超时时间（秒），可选。不传则使用全局默认值。复杂任务可适当增大。环境变量 FLYCLAW_CHILD_TIMEOUT_SECONDS 可覆盖默认值。
+    """
     if tasks:
         return await delegate_batch(tasks)
     if not agent_name or not task:
@@ -476,40 +490,5 @@ async def _delegate_unified(
 
 def get_tools() -> list[ToolDef]:
     return [
-        ToolDef.from_schema(
-            name="delegate_task",
-            description=(
-                "将子任务委派给专业代理。支持单个和批量模式。\n\n"
-                "单个任务: 提供 agent_name + task，可选 context。\n"
-                '批量并行: 提供 tasks JSON 数组，每个元素: {"agent_name": "...", "task": "...", "context": "..."}\n\n'
-                "可用代理: research, coder, reviewer（用 agent_name 指定）。"
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "agent_name": {
-                        "type": "string",
-                        "description": "子代理名称，如 research、coder、reviewer（单个任务时必填）",
-                    },
-                    "task": {
-                        "type": "string",
-                        "description": "任务描述（单个任务时必填）",
-                    },
-                    "context": {
-                        "type": "string",
-                        "description": "背景信息（可选）",
-                    },
-                    "tasks": {
-                        "type": "string",
-                        "description": '批量任务的 JSON 数组，每个元素: {"agent_name": "...", "task": "...", "context": "..."}（批量模式时必填）',
-                    },
-                    "timeout": {
-                        "type": "integer",
-                        "description": "超时时间（秒），可选。不传则使用全局默认值。复杂任务可适当增大。环境变量 FLYCLAW_CHILD_TIMEOUT_SECONDS 可覆盖默认值。",
-                    },
-                },
-                "required": [],
-            },
-            fn=_delegate_unified,
-        ),
+        ToolDef.from_function(_delegate_unified, name="delegate_task"),
     ]

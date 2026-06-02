@@ -535,8 +535,6 @@ async def exec_command(
 
         env = None
         if sandbox_enabled:
-            import os
-
             env = {k: os.environ[k] for k in sandbox_env_whitelist if k in os.environ}
 
         registry = get_process_registry()
