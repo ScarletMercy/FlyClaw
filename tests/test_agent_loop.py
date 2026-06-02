@@ -611,35 +611,38 @@ class TestInterruptInLoop:
 
 
 class TestToolCache:
-    def test_small_content_not_truncated(self):
+    @pytest.mark.asyncio
+    async def test_small_content_not_truncated(self):
         from src.agent.loop import AgentLoop
 
         loop = AgentLoop.__new__(AgentLoop)
         loop._config = None
         content = "short text"
         messages = [{"role": "tool", "tool_call_id": "tc1", "content": content}]
-        loop._truncate_large_outputs(messages, "test_thread")
+        await loop._truncate_large_outputs(messages, "test_thread")
         assert messages[0]["content"] == content
 
-    def test_large_content_truncated(self):
+    @pytest.mark.asyncio
+    async def test_large_content_truncated(self):
         from src.agent.loop import AgentLoop
 
         loop = AgentLoop.__new__(AgentLoop)
         loop._config = None
         content = "x" * 10000
         messages = [{"role": "tool", "tool_call_id": "tc1", "content": content}]
-        loop._truncate_large_outputs(messages, "test_thread")
+        await loop._truncate_large_outputs(messages, "test_thread")
         assert len(messages[0]["content"]) < len(content)
         assert "truncated" in messages[0]["content"]
 
-    def test_non_tool_messages_untouched(self):
+    @pytest.mark.asyncio
+    async def test_non_tool_messages_untouched(self):
         from src.agent.loop import AgentLoop
 
         loop = AgentLoop.__new__(AgentLoop)
         loop._config = None
         content = "x" * 10000
         messages = [{"role": "user", "content": content}]
-        loop._truncate_large_outputs(messages, "test_thread")
+        await loop._truncate_large_outputs(messages, "test_thread")
         assert messages[0]["content"] == content
 
 
@@ -688,13 +691,14 @@ class TestCleanTruncatedMarkers:
         cleaned = _clean_for_summary(msgs)
         assert len(cleaned) == 1
 
-    def test_roundtrip_cache_and_strip(self):
+    @pytest.mark.asyncio
+    async def test_roundtrip_cache_and_strip(self):
         """cache_large_output produces format that strip_cache_path can remove."""
         from src.agent.tool_cache import cache_large_output
         from src.compressor.compressor import strip_cache_path
 
         big = "abc" * 5000  # 15000 chars > default 8000
-        truncated, path = cache_large_output(big, "test_thread")
+        truncated, path = await cache_large_output(big, "test_thread")
         assert path is not None, "should have cached to file"
         assert "Full content saved to:" in truncated
 

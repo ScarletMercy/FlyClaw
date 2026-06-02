@@ -245,7 +245,7 @@ class ServiceContainer:
             for path_str in self.config.memory.extra_paths:
                 p = Path(path_str).expanduser()
                 if p.exists() and p.is_file():
-                    content = p.read_text(encoding="utf-8")
+                    content = await asyncio.to_thread(p.read_text, encoding="utf-8")
                     n = await searcher.index_document(str(p), content)
                     indexed += n
                     logger.info("记忆索引: %s (%d 个分块)", p, n)
@@ -277,12 +277,12 @@ class ServiceContainer:
         logger.info("会话搜索索引已初始化: %s", self.config.session_search.index_path)
         self._startup_sync_task = asyncio.create_task(self._run_startup_sync(store))
 
-    def _setup_channels_and_sessions(self, skills: list):
+    async def _setup_channels_and_sessions(self, skills: list):
         self.session_tracker = SessionTracker(
             idle_reset_minutes=self.config.session.idle_reset_minutes,
         )
         self.session_registry = SessionRegistry()
-        self.session_registry.init(str(_FLYCLAW_DATA_DIR / "sessions.json"))
+        await self.session_registry.init(str(_FLYCLAW_DATA_DIR / "sessions.json"))
         self.dispatcher = CommandDispatcher(skills if skills else [], config=self.config)
 
     def _setup_registries(self):
@@ -425,7 +425,7 @@ class ServiceContainer:
 
         # Phase 4: remaining subsystems
         await self._setup_session_search()
-        self._setup_channels_and_sessions(skills)
+        await self._setup_channels_and_sessions(skills)
         self._setup_registries()
         for t in tools:
             self.tool_registry.register(t)
@@ -636,6 +636,50 @@ class ServiceContainer:
         if self.cron_service:
             logger.info("定时任务 API:     GET /api/cron/status")
 
+    # ── Startup: warmup first-message latency ───────────────────────
+
+    async def _warmup_first_message(self) -> None:
+        """Pre-initialize lazy subsystems so the first user message has no cold-start penalty.
+
+        Warms up:
+        1. MemoryStore (SQLite + FTS5 index) — otherwise lazy on first _fetch_memory_summary()
+        2. Model API connection pool (DNS + TLS) — otherwise lazy on first chat() call
+        """
+        import time
+
+        # ── 1. Pre-initialize key-value memory store ──
+        if getattr(self.config, "memory_store", None) and self.config.memory_store.enabled:
+            t0 = time.monotonic()
+            try:
+                from src.tools.memory_tools import get_memory_store
+
+                await get_memory_store(self.config.memory_store.db_path)
+                logger.info("[warmup] MemoryStore initialized in %.0fms", (time.monotonic() - t0) * 1000)
+            except Exception as e:
+                logger.warning("[warmup] MemoryStore init failed (will retry on first message): %s", e)
+
+        # ── 2. Pre-warm model API connection pool ──
+        if self.agent_loop:
+            t0 = time.monotonic()
+            try:
+                import httpx
+
+                base_url = self.config.model.base_url
+                if not base_url:
+                    return  # nothing to warm up
+                parsed = httpx.URL(base_url)
+                async with httpx.AsyncClient(
+                    timeout=httpx.Timeout(connect=10.0, read=5.0, write=5.0, pool=5.0),
+                ) as warmup_client:
+                    try:
+                        # HEAD on the API base URL triggers DNS + TCP + TLS
+                        await warmup_client.head(str(parsed))
+                    except (httpx.HTTPStatusError, httpx.TimeoutException):
+                        pass  # warmup only — 404/timeout is fine
+                logger.info("[warmup] Model API connection pool warmed in %.0fms", (time.monotonic() - t0) * 1000)
+            except Exception as e:
+                logger.warning("[warmup] Model API warmup failed (non-critical): %s", e)
+
     # ── Startup: main orchestrator ───────────────────────────────────
 
     async def on_startup(self):
@@ -658,6 +702,9 @@ class ServiceContainer:
             on_reload=self.on_config_reload,
         )
         await self._config_watcher.start()
+
+        # ── Pre-warm subsystems to eliminate first-message cold latency ──
+        await self._warmup_first_message()
 
     # ── Shutdown ─────────────────────────────────────────────────────
 

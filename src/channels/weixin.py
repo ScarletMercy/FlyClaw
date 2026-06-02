@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 from urllib.parse import quote, urlparse
 
+import aiofiles
+
 from .base import Channel
 
 logger = logging.getLogger("flyclaw.weixin")
@@ -204,13 +206,14 @@ def _account_file(account_id: str) -> Path:
     return result
 
 
-def _atomic_json_write(path: Path, data: dict) -> None:
+async def _atomic_json_write(path: Path, data: dict) -> None:
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(path)
+    async with aiofiles.open(tmp, "w", encoding="utf-8") as f:
+        await f.write(json.dumps(data, ensure_ascii=False, indent=2))
+    await asyncio.to_thread(tmp.replace, path)
 
 
-def save_weixin_account(
+async def save_weixin_account(
     *,
     account_id: str,
     token: str,
@@ -224,7 +227,7 @@ def save_weixin_account(
         "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
     path = _account_file(account_id)
-    _atomic_json_write(path, payload)
+    await _atomic_json_write(path, payload)
     try:
         path.chmod(0o600)
     except OSError:
@@ -299,13 +302,14 @@ def _mime_from_filename(filename: str) -> str:
     return mimetypes.guess_type(filename)[0] or "application/octet-stream"
 
 
-def _cache_media(data: bytes, filename: str) -> str:
+async def _cache_media(data: bytes, filename: str) -> str:
     cache_dir = _FLYCLAW_DATA_DIR / "weixin_media"
     cache_dir.mkdir(parents=True, exist_ok=True)
     prefix = hashlib.md5(data).hexdigest()[:12]
     path = cache_dir / f"{prefix}_{filename}"
     if not path.exists():
-        path.write_bytes(data)
+        async with aiofiles.open(path, "wb") as f:
+            await f.write(data)
     return str(path)
 
 
@@ -352,19 +356,21 @@ def _sync_buf_path(account_id: str) -> Path:
     return _account_dir() / f"{account_id}.sync.json"
 
 
-def _load_sync_buf(account_id: str) -> str:
+async def _load_sync_buf(account_id: str) -> str:
     path = _sync_buf_path(account_id)
     if not path.exists():
         return ""
     try:
-        return json.loads(path.read_text(encoding="utf-8")).get("get_updates_buf", "")
+        async with aiofiles.open(path, "r", encoding="utf-8") as f:
+            text = await f.read()
+        return json.loads(text).get("get_updates_buf", "")
     except Exception:
         return ""
 
 
-def _save_sync_buf(account_id: str, sync_buf: str) -> None:
+async def _save_sync_buf(account_id: str, sync_buf: str) -> None:
     path = _sync_buf_path(account_id)
-    _atomic_json_write(path, {"get_updates_buf": sync_buf})
+    await _atomic_json_write(path, {"get_updates_buf": sync_buf})
 
 
 def _make_ssl_connector() -> Optional[aiohttp.TCPConnector]:
@@ -903,15 +909,15 @@ class ContextTokenStore:
     def get(self, account_id: str, user_id: str) -> Optional[str]:
         return self._cache.get(self._key(account_id, user_id))
 
-    def set(self, account_id: str, user_id: str, token: str) -> None:
+    async def set(self, account_id: str, user_id: str, token: str) -> None:
         self._cache[self._key(account_id, user_id)] = token
-        self._persist(account_id)
+        await self._persist(account_id)
 
-    def _persist(self, account_id: str) -> None:
+    async def _persist(self, account_id: str) -> None:
         prefix = f"{account_id}:"
         payload = {key[len(prefix) :]: value for key, value in self._cache.items() if key.startswith(prefix)}
         try:
-            _atomic_json_write(self._path(account_id), payload)
+            await _atomic_json_write(self._path(account_id), payload)
         except Exception as exc:
             logger.warning("weixin: failed to persist context tokens for %s: %s", _safe_id(account_id), exc)
 
@@ -1156,7 +1162,7 @@ class WeixinChannel(Channel):
 
     async def _poll_loop(self) -> None:
         assert self._poll_session is not None
-        sync_buf = _load_sync_buf(self._account_id)
+        sync_buf = await _load_sync_buf(self._account_id)
         timeout_ms = LONG_POLL_TIMEOUT_MS
         consecutive_failures = 0
         session_expired_count = 0
@@ -1196,7 +1202,7 @@ class WeixinChannel(Channel):
                         await asyncio.sleep(600)
                         consecutive_failures = 0
                         sync_buf = ""
-                        _save_sync_buf(self._account_id, sync_buf)
+                        await _save_sync_buf(self._account_id, sync_buf)
                         continue
                     consecutive_failures += 1
                     logger.warning(
@@ -1221,7 +1227,7 @@ class WeixinChannel(Channel):
                 new_sync_buf = str(response.get("get_updates_buf") or "")
                 if new_sync_buf:
                     sync_buf = new_sync_buf
-                    _save_sync_buf(self._account_id, sync_buf)
+                    await _save_sync_buf(self._account_id, sync_buf)
 
                 for message in response.get("msgs") or []:
                     self._spawn_task(self._process_message_safe(message))
@@ -1293,7 +1299,7 @@ class WeixinChannel(Channel):
 
         context_token = str(message.get("context_token") or "").strip()
         if context_token:
-            self._token_store.set(self._account_id, sender_id, context_token)
+            await self._token_store.set(self._account_id, sender_id, context_token)
         self._spawn_task(self._maybe_fetch_typing_ticket(sender_id, context_token or None))
 
         media_paths: list[str] = []
@@ -1391,7 +1397,7 @@ class WeixinChannel(Channel):
                 full_url=media.get("full_url"),
                 timeout_seconds=30.0,
             )
-            return _cache_media(data, ".jpg")
+            return await _cache_media(data, ".jpg")
         except Exception as exc:
             logger.warning("weixin: image download failed: %s", exc)
             return None
@@ -1407,7 +1413,7 @@ class WeixinChannel(Channel):
                 full_url=media.get("full_url"),
                 timeout_seconds=120.0,
             )
-            return _cache_media(data, "video.mp4")
+            return await _cache_media(data, "video.mp4")
         except Exception as exc:
             logger.warning("weixin: video download failed: %s", exc)
             return None
@@ -1426,7 +1432,7 @@ class WeixinChannel(Channel):
                 full_url=media.get("full_url"),
                 timeout_seconds=60.0,
             )
-            return _cache_media(data, filename), mime
+            return await _cache_media(data, filename), mime
         except Exception as exc:
             logger.warning("weixin: file download failed: %s", exc)
             return None, mime
@@ -1445,7 +1451,7 @@ class WeixinChannel(Channel):
                 full_url=media.get("full_url"),
                 timeout_seconds=60.0,
             )
-            return _cache_media(data, ".silk")
+            return await _cache_media(data, ".silk")
         except Exception as exc:
             logger.warning("weixin: voice download failed: %s", exc)
             return None
@@ -1540,7 +1546,8 @@ class WeixinChannel(Channel):
             file_path = Path(path)
 
         try:
-            plaintext = file_path.read_bytes()
+            async with aiofiles.open(file_path, "rb") as f:
+                plaintext = await f.read()
             media_type, item_builder = self._outbound_media_builder(
                 str(file_path), force_file_attachment=force_file_attachment
             )

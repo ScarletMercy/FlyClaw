@@ -280,7 +280,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         if not user_key:
             return "无法确定会话。" if zh else "Cannot determine session."
         user_hash = user_key.split(":")[-1] if user_key else "unknown"
-        sid = container.session_registry.new_session(user_key, channel_prefix, user_hash)
+        sid = await container.session_registry.new_session(user_key, channel_prefix, user_hash)
         if container.agent_loop:
             container.agent_loop.invalidate_memory_cache()
         if zh:
@@ -305,7 +305,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                     container.state_store,
                 )
             if orphaned:
-                recovered = container.session_registry.recover_sessions(
+                recovered = await container.session_registry.recover_sessions(
                     user_key,
                     orphaned,
                 )
@@ -350,7 +350,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                         summary = "(新)" if zh else "(new)"
                 except Exception:
                     summary = "(新)" if zh else "(new)"
-                container.session_registry.update_summary(user_key, s["thread_id"], summary)
+                await container.session_registry.update_summary(user_key, s["thread_id"], summary)
             cur = " [当前]" if zh and s["is_current"] else (" [current]" if not zh and s["is_current"] else "")
             dt = time.strftime("%m-%d %H:%M", time.localtime(s["created_at"]))
             lines.append(f"[{s['session_id']}] {summary}{cur} ({dt})")
@@ -378,7 +378,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
             if zh:
                 return "用法: /re <会话ID>\n使用 /old 查看会话列表。"
             return "Usage: /re <session_id>\nUse /old to list sessions."
-        tid = container.session_registry.switch_to(user_key, session_id)
+        tid = await container.session_registry.switch_to(user_key, session_id)
         if tid and container.agent_loop:
             container.agent_loop.invalidate_memory_cache()
         if tid == "default":

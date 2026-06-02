@@ -13,6 +13,8 @@ import shutil
 from pathlib import Path
 from typing import Set
 
+import aiofiles
+
 logger = logging.getLogger("flyclaw.agent.tool_cache")
 
 _DEFAULT_MAX_CHARS = 8000
@@ -39,7 +41,7 @@ def _cache_dir(thread_id: str) -> Path:
     return base
 
 
-def cache_large_output(
+async def cache_large_output(
     content: str,
     thread_id: str,
     max_chars: int = _DEFAULT_MAX_CHARS,
@@ -62,7 +64,8 @@ def cache_large_output(
     filepath = d / filename
 
     try:
-        filepath.write_text(content, encoding="utf-8")
+        async with aiofiles.open(filepath, "w", encoding="utf-8") as f:
+            await f.write(content)
     except Exception as e:
         logger.warning("Failed to cache tool output: %s", e)
         return content[:preview] + f"\n... [truncated, {len(content)} chars total]", None

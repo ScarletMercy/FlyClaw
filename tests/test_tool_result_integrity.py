@@ -338,38 +338,43 @@ class TestParallelApprovalPending:
 
 
 class TestTruncateEdgeCases:
-    def test_exactly_8000_not_truncated(self):
+    @pytest.mark.asyncio
+    async def test_exactly_8000_not_truncated(self):
         loop = AgentLoop.__new__(AgentLoop)
         content = "x" * 8000
         messages = [{"role": "tool", "tool_call_id": "tc1", "content": content}]
-        loop._truncate_large_outputs(messages, "t")
+        await loop._truncate_large_outputs(messages, "t")
         assert len(messages[0]["content"]) == 8000
 
-    def test_8001_truncated(self):
+    @pytest.mark.asyncio
+    async def test_8001_truncated(self):
         loop = AgentLoop.__new__(AgentLoop)
         content = "x" * 8001
         messages = [{"role": "tool", "tool_call_id": "tc1", "content": content}]
-        loop._truncate_large_outputs(messages, "t")
+        await loop._truncate_large_outputs(messages, "t")
         assert "truncated" in messages[0]["content"]
         assert messages[0]["content"].startswith("x" * 8000)
 
-    def test_truncation_reduces_content(self):
+    @pytest.mark.asyncio
+    async def test_truncation_reduces_content(self):
         loop = AgentLoop.__new__(AgentLoop)
         content = "x" * 10000
         messages = [{"role": "tool", "tool_call_id": "tc1", "content": content}]
-        loop._truncate_large_outputs(messages, "t")
+        await loop._truncate_large_outputs(messages, "t")
         assert len(messages[0]["content"]) < len(content)
 
-    def test_none_content_no_crash(self):
+    @pytest.mark.asyncio
+    async def test_none_content_no_crash(self):
         loop = AgentLoop.__new__(AgentLoop)
         messages = [{"role": "tool", "tool_call_id": "tc1", "content": None}]
-        loop._truncate_large_outputs(messages, "t")
+        await loop._truncate_large_outputs(messages, "t")
         assert messages[0]["content"] is None
 
-    def test_list_content_no_crash(self):
+    @pytest.mark.asyncio
+    async def test_list_content_no_crash(self):
         loop = AgentLoop.__new__(AgentLoop)
         messages = [{"role": "tool", "tool_call_id": "tc1", "content": [{"text": "x" * 10000}]}]
-        loop._truncate_large_outputs(messages, "t")
+        await loop._truncate_large_outputs(messages, "t")
         assert isinstance(messages[0]["content"], list)
 
 

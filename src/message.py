@@ -361,13 +361,23 @@ class MessageHandler:
             # inside await load() will see the claim and take the busy path.
             self._claiming_threads.add(thread_id)
             try:
+                import time as _time
+
+                _t_load = _time.monotonic()
                 existing = await self._container.state_store.load(thread_id)
+                _load_ms = (_time.monotonic() - _t_load) * 1000
                 if existing:
                     if existing.pending_approval:
                         await reply_fn("⏳ 有待审批的操作，请先回复审批后再发新消息。")
                         return
                     input_state.messages = existing.messages + input_state.messages
 
+                logger.info(
+                    "[perf] message→agent: load=%.0fms msgs=%d new_session=%s",
+                    _load_ms,
+                    len(input_state.messages),
+                    existing is None,
+                )
                 await self._run_agent_turn(
                     input_state=input_state,
                     thread_id=thread_id,

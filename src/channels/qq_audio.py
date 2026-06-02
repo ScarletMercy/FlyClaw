@@ -8,10 +8,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import tempfile
 import wave
 from pathlib import Path
 from typing import Optional
+
+import aiofiles
 
 logger = logging.getLogger("flyclaw.channels.qq_audio")
 
@@ -64,11 +67,13 @@ async def convert_to_wav(audio_data: bytes, ext: str = "") -> Optional[bytes]:
         if is_silk:
             result = await _silk_to_wav(src_path, wav_path)
             if result:
-                return Path(wav_path).read_bytes()
+                async with aiofiles.open(wav_path, "rb") as f:
+                    return await f.read()
 
         result = await _ffmpeg_to_wav(src_path, wav_path)
         if result:
-            return Path(wav_path).read_bytes()
+            async with aiofiles.open(wav_path, "rb") as f:
+                return await f.read()
 
         return raw_pcm_to_wav(audio_data)
     except Exception as e:
@@ -90,18 +95,16 @@ async def _silk_to_wav(src_path: str, wav_path: str) -> Optional[str]:
         return None
 
     try:
-        pilk.silk_to_wav(src_path, wav_path, rate=16000)
+        await asyncio.to_thread(pilk.silk_to_wav, src_path, wav_path, rate=16000)
         if Path(wav_path).exists() and Path(wav_path).stat().st_size > 44:
             return wav_path
     except Exception:
         pass
 
-    import shutil
-
     silk_path = src_path.rsplit(".", 1)[0] + ".silk"
     try:
-        shutil.copy2(src_path, silk_path)
-        pilk.silk_to_wav(silk_path, wav_path, rate=16000)
+        await asyncio.to_thread(shutil.copy2, src_path, silk_path)
+        await asyncio.to_thread(pilk.silk_to_wav, silk_path, wav_path, rate=16000)
         if Path(wav_path).exists() and Path(wav_path).stat().st_size > 44:
             return wav_path
     except Exception:

@@ -5,12 +5,13 @@ import json
 import logging
 import os
 import tempfile
-import threading
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+
+import aiofiles
 
 logger = logging.getLogger("flyclaw.session")
 
@@ -141,19 +142,20 @@ class SessionRegistry:
     def __init__(self):
         self._users: dict[str, UserSessions] = {}
         self._store_path: Optional[str] = None
-        self._lock = threading.Lock()
+        self._lock = asyncio.Lock()
 
-    def init(self, store_path: str) -> None:
+    async def init(self, store_path: str) -> None:
         self._store_path = store_path
         Path(store_path).parent.mkdir(parents=True, exist_ok=True)
-        self._load()
+        await self._load()
 
-    def _load(self) -> None:
+    async def _load(self) -> None:
         if not self._store_path or not Path(self._store_path).exists():
             return
         try:
-            with open(self._store_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            async with aiofiles.open(self._store_path, "r", encoding="utf-8") as f:
+                text = await f.read()
+            data = json.loads(text)
             for user_key, ud in data.items():
                 sessions = [SessionEntry(**s) for s in ud.get("sessions", [])]
                 us = UserSessions(
@@ -166,7 +168,7 @@ class SessionRegistry:
         except Exception as e:
             logger.warning("Failed to load session registry: %s", e)
 
-    def _save(self) -> None:
+    async def _save(self) -> None:
         if not self._store_path:
             return
         data = {}
@@ -176,18 +178,22 @@ class SessionRegistry:
                 "current_id": us.current_id,
                 "_next_id": us._next_id,
             }
-        with self._lock:
+        async with self._lock:
             try:
                 fd, tmp_path = tempfile.mkstemp(
                     dir=os.path.dirname(self._store_path),
                     suffix=".tmp",
                 )
                 try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        json.dump(data, f, ensure_ascii=False, indent=2)
-                    os.replace(tmp_path, self._store_path)
+                    os.close(fd)
+                    async with aiofiles.open(tmp_path, "w", encoding="utf-8") as f:
+                        await f.write(json.dumps(data, ensure_ascii=False, indent=2))
+                    await asyncio.to_thread(os.replace, tmp_path, self._store_path)
                 except Exception:
-                    os.unlink(tmp_path)
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
                     raise
             except Exception as e:
                 logger.warning("Failed to save session registry: %s", e)
@@ -207,7 +213,7 @@ class SessionRegistry:
                 return s.thread_id
         return None
 
-    def new_session(self, user_key: str, channel_prefix: str, user_hash: str) -> str:
+    async def new_session(self, user_key: str, channel_prefix: str, user_hash: str) -> str:
         """Create a new session for the user. Returns short session_id."""
         us = self._get_user(user_key)
         sid = us._alloc_id()
@@ -221,7 +227,7 @@ class SessionRegistry:
             )
         )
         us.current_id = sid
-        self._save()
+        await self._save()
         logger.info("New session %s for user %s: %s", sid, user_key, thread_id)
         return sid
 
@@ -243,19 +249,19 @@ class SessionRegistry:
             )
         return result
 
-    def switch_to(self, user_key: str, session_id: str) -> Optional[str]:
+    async def switch_to(self, user_key: str, session_id: str) -> Optional[str]:
         """Switch to a specific session. Returns thread_id or None."""
         us = self._users.get(user_key)
         if not us:
             return None
         if session_id == "default":
             us.current_id = None
-            self._save()
+            await self._save()
             return "default"
         for s in us.sessions:
             if s.session_id == session_id:
                 us.current_id = session_id
-                self._save()
+                await self._save()
                 return s.thread_id
         return None
 
@@ -313,7 +319,7 @@ class SessionRegistry:
                 orphaned.append(tid)
         return orphaned
 
-    def recover_sessions(self, user_key: str, thread_ids: list[str]) -> int:
+    async def recover_sessions(self, user_key: str, thread_ids: list[str]) -> int:
         """Register orphaned threads as sessions. Returns count recovered."""
         us = self._get_user(user_key)
         count = 0
@@ -329,10 +335,10 @@ class SessionRegistry:
             )
             count += 1
         if count:
-            self._save()
+            await self._save()
         return count
 
-    def update_summary(self, user_key: str, thread_id: str, summary: str) -> None:
+    async def update_summary(self, user_key: str, thread_id: str, summary: str) -> None:
         """Update the summary for a session matching thread_id."""
         us = self._users.get(user_key)
         if not us:
@@ -340,5 +346,5 @@ class SessionRegistry:
         for s in us.sessions:
             if s.thread_id == thread_id:
                 s.summary = summary
-                self._save()
+                await self._save()
                 return

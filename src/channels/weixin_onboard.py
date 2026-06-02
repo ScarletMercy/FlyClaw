@@ -180,7 +180,7 @@ def qr_login(timeout_seconds: int = 480) -> Optional[dict[str, str]]:
 
                     from src.channels.weixin import save_weixin_account
 
-                    save_weixin_account(
+                    await save_weixin_account(
                         account_id=account_id,
                         token=token,
                         base_url=base_url,

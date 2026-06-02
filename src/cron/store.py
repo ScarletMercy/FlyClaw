@@ -12,6 +12,9 @@ from .types import CronJob
 
 logger = logging.getLogger("flyclaw.cron.store")
 
+# Maximum retry attempts for optimistic-lock conflicts in save_job.
+# Exposed as a named constant so callers and reviewers can find it easily.
+_OPTIMISTIC_LOCK_MAX_RETRIES = 3
 
 _CREATE_TABLE_SQL = """
 CREATE TABLE IF NOT EXISTS cron_jobs (
@@ -92,7 +95,7 @@ class CronStore:
         self._job_locks[job_id] = lock
         return lock
 
-    async def save_job(self, job: CronJob, *, max_retries: int = 3) -> None:
+    async def save_job(self, job: CronJob, *, max_retries: int = _OPTIMISTIC_LOCK_MAX_RETRIES) -> None:
         # Per-job lock: only blocks concurrent saves for the *same* job_id.
         # Different jobs run fully in parallel — SQL-level optimistic lock
         # (version column) handles correctness.

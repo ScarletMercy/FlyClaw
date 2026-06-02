@@ -354,18 +354,33 @@ class AgentLoop:
                 return state
 
             # 1. Prepare messages — proactive compression if over budget
+            _t_prepare = _time.monotonic()
             messages = await interruptible(ie, self._prepare_messages(state, thread_id))
+            _prepare_ms = (_time.monotonic() - _t_prepare) * 1000
             if messages is None:
                 if await self._check_interrupt(state, thread_id, start_ts, tool_round):
                     return state
                 continue
 
             # 2. Build tool list
+            _t_tools = _time.monotonic()
             active_tools = await self._filter_tools(state)
             openai_tools = [t.to_openai_tool() for t in active_tools] if active_tools else None
+            _tools_ms = (_time.monotonic() - _t_tools) * 1000
 
             # 3. Call model (with retry)
+            _t_model = _time.monotonic()
             response = await interruptible(ie, self._call_model_with_retry(messages, tools=openai_tools))
+            _model_ms = (_time.monotonic() - _t_model) * 1000
+            logger.info(
+                "[perf] round=%d prepare=%.0fms tools=%.0fms model=%.0fms total=%.0fms msgs=%d",
+                tool_round,
+                _prepare_ms,
+                _tools_ms,
+                _model_ms,
+                (_time.monotonic() - start_ts) * 1000,
+                len(messages),
+            )
             if response is None:
                 if await self._check_interrupt(state, thread_id, start_ts, tool_round):
                     return state
@@ -642,11 +657,22 @@ class AgentLoop:
         tools: list[dict] | None = None,
         max_retries: int = 3,
     ) -> ChatResponse:
+        import time as _time
+
         last_exc: Exception | None = None
         for attempt in range(max_retries + 1):
+            t0 = _time.monotonic()
             try:
-                return await self._client.chat(messages, tools=tools)
+                resp = await self._client.chat(messages, tools=tools)
+                logger.info("[perf] model API attempt=%d took %.0fms", attempt, (_time.monotonic() - t0) * 1000)
+                return resp
             except Exception as e:
+                logger.warning(
+                    "[perf] model API attempt=%d failed after %.0fms: %s",
+                    attempt,
+                    (_time.monotonic() - t0) * 1000,
+                    e,
+                )
                 last_exc = e
                 if attempt >= max_retries:
                     break
@@ -718,21 +744,41 @@ class AgentLoop:
         If over threshold, compress first; otherwise send raw history.
         Large tool outputs are always truncated to keep payload small.
         """
-        self._truncate_large_outputs(state.messages, thread_id)
+        import time as _time
+
+        _t0 = _time.monotonic()
+
+        await self._truncate_large_outputs(state.messages, thread_id)
 
         history = list(state.messages)
 
+        _t_compress_start = _time.monotonic()
         if self._compressor.should_compress(history, self._ctx_window_tokens):
             history = await self._compressor.compress(history, self._ctx_window_tokens)
+        _compress_ms = (_time.monotonic() - _t_compress_start) * 1000
 
+        _t_mem_start = _time.monotonic()
         memory_summary = await self._fetch_memory_summary()
+        _mem_ms = (_time.monotonic() - _t_mem_start) * 1000
+
+        _t_prompt_start = _time.monotonic()
         system_text = self._build_system_prompt(state, await self._get_active_tool_defs(state), memory_summary)
+        _prompt_ms = (_time.monotonic() - _t_prompt_start) * 1000
+
         history = self._sanitize_surrogates(history)
+        _total_ms = (_time.monotonic() - _t0) * 1000
+        logger.debug(
+            "[perf] _prepare_messages: total=%.0fms compress=%.0fms memory=%.0fms prompt=%.0fms",
+            _total_ms,
+            _compress_ms,
+            _mem_ms,
+            _prompt_ms,
+        )
         return [{"role": "system", "content": system_text}] + list(history)
 
     _NO_TRUNCATE_TOOLS: ClassVar[frozenset[str]] = frozenset({"skill_view"})
 
-    def _truncate_large_outputs(self, messages: list[dict], thread_id: str = "") -> None:
+    async def _truncate_large_outputs(self, messages: list[dict], thread_id: str = "") -> None:
         """Truncate large tool outputs in-place, but preserve skill_view results."""
         tc_id_to_name: dict[str, str] = {}
         for m in messages:
@@ -758,7 +804,9 @@ class AgentLoop:
                 if isinstance(content, str) and len(content) > threshold and not m.get("_truncated"):
                     from src.agent.tool_cache import cache_large_output
 
-                    truncated, _path = cache_large_output(content, thread_id, max_chars=threshold, preview=threshold)
+                    truncated, _path = await cache_large_output(
+                        content, thread_id, max_chars=threshold, preview=threshold
+                    )
                     m["content"] = truncated
                     m["_truncated"] = True
 
@@ -882,7 +930,7 @@ class AgentLoop:
             _load_soul_md,
             _build_environment_hints,
             _build_tooling_rules,
-            _build_tool_guidance,
+            _build_tool_index,
             _build_safety,
             _build_skills_section,
             _build_workspace,
@@ -899,7 +947,7 @@ class AgentLoop:
         self._prompt_soul = _load_soul_md()
         self._prompt_env = "\n".join(_build_environment_hints(workspace_dir))
         self._prompt_tool_rules = "\n".join(_build_tooling_rules(tools))
-        self._prompt_tool_guidance = "\n".join(_build_tool_guidance(tools))
+        self._prompt_tool_guidance = "\n".join(_build_tool_index(tools))
         self._prompt_safety = "\n".join(_build_safety())
         self._prompt_skills = "\n".join(_build_skills_section(skills_prompt)) if skills_prompt else ""
         self._prompt_workspace = "\n".join(_build_workspace(workspace_dir))
@@ -907,7 +955,7 @@ class AgentLoop:
         self._prompt_platform_cache: dict[str, str] = {}
 
         logger.info(
-            "System prompt sections cached (soul=%d, env=%d, guidance=%d, skills=%d, bootstrap=%d chars)",
+            "System prompt sections cached (soul=%d, env=%d, tool_index=%d, skills=%d, bootstrap=%d chars)",
             len(self._prompt_soul),
             len(self._prompt_env),
             len(self._prompt_tool_guidance),
@@ -945,7 +993,7 @@ class AgentLoop:
             return self._memory_summary_cache or ""
 
     def _build_system_prompt(self, state: AgentState, active_tools: list[ToolDef], memory_summary: str = "") -> str:
-        from src.prompt import _build_platform_hints, _build_tool_guidance, _build_sandbox_hints
+        from src.prompt import _build_platform_hints, _build_tool_index, _build_sandbox_hints
         from src.tools.exec import is_sandbox_enabled
 
         parts = [self._prompt_soul, ""]
@@ -980,9 +1028,9 @@ class AgentLoop:
             parts.append("\n".join(sandbox_hints))
 
         parts.append(self._prompt_tool_rules)
-        tool_guidance = "\n".join(_build_tool_guidance(active_tools))
-        if tool_guidance:
-            parts.append(tool_guidance)
+        tool_index = "\n".join(_build_tool_index(active_tools))
+        if tool_index:
+            parts.append(tool_index)
         parts.append(self._prompt_safety)
         if self._prompt_skills:
             parts.append(self._prompt_skills)

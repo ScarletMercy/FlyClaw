@@ -79,7 +79,10 @@ class CronService:
         """Get the scheduler timezone from config."""
         from src.utils.tz import get_tz
 
-        tz_name = (self._config.agents.timezone if self._config else None) or "UTC"
+        tz_name = self._config.agents.timezone if self._config else None
+        if not tz_name:
+            logger.warning("No timezone configured, falling back to UTC for scheduler")
+            tz_name = "UTC"
         return get_tz(tz_name)
 
     async def start(self):
@@ -87,12 +90,34 @@ class CronService:
         self._scheduler = AsyncIOScheduler(timezone=tz)
         jobs = await self.store.load_jobs()
 
-        # Crash recovery: detect jobs that were running when process died
+        # Crash recovery: detect jobs that were running when process died.
+        # Only recover jobs whose running_at is older than a minimum stale
+        # threshold — brief pauses (debugger, system sleep) should NOT be
+        # treated as crashes.
+        _MIN_STALE_SECONDS = 120  # 2 minutes grace window
         now = time.time()
         recovered = 0
+        skipped = 0
         for job in jobs:
             if job.running_at is not None:
                 stale_seconds = now - job.running_at
+                # Use the greater of the minimum threshold and the job's own
+                # timeout as the stale threshold.  A job that hasn't exceeded
+                # its normal timeout is very likely still running fine.
+                threshold = max(_MIN_STALE_SECONDS, job.payload.timeout_seconds or 0)
+                if stale_seconds < threshold:
+                    logger.info(
+                        "Skipping recovery for job '%s' (id=%s, stale %.0fs < threshold %.0fs)",
+                        job.name,
+                        job.id,
+                        stale_seconds,
+                        threshold,
+                    )
+                    # Clear running_at so the scheduler can pick it up normally
+                    job.running_at = None
+                    await self.store.save_job(job)
+                    skipped += 1
+                    continue
                 logger.warning(
                     "Recovering stale job '%s' (id=%s, stale %.0fs)",
                     job.name,
@@ -107,6 +132,8 @@ class CronService:
                 recovered += 1
         if recovered:
             logger.info("Crash recovery: reset %d stale jobs", recovered)
+        if skipped:
+            logger.info("Crash recovery: skipped %d jobs within grace window", skipped)
 
         for job in jobs:
             self._jobs[job.id] = job
@@ -245,7 +272,7 @@ class CronService:
                         dep_id,
                     )
                     return
-                if dep.last_run_status != "success":
+                if dep.last_run_status not in ("success", "delivery_failed"):
                     unmet.append(dep_id)
             if unmet:
                 logger.info(
@@ -269,6 +296,16 @@ class CronService:
                     job.consecutive_errors = 0
                     job.last_run_status = "success"
                     job.last_error = None
+                elif result.status == "delivery_failed":
+                    # Execution succeeded but notification delivery failed.
+                    # Don't count toward consecutive_errors — the job itself is healthy.
+                    job.last_run_status = "delivery_failed"
+                    job.last_error = result.error
+                    logger.warning(
+                        "Job '%s' executed successfully but delivery failed: %s",
+                        job.name,
+                        result.error,
+                    )
                 elif result.status == "deferred":
                     logger.info("Job '%s' deferred, rescheduling", job.name)
                     job.last_run_status = "deferred"
@@ -357,16 +394,24 @@ class CronService:
                     self._unschedule_job(job.id)
 
             job.last_run_at = started_at
+            job.running_at = None  # persist cleared state — avoid false-positive crash recovery
             await self.store.save_job(job)
 
-            # Trigger downstream jobs that depend on this one
-            if job.last_run_status == "success":
+            # Trigger downstream jobs that depend on this one.
+            # delivery_failed is included because the job *executed* successfully —
+            # only the notification channel had issues, which downstream jobs don't depend on.
+            if job.last_run_status in ("success", "delivery_failed"):
                 await self._trigger_dependents(job_id)
 
             if job.schedule.kind == "at" and job.delete_after_run:
                 await self.remove_job(job.id)
         finally:
-            job.running_at = None
+            # Guard against finally running after an early exception:
+            # if save_job succeeded, running_at is already None and persisted.
+            # If we never reached save_job (exception before line 360),
+            # running_at was set at line 259 but never persisted — just clear memory.
+            if job.running_at is not None:
+                job.running_at = None
             # Only discard from the shared set if we're still in the same epoch.
             # Otherwise this is a stale task from before a drain/reschedule and
             # _running_jobs now belongs to the new scheduler incarnation.
@@ -448,13 +493,17 @@ class CronService:
                 started_at=time.time(),
                 finished_at=time.time(),
             )
+        epoch = self._epoch
         self._running_jobs.add(job_id)
         job.running_at = time.time()
         try:
             return await self.execute_fn(job)
         finally:
             job.running_at = None
-            self._running_jobs.discard(job_id)
+            # Only discard if we're still in the same epoch — reschedule()
+            # clears _running_jobs for the new incarnation.
+            if self._epoch == epoch:
+                self._running_jobs.discard(job_id)
 
     async def _trigger_dependents(self, completed_job_id: str):
         """Trigger jobs that depend on the completed job, if all their dependencies are satisfied."""
@@ -465,7 +514,7 @@ class CronService:
                 continue
             # Check all dependencies for this job
             all_met = all(
-                (dep := self._jobs.get(d)) is not None and dep.last_run_status == "success"
+                (dep := self._jobs.get(d)) is not None and dep.last_run_status in ("success", "delivery_failed")
                 for d in other_job.depends_on
             )
             if all_met:
@@ -487,6 +536,9 @@ class CronService:
 
     async def reschedule(self):
         """Reload jobs from store and reschedule. Used during config reload without closing the store."""
+        # Bump epoch first so stale finally-blocks from the old scheduler
+        # incarnation won't corrupt the new _running_tasks / _running_jobs.
+        self._epoch += 1
         tz = self._get_scheduler_tz()
         self._scheduler = AsyncIOScheduler(timezone=tz)
         jobs = await self.store.load_jobs()
@@ -502,6 +554,10 @@ class CronService:
                 # reschedule is an operator-initiated action (config reload),
                 # not a job failure. Auto-disable should not be triggered.
                 await self.store.save_job(job)
+        # Reset running state for the new epoch — old tasks may still be
+        # draining but they will be blocked by the epoch guard above.
+        self._running_tasks.clear()
+        self._running_jobs.clear()
         self._jobs = {j.id: j for j in jobs}
         for job in jobs:
             if job.enabled:

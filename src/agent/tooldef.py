@@ -83,9 +83,15 @@ def _extract_description(fn: Callable) -> str:
         stripped = line.strip()
         if stripped.startswith("Args:") or stripped.startswith("Returns:") or stripped.startswith("Example"):
             break
-        if stripped:
+        if not stripped:
+            # 空行 = 段落边界，保留分隔符避免多段落合并为一行
+            if desc_parts and desc_parts[-1] != "\n":
+                desc_parts.append("\n")
+        else:
             desc_parts.append(stripped)
-    return " ".join(desc_parts) if desc_parts else lines[0].strip()
+    # 合并：同段落用空格，段落间用换行
+    raw = " ".join(desc_parts)
+    return raw.replace(" \n ", "\n\n").replace(" \n", "\n\n").replace("\n ", "\n\n").strip() if desc_parts else ""
 
 
 def _parse_args_doc(fn: Callable) -> dict[str, str]:

@@ -169,6 +169,7 @@ def _build_tooling_rules(tools: list | None = None) -> list[str]:
 
 
 def _build_tool_guidance(tools: list) -> list[str]:
+    """Full tool signatures with parameters. Kept for fallback / non-OpenAI models."""
     if not tools:
         return []
     lines = ["## 可用工具", ""]
@@ -208,6 +209,24 @@ def _build_tool_guidance(tools: list) -> list[str]:
         if has_more:
             sig += ", ..."
         lines.append(f"- {t.name}({sig}) — {desc}")
+    lines.append("")
+    return lines
+
+
+def _build_tool_index(tools: list) -> list[str]:
+    """Compact tool index: name + one-line description only (no parameter signatures).
+
+    The full parameter schemas are provided via the OpenAI ``tools`` JSON parameter,
+    so duplicating them in the system prompt is redundant and wastes tokens.
+    """
+    if not tools:
+        return []
+    lines = ["## 可用工具", ""]
+    for t in tools:
+        desc = t.description.split("\n")[0].strip() or "(no description)"
+        if len(desc) > 60:
+            desc = desc[:57] + "..."
+        lines.append(f"- {t.name}: {desc}")
     lines.append("")
     return lines
 

@@ -134,7 +134,27 @@ async def execute_cron_job(
         output = job.payload.message or ""
         finished_at = time.time()
         if output.strip():
-            await _deliver_result(job, output, channel)
+            try:
+                await _deliver_with_retry(job, output, channel)
+            except Exception as e:
+                error_msg = f"Delivery failed: {type(e).__name__}: {e}"
+                if job.delivery.best_effort:
+                    logger.error("Job '%s' %s (best_effort, not failing)", job.name, error_msg)
+                    return CronRunResult(
+                        job_id=job.id,
+                        status="success",
+                        output=output,
+                        started_at=started_at,
+                        finished_at=finished_at,
+                    )
+                return CronRunResult(
+                    job_id=job.id,
+                    status="delivery_failed",
+                    output=output,
+                    error=error_msg,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                )
         return CronRunResult(
             job_id=job.id,
             status="success",
@@ -195,16 +215,25 @@ async def execute_cron_job(
             output = ""
         finished_at = time.time()
 
-        cr = CronRunResult(
+        delivery_error = None
+        if output and output.strip():
+            try:
+                await _deliver_with_retry(job, output, channel)
+            except Exception as e:
+                delivery_error = f"Delivery failed: {type(e).__name__}: {e}"
+                if job.delivery.best_effort:
+                    logger.error("Job '%s' %s (best_effort, not failing)", job.name, delivery_error)
+                    delivery_error = None
+
+        status = "success" if delivery_error is None else "delivery_failed"
+        return CronRunResult(
             job_id=job.id,
-            status="success",
+            status=status,
             output=output,
+            error=delivery_error,
             started_at=started_at,
             finished_at=finished_at,
         )
-
-        await _deliver_result(job, output, channel)
-        return cr
 
     except asyncio.TimeoutError:
         finished_at = time.time()
@@ -248,6 +277,10 @@ async def execute_with_retry(
         if result.status == "success":
             return result
 
+        if result.status == "delivery_failed":
+            # Delivery already retried internally — don't re-execute the job.
+            return result
+
         if not _is_transient_error(result.error or ""):
             return result
 
@@ -285,7 +318,10 @@ async def _deliver_result(job: CronJob, output: str, channel: Any = None):
                 await channel.send_text(target, output)
                 logger.info("Delivered cron output to channel: %s", target)
             else:
-                logger.warning("No delivery target for cron job '%s'", job.name)
+                raise ValueError(f"No delivery target for cron job '{job.name}'")
+
+        elif delivery.mode == "announce":
+            raise RuntimeError(f"Cannot deliver job '{job.name}': announce mode but no channel provided")
 
         elif delivery.mode == "webhook" and delivery.webhook_url:
             payload = json.dumps({"job_id": job.id, "job_name": job.name, "output": output})
@@ -307,9 +343,7 @@ async def _deliver_result(job: CronJob, output: str, channel: Any = None):
                 )
             except ValueError as e:
                 logger.error("Webhook URL blocked (SSRF): %s", e)
-                if not delivery.best_effort:
-                    raise ValueError(f"Unsafe webhook URL: {e}")
-                return
+                raise ValueError(f"Unsafe webhook URL: {e}")
 
             logger.info(
                 "Delivered cron output to webhook: %s (status=%d)",
@@ -319,5 +353,62 @@ async def _deliver_result(job: CronJob, output: str, channel: Any = None):
 
     except Exception as e:
         logger.error("Delivery failed for job '%s': %s", job.name, e)
-        if not delivery.best_effort:
+        raise
+
+
+async def _deliver_with_retry(
+    job: CronJob,
+    output: str,
+    channel: Any = None,
+    max_retries: int = 3,
+) -> None:
+    """Deliver cron output with retry for transient errors.
+
+    Raises on non-transient errors or after exhausting retries.
+    Returns normally on successful delivery.
+    """
+    base_delay = 2
+    max_delay = 60
+    last_error: Exception | None = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            await _deliver_result(job, output, channel)
+            return  # Delivery succeeded
+        except ValueError:
+            # SSRF guard, config errors — never transient, never retry.
             raise
+        except Exception as e:
+            last_error = e
+            error_str = f"{type(e).__name__}: {e}"
+
+            if not _is_transient_error(error_str):
+                logger.error(
+                    "Delivery failed for job '%s' (non-transient, not retrying): %s",
+                    job.name,
+                    error_str,
+                )
+                raise
+
+            if attempt < max_retries:
+                delay = min(base_delay * (2**attempt), max_delay)
+                jitter = random.uniform(0, 1) * delay * 0.1
+                delay += jitter
+                logger.warning(
+                    "Delivery failed for job '%s' (transient, retry %d/%d in %.1fs): %s",
+                    job.name,
+                    attempt + 1,
+                    max_retries,
+                    delay,
+                    error_str,
+                )
+                await asyncio.sleep(delay)
+
+    # Exhausted all retries
+    logger.error(
+        "Delivery failed for job '%s' after %d attempts: %s",
+        job.name,
+        max_retries + 1,
+        last_error,
+    )
+    raise last_error
