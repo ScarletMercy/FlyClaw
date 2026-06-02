@@ -1068,24 +1068,29 @@ class WeixinChannel(Channel):
                 await asyncio.sleep(self._send_chunk_delay_seconds)
         return last_id
 
-    async def send_image(self, chat_id: str, image_key: str) -> bool:
-        if not image_key:
+    async def send_media(
+        self,
+        chat_id: str,
+        file_key: str,
+        media_type: str = "file",
+        file_bytes: bytes | None = None,
+        file_name: str = "",
+    ) -> bool:
+        if not file_key and file_bytes is None:
             return False
         try:
-            result = await self._send_file_internal(chat_id, image_key, "")
+            if media_type == "audio":
+                result = await self._send_file_internal(
+                    chat_id,
+                    file_key,
+                    "[voice message]",
+                    force_file_attachment=False,
+                )
+            else:
+                result = await self._send_file_internal(chat_id, file_key, "")
             return result is not None
         except Exception as exc:
-            logger.error("weixin send_image failed to=%s: %s", _safe_id(chat_id), exc)
-            return False
-
-    async def send_file(self, chat_id: str, file_key: str) -> bool:
-        if not file_key:
-            return False
-        try:
-            result = await self._send_file_internal(chat_id, file_key, "")
-            return result is not None
-        except Exception as exc:
-            logger.error("weixin send_file failed to=%s: %s", _safe_id(chat_id), exc)
+            logger.error("weixin send_media failed to=%s: %s", _safe_id(chat_id), exc)
             return False
 
     async def send_card(self, chat_id: str, card_content: str, reply_to: Optional[str] = None) -> Any:
@@ -1104,15 +1109,6 @@ class WeixinChannel(Channel):
         except (json.JSONDecodeError, TypeError):
             pass
         return await self.send_text(chat_id, text, reply_to)
-
-    async def send_voice(self, chat_id: str, audio_path: str, caption: Optional[str] = None) -> bool:
-        fallback_caption = caption or "[voice message]"
-        try:
-            result = await self._send_file_internal(chat_id, audio_path, fallback_caption, force_file_attachment=False)
-            return result is not None
-        except Exception as exc:
-            logger.error("weixin send_voice failed to=%s: %s", _safe_id(chat_id), exc)
-            return False
 
     async def send_typing(self, chat_id: str) -> None:
         if not self._send_session or not self._token:

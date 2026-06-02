@@ -26,6 +26,7 @@ class ApprovalRequest(BaseModel):
     thread_id: str = ""
     created_at: float = Field(default_factory=time.time)
     timeout_seconds: int = 300
+    approval_key: str = ""  # Pattern-level key for "always allow" (e.g. "del ", "rm ")
 
 
 class ApprovalData(RootModel[dict[str, list[str]]]):
@@ -46,6 +47,7 @@ class ApprovalManager:
         self._pending: dict[str, _PendingApproval] = {}
         self._durable: dict[str, list[str]] = {}
         self._session_approved: dict[str, set[str]] = {}
+        self._session_pattern_approved: dict[str, set[str]] = {}  # thread_id → set of approval_keys
         self._durable_path = self._data_dir / "approvals.json"
         self._load_durable()
 
@@ -104,12 +106,31 @@ class ApprovalManager:
         self._session_approved.setdefault(thread_id, set()).add(digest)
         logger.info("Session approval granted for %s in thread %s", tool_name, thread_id)
 
+    def approve_session_pattern(self, thread_id: str, approval_key: str):
+        """Grant session-level approval for a pattern (e.g. 'del ', 'rm ')."""
+        self._session_pattern_approved.setdefault(thread_id, set()).add(approval_key)
+        logger.info("Session pattern approval granted for '%s' in thread %s", approval_key, thread_id)
+
     def has_session_approval(self, thread_id: str, tool_name: str, args: str) -> bool:
         digest = self._make_digest(tool_name, args[:200])
-        return digest in self._session_approved.get(thread_id, set())
+        if digest in self._session_approved.get(thread_id, set()):
+            return True
+        # Check pattern-level approvals (e.g. "del " matches "Del C:\file.txt")
+        args_lower = args.lower()
+        tool_lower = tool_name.lower()
+        for pattern in self._session_pattern_approved.get(thread_id, set()):
+            if pattern.lower() in args_lower or pattern.lower() in tool_lower:
+                return True
+        return False
 
     def clear_session(self, thread_id: str):
+        """Clear exact-match session approvals. Pattern approvals persist across loop runs."""
         self._session_approved.pop(thread_id, None)
+
+    def clear_session_all(self, thread_id: str):
+        """Clear all session approvals including pattern approvals (used by /clear-approval)."""
+        self._session_approved.pop(thread_id, None)
+        self._session_pattern_approved.pop(thread_id, None)
 
     def request_approval(
         self,
@@ -120,6 +141,7 @@ class ApprovalManager:
         message_id: str = "",
         thread_id: str = "",
         timeout_seconds: int = 300,
+        approval_key: str = "",
     ) -> ApprovalRequest:
         req = ApprovalRequest(
             tool_name=tool_name,
@@ -130,6 +152,7 @@ class ApprovalManager:
             message_id=message_id,
             thread_id=thread_id,
             timeout_seconds=timeout_seconds,
+            approval_key=approval_key,
         )
         self._pending[req.id] = _PendingApproval(req)
         logger.info("Approval requested: %s (id=%s)", tool_name, req.id)

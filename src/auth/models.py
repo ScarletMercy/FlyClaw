@@ -25,7 +25,7 @@ ROLE_PERMISSIONS: dict[UserRole, dict[str, Any]] = {
     UserRole.owner: {
         "tools": "*",
         "admin_api": True,
-        "approval_bypass": True,
+        "approval_bypass": False,
     },
     UserRole.admin: {
         "tools": "*",

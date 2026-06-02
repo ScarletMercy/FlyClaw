@@ -8,11 +8,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sqlite3
 import threading
 import time
-from typing import Any
+from pathlib import Path
+from typing import Any, Optional
 
+import aiosqlite
 from pydantic import BaseModel, Field, field_validator
 
 from src.agent.interrupt import InterruptFlag
@@ -20,6 +21,16 @@ from src.agent.interrupt import InterruptFlag
 logger = logging.getLogger("flyclaw.agent.state")
 
 _VALID_ROLES = {"system", "user", "assistant", "tool"}
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS sessions (
+    thread_id TEXT PRIMARY KEY,
+    messages TEXT NOT NULL,
+    metadata TEXT NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_updated ON sessions(updated_at);
+"""
 
 
 class AgentState(BaseModel):
@@ -80,29 +91,29 @@ _MAX_LOCKS = 4096
 class StateStore:
     def __init__(self, db_path: str):
         self._db_path = db_path
-        self._db: sqlite3.Connection | None = None
+        self._conn: Optional[aiosqlite.Connection] = None
+        self._init_lock = asyncio.Lock()
         self._locks: dict[str, asyncio.Lock] = {}
         self._locks_lock = asyncio.Lock()
         self._interrupt_flags = InterruptFlagStore()
-        from pathlib import Path
 
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
-
-    def _init_db(self) -> None:
-        self._db = sqlite3.connect(self._db_path, timeout=30, check_same_thread=False)
-        self._db.execute("PRAGMA journal_mode=WAL")
-        self._db.execute("PRAGMA busy_timeout=5000")
-        self._db.execute("""
-            CREATE TABLE IF NOT EXISTS sessions (
-                thread_id TEXT PRIMARY KEY,
-                messages TEXT NOT NULL,
-                metadata TEXT NOT NULL,
-                updated_at REAL NOT NULL
-            )
-        """)
-        self._db.execute("CREATE INDEX IF NOT EXISTS idx_updated ON sessions(updated_at)")
-        self._db.commit()
+    async def _get_conn(self) -> aiosqlite.Connection:
+        """Lazy connection init with double-checked locking."""
+        if self._conn is not None:
+            return self._conn
+        async with self._init_lock:
+            if self._conn is not None:
+                return self._conn
+            if self._db_path != ":memory:":
+                Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
+            conn = await aiosqlite.connect(self._db_path)
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA journal_mode=WAL")
+            await conn.execute("PRAGMA busy_timeout=5000")
+            await conn.executescript(_SCHEMA)
+            await conn.commit()
+            self._conn = conn
+            return conn
 
     async def acquire_thread(self, thread_id: str) -> asyncio.Lock:
         async with self._locks_lock:
@@ -115,30 +126,26 @@ class StateStore:
             return self._locks[thread_id]
 
     async def save(self, thread_id: str, state: AgentState) -> None:
-        assert self._db is not None
-        data = (
-            thread_id,
-            json.dumps(state.messages, ensure_ascii=False),
-            json.dumps(state.meta_dict(), ensure_ascii=False),
-            time.time(),
+        conn = await self._get_conn()
+        await conn.execute(
+            """INSERT OR REPLACE INTO sessions (thread_id, messages, metadata, updated_at)
+               VALUES (?, ?, ?, ?)""",
+            (
+                thread_id,
+                json.dumps(state.messages, ensure_ascii=False),
+                json.dumps(state.meta_dict(), ensure_ascii=False),
+                time.time(),
+            ),
         )
+        await conn.commit()
 
-        def _do_save():
-            self._db.execute(
-                """INSERT OR REPLACE INTO sessions (thread_id, messages, metadata, updated_at)
-                   VALUES (?, ?, ?, ?)""",
-                data,
-            )
-            self._db.commit()
-
-        await asyncio.to_thread(_do_save)
-
-    def _load_sync(self, thread_id: str) -> AgentState | None:
-        assert self._db is not None
-        row = self._db.execute(
+    async def load(self, thread_id: str) -> AgentState | None:
+        conn = await self._get_conn()
+        async with conn.execute(
             "SELECT messages, metadata FROM sessions WHERE thread_id = ?",
             (thread_id,),
-        ).fetchone()
+        ) as cursor:
+            row = await cursor.fetchone()
         if row is None:
             return None
         messages = json.loads(row[0])
@@ -146,42 +153,26 @@ class StateStore:
         meta["messages"] = messages
         return AgentState.model_validate(meta)
 
-    async def load(self, thread_id: str) -> AgentState | None:
-        return await asyncio.to_thread(self._load_sync, thread_id)
-
-    def _delete_sync(self, thread_id: str) -> bool:
-        assert self._db is not None
-        cursor = self._db.execute("DELETE FROM sessions WHERE thread_id = ?", (thread_id,))
-        self._db.commit()
+    async def delete(self, thread_id: str) -> bool:
+        conn = await self._get_conn()
+        cursor = await conn.execute("DELETE FROM sessions WHERE thread_id = ?", (thread_id,))
+        await conn.commit()
         return cursor.rowcount > 0
 
-    async def delete(self, thread_id: str) -> bool:
-        return await asyncio.to_thread(self._delete_sync, thread_id)
-
-    def _list_threads_sync(self) -> list[str]:
-        assert self._db is not None
-        rows = self._db.execute("SELECT thread_id FROM sessions ORDER BY updated_at DESC").fetchall()
+    async def list_threads(self) -> list[str]:
+        conn = await self._get_conn()
+        async with conn.execute("SELECT thread_id FROM sessions ORDER BY updated_at DESC") as cursor:
+            rows = await cursor.fetchall()
         return [r[0] for r in rows]
 
-    async def list_threads(self) -> list[str]:
-        return await asyncio.to_thread(self._list_threads_sync)
-
-    # -- Public sync aliases for CLI / non-async callers ------------------
-
-    def load_sync(self, thread_id: str) -> AgentState | None:
-        """Sync wrapper for CLI and other non-async callers."""
-        return self._load_sync(thread_id)
-
-    def list_threads_sync(self) -> list[str]:
-        """Sync wrapper for CLI and other non-async callers."""
-        return self._list_threads_sync()
-
-    # ----------------------------------------------------------------------
-
-    def close(self) -> None:
-        if self._db:
-            self._db.close()
-            self._db = None
+    async def close(self) -> None:
+        if self._conn is not None:
+            try:
+                await self._conn.close()
+            except Exception:
+                logger.warning("Error closing StateStore connection", exc_info=True)
+            finally:
+                self._conn = None
 
     def get_interrupt_flag(self, thread_id: str) -> InterruptFlag:
         return self._interrupt_flags.get_flag(thread_id)
@@ -193,11 +184,11 @@ class StateStore:
 class MemoryStateStore(StateStore):
     def __init__(self):
         self._db_path = ":memory:"
+        self._conn: Optional[aiosqlite.Connection] = None
+        self._init_lock = asyncio.Lock()
         self._locks: dict[str, asyncio.Lock] = {}
         self._locks_lock = asyncio.Lock()
         self._interrupt_flags = InterruptFlagStore()
-        self._db: sqlite3.Connection | None = None
-        self._init_db()
 
 
 _MAX_FLAGS = 4096

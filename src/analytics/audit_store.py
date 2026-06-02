@@ -271,27 +271,33 @@ def subscribe_audit_to_events() -> None:
     from src.events import subscribe_async
 
     async def _on_tool_completed(event, **ctx):
-        await store.record_call(
-            thread_id=ctx.get("thread_id", ""),
-            tool_name=ctx.get("tool_name", ""),
-            sender_id=ctx.get("sender_id", ""),
-            channel=ctx.get("channel", ""),
-            success=True,
-            duration_ms=ctx.get("duration_ms", 0.0),
-            args_preview=ctx.get("args_preview", ""),
-        )
+        try:
+            await store.record_call(
+                thread_id=ctx.get("thread_id", ""),
+                tool_name=ctx.get("tool_name", ""),
+                sender_id=ctx.get("sender_id", ""),
+                channel=ctx.get("channel", ""),
+                success=True,
+                duration_ms=ctx.get("duration_ms", 0.0),
+                args_preview=ctx.get("args_preview", ""),
+            )
+        except Exception as e:
+            logger.warning("Audit record failed (completed): %s", e)
 
     async def _on_tool_failed(event, **ctx):
-        await store.record_call(
-            thread_id=ctx.get("thread_id", ""),
-            tool_name=ctx.get("tool_name", ""),
-            sender_id=ctx.get("sender_id", ""),
-            channel=ctx.get("channel", ""),
-            success=False,
-            duration_ms=ctx.get("duration_ms", 0.0),
-            args_preview=ctx.get("args_preview", ""),
-            error=ctx.get("error", ""),
-        )
+        try:
+            await store.record_call(
+                thread_id=ctx.get("thread_id", ""),
+                tool_name=ctx.get("tool_name", ""),
+                sender_id=ctx.get("sender_id", ""),
+                channel=ctx.get("channel", ""),
+                success=False,
+                duration_ms=ctx.get("duration_ms", 0.0),
+                args_preview=ctx.get("args_preview", ""),
+                error=ctx.get("error", ""),
+            )
+        except Exception as e:
+            logger.warning("Audit record failed (failed): %s", e)
 
     _subscriptions.append(subscribe_async("tool.exec_completed", _on_tool_completed))
     _subscriptions.append(subscribe_async("tool.exec_failed", _on_tool_failed))

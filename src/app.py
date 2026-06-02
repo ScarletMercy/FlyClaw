@@ -700,7 +700,7 @@ class ServiceContainer:
             if self.weixin:
                 await self.weixin.stop()
             if self.state_store:
-                self.state_store.close()
+                await self.state_store.close()
             # Clear all tool cache temp files on shutdown
             try:
                 from src.agent.tool_cache import clear_all_caches

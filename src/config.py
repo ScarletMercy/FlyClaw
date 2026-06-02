@@ -116,6 +116,7 @@ class QQConfig(BaseModel):
     group_allow_from: list[str] = Field(default_factory=list)
     require_mention: bool = True
     markdown_support: bool = False
+    approval_keyboard: bool = True  # Use QQ native keyboard buttons for approval (requires markdown_support=True)
 
 
 class WeixinConfig(BaseModel):
@@ -268,15 +269,6 @@ class ToolsConfig(BaseModel):
     browser: BrowserConfig = Field(default_factory=BrowserConfig)
     windows_use: WindowsUseConfig = Field(default_factory=WindowsUseConfig)
     guardrails: GuardrailConfig = Field(default_factory=GuardrailConfig)
-
-
-class SnapshotConfig(BaseModel):
-    """File snapshot/rollback configuration (shadow git store)."""
-
-    enabled: bool = True
-    store_path: str = "~/.flyclaw/data/snapshots"
-    max_per_dir: int = 20
-    max_file_size: int = 10_000_000  # 10MB
 
 
 class VoiceConfig(BaseModel):
@@ -447,7 +439,6 @@ class AppConfig(BaseModel):
     compression: CompressionConfig = Field(default_factory=CompressionConfig)
     canvas: CanvasConfig = Field(default_factory=CanvasConfig)
     hooks: HooksConfig = Field(default_factory=HooksConfig)
-    snapshot: SnapshotConfig = Field(default_factory=SnapshotConfig)
     delegation: DelegationConfig = Field(default_factory=DelegationConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
 
@@ -474,9 +465,6 @@ def _expand_paths(config: AppConfig) -> AppConfig:
 
     # Session search
     config.session_search.index_path = str(Path(config.session_search.index_path).expanduser().resolve())
-
-    # Snapshot store
-    config.snapshot.store_path = str(Path(config.snapshot.store_path).expanduser().resolve())
 
     return config
 

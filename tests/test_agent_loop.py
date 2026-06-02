@@ -790,6 +790,206 @@ class TestFindSafeCut:
         assert _find_safe_cut(msgs, 2) == 4
 
 
+class TestParallelApprovalAllNeedApproval:
+    """Regression: when multiple parallel tools all need approval, every one
+    of them must eventually be presented — not just the first.
+
+    The bug was that _execute_tools_parallel added "[已跳过]" fake results
+    for subsequent ApprovalPending tools, so _resume_inner thought they
+    already had results and never re-executed them.
+    """
+
+    @pytest.mark.asyncio
+    async def test_no_fake_skipped_results_for_parallel_approvals(self, store, config):
+        """Subsequent approval-pending tools should NOT get fake results."""
+        from src.tools.exec import ApprovalNeededError
+
+        async def needs_approval(**kwargs):
+            raise ApprovalNeededError(command="danger", denylisted=False)
+
+        tool = _make_tool("exec_command", fn=needs_approval)
+        client = AsyncMock()
+        client.chat.return_value = ChatResponse(
+            content="",
+            tool_calls=[
+                _make_tc("exec_command", {"command": "cmd_a"}, tc_id="tc_a"),
+                _make_tc("exec_command", {"command": "cmd_b"}, tc_id="tc_b"),
+            ],
+        )
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        mock_mgr = MagicMock()
+        mock_mgr.cancel_pending = MagicMock()
+        with (
+            patch("src.agent.loop.AgentLoop._handle_approval") as mock_handle,
+            patch("src.tools.approval.get_approval_manager", return_value=mock_mgr),
+        ):
+            # First call raises ApprovalPending for tc_a
+            # Second call (tc_b) also raises, but parallel results are
+            # processed in order so only the first one is preserved.
+            call_idx = 0
+
+            def handle_side_effect(error, tc, state, thread_id):
+                nonlocal call_idx
+                tc_id = tc.id if hasattr(tc, "id") else tc.get("id")
+                call_idx += 1
+                raise ApprovalPending(
+                    thread_id=thread_id,
+                    request_id=f"r_{tc_id}",
+                    tool_name="exec_command",
+                    command_preview=f"cmd_{call_idx}",
+                    tc_id=tc_id,
+                )
+
+            mock_handle.side_effect = handle_side_effect
+
+            state = AgentState(messages=[{"role": "user", "content": "run"}])
+            with pytest.raises(ApprovalPending) as exc_info:
+                await loop.run(state, "parallel_approval_test")
+
+            exc = exc_info.value
+
+        # 1. First ApprovalPending is raised (tc_a)
+        assert exc.tc_id == "tc_a"
+        assert exc.request_id.startswith("r_tc_a")
+
+        # 2. Second approval request was cancelled
+        mock_mgr.cancel_pending.assert_called()
+
+        # 3. Saved state should NOT contain "[已跳过]" for tc_b
+        saved_state = await store.load("parallel_approval_test")
+        tool_results = [m for m in saved_state.messages if m.get("role") == "tool"]
+        skipped = [m for m in tool_results if "已跳过" in m.get("content", "")]
+        assert len(skipped) == 0, f"Expected no fake '[已跳过]' results, but found: {skipped}"
+
+        # 4. tc_b should not have any result at all — so it can be
+        #    re-executed by _resume_inner later
+        tc_ids_with_results = {m.get("tool_call_id") for m in tool_results}
+        assert "tc_b" not in tc_ids_with_results
+
+    @pytest.mark.asyncio
+    async def test_successful_results_preserved_before_approval(self, store, config):
+        """Tools that succeeded before the first approval should keep their results."""
+        from src.tools.exec import ApprovalNeededError
+
+        async def ok_tool(**kwargs):
+            return "ok_result"
+
+        async def needs_approval(**kwargs):
+            raise ApprovalNeededError(command="danger", denylisted=False)
+
+        tool_ok = _make_tool("ok_tool", fn=ok_tool)
+        tool_danger = _make_tool("exec_command", fn=needs_approval)
+        client = AsyncMock()
+        client.chat.return_value = ChatResponse(
+            content="",
+            tool_calls=[
+                _make_tc("ok_tool", tc_id="tc_ok"),
+                _make_tc("exec_command", {"command": "rm"}, tc_id="tc_danger"),
+            ],
+        )
+        loop = _make_loop(store, config, tools=[tool_ok, tool_danger], client=client)
+
+        mock_mgr = MagicMock()
+        mock_mgr.cancel_pending = MagicMock()
+        with (
+            patch("src.agent.loop.AgentLoop._handle_approval") as mock_handle,
+            patch("src.tools.approval.get_approval_manager", return_value=mock_mgr),
+        ):
+            mock_handle.side_effect = ApprovalPending(
+                thread_id="t_preserve",
+                request_id="r_danger",
+                tool_name="exec_command",
+                command_preview="rm",
+                tc_id="tc_danger",
+            )
+
+            state = AgentState(messages=[{"role": "user", "content": "go"}])
+            with pytest.raises(ApprovalPending):
+                await loop.run(state, "t_preserve")
+
+        saved_state = await store.load("t_preserve")
+        tool_results = [m for m in saved_state.messages if m.get("role") == "tool"]
+
+        # The ok_tool result should be preserved
+        ok_results = [m for m in tool_results if m.get("tool_call_id") == "tc_ok"]
+        assert len(ok_results) == 1
+        assert "ok_result" in ok_results[0]["content"]
+
+    @pytest.mark.asyncio
+    async def test_resume_re_executes_unresulted_tools(self, store, config):
+        """After first approval, _resume_inner should re-execute tools without results."""
+        from src.tools.exec import ApprovalNeededError
+
+        call_log: list[str] = []
+
+        async def needs_approval(command: str = ""):
+            call_log.append(command)
+            raise ApprovalNeededError(command=command, denylisted=False)
+
+        tool = _make_tool("exec_command", fn=needs_approval)
+        client = AsyncMock()
+        call_count = 0
+
+        async def fake_chat(messages, tools=None, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ChatResponse(
+                    content="",
+                    tool_calls=[
+                        _make_tc("exec_command", {"command": "cmd_a"}, tc_id="tc_a"),
+                        _make_tc("exec_command", {"command": "cmd_b"}, tc_id="tc_b"),
+                    ],
+                )
+            return ChatResponse(content="Done.", tool_calls=[])
+
+        client.chat.side_effect = fake_chat
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        mock_mgr = MagicMock()
+        mock_mgr.cancel_pending = MagicMock()
+        mock_mgr.approve_session = MagicMock()
+
+        with (
+            patch("src.agent.loop.AgentLoop._handle_approval") as mock_handle,
+            patch("src.tools.approval.get_approval_manager", return_value=mock_mgr),
+        ):
+            handle_idx = 0
+
+            def handle_side_effect(error, tc, state, thread_id):
+                nonlocal handle_idx
+                handle_idx += 1
+                tc_id = tc.id if hasattr(tc, "id") else tc.get("id")
+                raise ApprovalPending(
+                    thread_id=thread_id,
+                    request_id=f"r_{tc_id}",
+                    tool_name="exec_command",
+                    command_preview=f"cmd_{handle_idx}",
+                    tc_id=tc_id,
+                )
+
+            mock_handle.side_effect = handle_side_effect
+
+            state = AgentState(messages=[{"role": "user", "content": "run"}])
+            with pytest.raises(ApprovalPending):
+                await loop.run(state, "resume_test")
+
+        # Both tools were called during parallel execution
+        assert "cmd_a" in call_log, f"cmd_a should have been attempted, got {call_log}"
+        assert "cmd_b" in call_log, f"cmd_b should have been attempted, got {call_log}"
+
+        # Verify saved state: tc_a is pending, tc_b has NO result
+        saved_state = await store.load("resume_test")
+        assert saved_state is not None
+        assert saved_state.pending_approval is not None
+        assert saved_state.pending_approval["tool_call_id"] == "tc_a"
+
+        tool_results = [m for m in saved_state.messages if m.get("role") == "tool"]
+        tc_ids_with_results = {m.get("tool_call_id") for m in tool_results}
+        assert "tc_b" not in tc_ids_with_results, "tc_b should not have a result so _resume_inner will re-execute it"
+
+
 class TestApprovalPendingPartialResults:
     def test_partial_results_default_empty(self):
         exc = ApprovalPending("t1", "r1", "exec", "cmd", tc_id="")

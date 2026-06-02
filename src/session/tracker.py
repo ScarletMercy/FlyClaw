@@ -259,7 +259,7 @@ class SessionRegistry:
                 return s.thread_id
         return None
 
-    def find_orphaned_threads(self, user_key: str, store) -> list[str]:
+    async def find_orphaned_threads(self, user_key: str, store) -> list[str]:
         """Scan state store for threads belonging to this user but not registered.
 
         Matches on channel prefix + user hash to safely recover sessions
@@ -270,7 +270,7 @@ class SessionRegistry:
             return []
         channel_prefix, _, user_hash = parts
 
-        threads = store.list_threads_sync()
+        threads = await store.list_threads()
         registered = set()
         us = self._users.get(user_key)
         if us:
@@ -286,7 +286,7 @@ class SessionRegistry:
                 orphaned.append(tid)
         return orphaned
 
-    def find_all_channel_threads(self, user_key: str, store) -> list[str]:
+    async def find_all_channel_threads(self, user_key: str, store) -> list[str]:
         """Fallback: find ALL unregistered threads from the same channel, ignoring hash.
 
         Used when hash-based matching fails (e.g. sender_id changed after
@@ -297,7 +297,7 @@ class SessionRegistry:
             return []
         channel_prefix = parts[0]
 
-        threads = store.list_threads_sync()
+        threads = await store.list_threads()
         registered = set()
         us = self._users.get(user_key)
         if us:

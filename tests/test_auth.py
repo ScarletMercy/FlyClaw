@@ -52,7 +52,7 @@ class TestUserModels:
         from src.auth.models import ROLE_PERMISSIONS, UserRole
 
         assert ROLE_PERMISSIONS[UserRole.owner]["tools"] == "*"
-        assert ROLE_PERMISSIONS[UserRole.owner]["approval_bypass"] is True
+        assert ROLE_PERMISSIONS[UserRole.owner]["approval_bypass"] is False
         assert ROLE_PERMISSIONS[UserRole.guest]["tools"] == []
         assert ROLE_PERMISSIONS[UserRole.user]["admin_api"] is False
         assert "exec" in ROLE_PERMISSIONS[UserRole.user]["tools"]

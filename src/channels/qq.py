@@ -52,6 +52,7 @@ _MESSAGE_DISPATCH_EVENTS = frozenset(
         "GROUP_AT_MESSAGE_CREATE",
         "AT_MESSAGE_CREATE",
         "DIRECT_MESSAGE_CREATE",
+        "INTERACTION_CREATE",
     }
 )
 
@@ -59,7 +60,8 @@ _MESSAGE_DISPATCH_EVENTS = frozenset(
 INTENT_PUBLIC_GUILD_MESSAGES = 1 << 30
 INTENT_DIRECT_MESSAGE = 1 << 12
 INTENT_GROUP_AND_C2C = 1 << 25
-FULL_INTENTS = INTENT_PUBLIC_GUILD_MESSAGES | INTENT_DIRECT_MESSAGE | INTENT_GROUP_AND_C2C
+INTENT_INTERACTION = 1 << 26  # Required for INTERACTION_CREATE (button callbacks)
+FULL_INTENTS = INTENT_PUBLIC_GUILD_MESSAGES | INTENT_DIRECT_MESSAGE | INTENT_GROUP_AND_C2C | INTENT_INTERACTION
 
 # Reconnect config
 _RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
@@ -621,6 +623,76 @@ class QQChannel(Channel):
 
         return "".join(parts)
 
+    async def _handle_interaction(self, data: dict):
+        """Handle QQ button interaction callbacks (approve / always / deny).
+
+        QQ INTERACTION_CREATE event structure:
+        {"id": "event_id", "data": {"resolved": {"button_data": "approve:req123", ...}}}
+
+        ACK via PUT /interactions/{id} with {"code": 0}.
+        """
+        event_id = data.get("id", "")
+        data_obj = data.get("data", {})
+        resolved = (data_obj if isinstance(data_obj, dict) else {}).get("resolved", {})
+        button_data = resolved.get("button_data", "")
+
+        if not button_data:
+            return
+
+        parts = button_data.split(":", 1)
+        if len(parts) != 2:
+            return
+
+        action, request_id = parts
+        if action not in ("approve", "always", "deny"):
+            return
+
+        # ACK the interaction promptly — QQ client shows error icon if not responded.
+        if event_id:
+            try:
+                await self._acknowledge_interaction(event_id)
+            except Exception as e:
+                logger.warning("Failed to ACK interaction %s: %s", event_id, e)
+
+        from src.tools.approval import get_approval_manager
+
+        mgr = get_approval_manager()
+
+        if action == "always":
+            pending = mgr.get_pending(request_id)
+            if pending:
+                if pending.approval_key:
+                    # Pattern-level approval (e.g. "del " for exec_command)
+                    mgr.approve_session_pattern(pending.thread_id, pending.approval_key)
+                else:
+                    # Tool-level approval (exact args match)
+                    mgr.approve_session(
+                        pending.thread_id,
+                        pending.tool_name,
+                        pending.args_preview,
+                    )
+            ok = mgr.resolve(request_id, "allow_once")
+            logger.info("QQ button 'always': request_id=%s session_approved=%s", request_id, ok)
+        else:
+            decision = "allow_once" if action == "approve" else "deny"
+            ok = mgr.resolve(request_id, decision)
+            logger.info("QQ button callback: action=%s request_id=%s resolved=%s", action, request_id, ok)
+
+    async def _acknowledge_interaction(self, interaction_id: str) -> None:
+        """ACK a button interaction via PUT /interactions/{id} with {"code": 0}."""
+        token = await self._token_manager.get_token()
+        resp = await self._http_client.put(
+            f"{API_BASE}/interactions/{interaction_id}",
+            headers={
+                "Authorization": f"QQBot {token}",
+                "Content-Type": "application/json",
+            },
+            json={"code": 0},
+            timeout=10.0,
+        )
+        if resp.status_code >= 400:
+            raise RuntimeError(f"Interaction ACK failed [{resp.status_code}]: {resp.text[:200]}")
+
     async def _on_dispatch(self, event_type: str, data: dict):
         logger.debug("QQ dispatch: %s", event_type)
         if not self._on_message_callback:
@@ -661,6 +733,10 @@ class QQChannel(Channel):
             guild_id = data.get("guild_id", "")
             chat_type = "p2p"  # guild DM maps to p2p
             chat_id = f"dm:{guild_id}"
+
+        elif event_type == "INTERACTION_CREATE":
+            await self._handle_interaction(data)
+            return
 
         else:
             return
@@ -949,6 +1025,7 @@ class QQChannel(Channel):
         msg_type: Optional[int] = None,
         markdown: Optional[dict] = None,
         media: Optional[dict] = None,
+        keyboard: Optional[dict] = None,
     ) -> Any:
         """Send a message. Determines msg_type automatically if not specified."""
         kind, target = _parse_chat_id(chat_id)
@@ -964,60 +1041,34 @@ class QQChannel(Channel):
         else:
             msg_type = 0
 
-        if kind == "c2c":
-            body: dict = {
+        def _build_body() -> dict:
+            b: dict = {
                 "content": content,
                 "msg_type": msg_type,
                 "msg_seq": self._seq_counter,
             }
             if reply_to:
-                body["msg_id"] = reply_to
+                b["msg_id"] = reply_to
             if media:
-                body["media"] = media
+                b["media"] = media
             if msg_type == 2 and markdown:
-                body["markdown"] = markdown
+                b["markdown"] = markdown
+            if keyboard and kind in ("c2c", "group"):
+                b["keyboard"] = keyboard
+            return b
+
+        body = _build_body()
+
+        if kind == "c2c":
             return await self._api_post(f"/v2/users/{target}/messages", body, description="QQ send C2C")
 
         elif kind == "group":
-            body = {
-                "content": content,
-                "msg_type": msg_type,
-                "msg_seq": self._seq_counter,
-            }
-            if reply_to:
-                body["msg_id"] = reply_to
-            if media:
-                body["media"] = media
-            if msg_type == 2 and markdown:
-                body["markdown"] = markdown
             return await self._api_post(f"/v2/groups/{target}/messages", body, description="QQ send group")
 
         elif kind == "channel":
-            body = {
-                "content": content,
-                "msg_type": msg_type,
-                "msg_seq": self._seq_counter,
-            }
-            if reply_to:
-                body["msg_id"] = reply_to
-            if media:
-                body["media"] = media
-            if msg_type == 2 and markdown:
-                body["markdown"] = markdown
             return await self._api_post(f"/channels/{target}/messages", body, description="QQ send channel")
 
         elif kind == "dm":
-            body = {
-                "content": content,
-                "msg_type": msg_type,
-                "msg_seq": self._seq_counter,
-            }
-            if reply_to:
-                body["msg_id"] = reply_to
-            if media:
-                body["media"] = media
-            if msg_type == 2 and markdown:
-                body["markdown"] = markdown
             return await self._api_post(f"/dms/{target}/messages", body, description="QQ send DM")
 
         else:
@@ -1089,78 +1140,60 @@ class QQChannel(Channel):
 
     # --- Public send methods ---
 
-    async def send_image(self, chat_id: str, image_key: str) -> bool:
-        """Send an image. image_key can be a URL or local file path."""
-        kind, _ = _parse_chat_id(chat_id)
+    # QQ file_type mapping: image=1, audio=3, file=4
+    _FILE_TYPE_MAP = {"image": 1, "audio": 3, "file": 4}
 
-        # Guild channels: use markdown image syntax for URLs
+    async def send_media(
+        self,
+        chat_id: str,
+        file_key: str,
+        media_type: str = "file",
+        file_bytes: bytes | None = None,
+        file_name: str = "",
+    ) -> bool:
+        """Send media (image / audio / file). Supports local paths, URLs, and raw bytes."""
+        kind, _ = _parse_chat_id(chat_id)
+        ft = self._FILE_TYPE_MAP.get(media_type, 4)
+
+        # --- Guild / DM: only images via markdown ---
         if kind in ("channel", "dm"):
-            if image_key.startswith(("http://", "https://")):
-                return await self._send_message(chat_id, f"![]({image_key})") is not None
+            if media_type == "image" and file_key.startswith(("http://", "https://")):
+                return await self._send_message(chat_id, f"![]({file_key})") is not None
+            logger.warning("QQ send_media not supported for guild type=%s media=%s", kind, media_type)
             return False
 
-        # Local file upload
-        if not image_key.startswith(("http://", "https://", "data:")):
-            p = Path(image_key)
-            if p.exists():
-                file_info = await self._upload_local_file(chat_id, image_key, file_type=1)
+        # --- Raw bytes path (e.g. TTS audio) ---
+        if file_bytes is not None:
+            b64 = base64.b64encode(file_bytes).decode()
+            file_info = await self._upload_media(
+                chat_id,
+                file_type=ft,
+                file_data=b64,
+                file_name=file_name or "media.bin",
+            )
+            if file_info:
+                result = await self._send_message(chat_id, "", msg_type=7, media={"file_info": file_info})
+                return result is not None
+            return False
+
+        # --- Local file ---
+        if not file_key.startswith(("http://", "https://", "data:")):
+            if Path(file_key).exists():
+                file_info = await self._upload_local_file(chat_id, file_key, file_type=ft)
                 if file_info:
                     result = await self._send_message(chat_id, "", msg_type=7, media={"file_info": file_info})
                     return result is not None
-                return False
             return False
 
-        # URL-based upload (only for actual URLs)
-        file_info = await self._upload_media(chat_id, file_type=1, url=image_key)
+        # --- URL ---
+        file_info = await self._upload_media(chat_id, file_type=ft, url=file_key)
         if file_info:
             result = await self._send_message(chat_id, "", msg_type=7, media={"file_info": file_info})
             return result is not None
 
-        # Fallback: send as text with image URL
-        return await self._send_message(chat_id, image_key) is not None
-
-    async def send_file(self, chat_id: str, file_key: str) -> bool:
-        """Send a file. file_key can be a URL or local file path."""
-        kind, _ = _parse_chat_id(chat_id)
-        if kind in ("channel", "dm"):
-            logger.warning("QQ file send not supported for chat type: %s", kind)
-            return False
-
-        # Local file
-        if not file_key.startswith(("http://", "https://")):
-            p = Path(file_key)
-            if p.exists():
-                file_info = await self._upload_local_file(chat_id, file_key, file_type=4)
-                if file_info:
-                    result = await self._send_message(chat_id, "", msg_type=7, media={"file_info": file_info})
-                    return result is not None
-                return False
-            return False
-
-        # URL-based (only for actual URLs)
-        file_info = await self._upload_media(chat_id, file_type=4, url=file_key)
-        if file_info:
-            result = await self._send_message(chat_id, "", msg_type=7, media={"file_info": file_info})
-            return result is not None
-        return False
-
-    async def send_audio(self, chat_id: str, audio_bytes: bytes, file_name: str = "speech.mp3") -> bool:
-        """Send audio bytes as a voice message (C2C and group only)."""
-        kind, _ = _parse_chat_id(chat_id)
-        if kind not in ("c2c", "group"):
-            logger.warning("QQ audio send not supported for chat type: %s", kind)
-            return False
-
-        b64 = base64.b64encode(audio_bytes).decode()
-        file_info = await self._upload_media(
-            chat_id,
-            file_type=3,
-            file_data=b64,
-            file_name=file_name,
-        )
-        if file_info:
-            result = await self._send_message(chat_id, "", msg_type=7, media={"file_info": file_info})
-            return result is not None
+        # Fallback for images: send as text
+        if media_type == "image":
+            return await self._send_message(chat_id, file_key) is not None
         return False
 
     async def send_card(
@@ -1197,5 +1230,109 @@ class QQChannel(Channel):
                 )
 
         return await self.send_text(chat_id, text, reply_to)
+
+    # --- Approval keyboard ---
+
+    async def send_approval_keyboard(
+        self,
+        chat_id: str,
+        request_id: str,
+        command_preview: str,
+        is_dangerous: bool = False,
+        timeout_seconds: int = 120,
+        zh: bool = True,
+    ) -> Any:
+        """Send an approval message with interactive buttons (C2C/group only).
+
+        Three buttons: ✅ Approve (once), 🔒 Always allow (session), ❌ Deny.
+        Returns None if the chat type does not support keyboard (channel/dm).
+        """
+        kind, _ = _parse_chat_id(chat_id)
+        # Keyboard only supported for C2C and group messages
+        if kind not in ("c2c", "group"):
+            return None
+
+        if not self.config.markdown_support:
+            return None
+
+        if not getattr(self.config, "approval_keyboard", True):
+            return None
+
+        warn = "⚠️ 危险" if is_dangerous else "需要审批"
+        if not zh:
+            warn = "⚠️ DANGEROUS" if is_dangerous else "Approval Required"
+
+        md_content = (
+            (
+                f"**{warn}**\n```\n{command_preview[:500]}\n```\n"
+                + (f"⏱️ 超时 {timeout_seconds}s 后自动拒绝" if zh else f"⏱️ Auto-deny after {timeout_seconds}s")
+            )
+            if self.config.markdown_support
+            else command_preview
+        )
+
+        keyboard = {
+            "content": {
+                "rows": [
+                    {
+                        "buttons": [
+                            {
+                                "id": "allow",
+                                "render_data": {
+                                    "label": "✅ 允许一次" if zh else "✅ Allow Once",
+                                    "visited_label": "已允许" if zh else "Allowed",
+                                    "style": 1,
+                                },
+                                "action": {
+                                    "type": 1,
+                                    "permission": {"type": 2},
+                                    "data": f"approve:{request_id}",
+                                    "click_limit": 1,
+                                },
+                                "group_id": "approval",
+                            },
+                            {
+                                "id": "always",
+                                "render_data": {
+                                    "label": "⭐ 始终允许" if zh else "⭐ Always Allow",
+                                    "visited_label": "已始终允许" if zh else "Always Allowed",
+                                    "style": 1,
+                                },
+                                "action": {
+                                    "type": 1,
+                                    "permission": {"type": 2},
+                                    "data": f"always:{request_id}",
+                                    "click_limit": 1,
+                                },
+                                "group_id": "approval",
+                            },
+                            {
+                                "id": "deny",
+                                "render_data": {
+                                    "label": "❌ 拒绝" if zh else "❌ Deny",
+                                    "visited_label": "已拒绝" if zh else "Denied",
+                                    "style": 0,
+                                },
+                                "action": {
+                                    "type": 1,
+                                    "permission": {"type": 2},
+                                    "data": f"deny:{request_id}",
+                                    "click_limit": 1,
+                                },
+                                "group_id": "approval",
+                            },
+                        ]
+                    }
+                ]
+            }
+        }
+
+        return await self._send_message(
+            chat_id,
+            content=md_content,
+            msg_type=2,
+            markdown={"content": md_content},
+            keyboard=keyboard,
+        )
 
     # --- Helpers ---

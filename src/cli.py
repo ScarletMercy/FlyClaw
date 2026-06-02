@@ -136,7 +136,7 @@ def cmd_status(args):
         print(f"\n服务状态:   未运行 (无法连接 {config.gateway.host}:{config.gateway.port})")
 
 
-def cmd_sessions(args):
+async def _cmd_sessions_async(args):
     config = _load_config()
     db_path = Path(config.checkpointer.path)
     if not db_path.exists():
@@ -147,18 +147,22 @@ def cmd_sessions(args):
 
     store = StateStore(str(db_path))
     try:
-        threads = store.list_threads_sync()
+        threads = await store.list_threads()
         if not threads:
             print("未找到会话")
             return 0
         print(f"会话列表 ({len(threads)}):\n")
         for tid in threads:
-            state = store.load_sync(tid)
+            state = await store.load(tid)
             msg_count = len(state.messages) if state else 0
             print(f"  {tid}: {msg_count} 条消息")
     finally:
-        store.close()
+        await store.close()
     return 0
+
+
+def cmd_sessions(args):
+    return asyncio.run(_cmd_sessions_async(args))
 
 
 def cmd_model(args):

@@ -13,7 +13,6 @@ import aiofiles.os
 logger = logging.getLogger("flyclaw.file_tools")
 
 _BASE_DIR = os.path.abspath(os.environ.get("FLYCLAW_WORKSPACE", "."))
-_edit_condition = asyncio.Condition()
 
 
 def set_workspace(path: str):
@@ -47,6 +46,21 @@ def _resolve_path(path: str) -> str:
         except ValueError:
             continue
     raise ValueError(f"当前为沙盒模式，无法访问工作目录之外的路径：{path}（允许范围：{_BASE_DIR}、{cache_root}）")
+
+
+# ── File write ────────────────────────────────────────────────────────
+
+
+async def _direct_write(path: str, content: str, encoding: str = "utf-8") -> None:
+    async with aiofiles.open(path, "w", encoding=encoding) as f:
+        await f.write(content)
+
+
+def _count_lines(text: str) -> int:
+    """Count lines in text, matching Claude Code semantics."""
+    if not text:
+        return 0
+    return text.count("\n") + (0 if text.endswith("\n") else 1)
 
 
 async def read_file(path: str, offset: int = 0, head_limit: int = 500) -> str:
@@ -115,71 +129,68 @@ async def write_file(path: str, content: str) -> str:
         resolved = _resolve_path(path)
     except ValueError as e:
         return f"Error: {e}"
-    from src.tools.snapshot import snapshot_before_write
-
-    await snapshot_before_write(_BASE_DIR)
-    async with _edit_condition:
-        try:
-            parent = os.path.dirname(resolved)
-            if parent:
-                await aiofiles.os.makedirs(parent, exist_ok=True)
-            async with aiofiles.open(resolved, "w", encoding="utf-8") as f:
-                await f.write(content)
-                await f.flush()
-                await asyncio.to_thread(os.fsync, f.fileno())
-            _edit_condition.notify_all()
-            lines = content.count("\n") + (0 if content.endswith("\n") else 1)
-            return f"Written {lines} lines to {path}"
-        except PermissionError:
-            return f"Error: permission denied: {path}"
-        except Exception as e:
-            return f"Error writing {path}: {e}"
+    try:
+        parent = os.path.dirname(resolved)
+        if parent and not await aiofiles.os.path.isdir(parent):
+            await aiofiles.os.makedirs(parent, exist_ok=True)
+        await _direct_write(resolved, content)
+        lines = _count_lines(content)
+        return f"Written {lines} line{'s' if lines != 1 else ''} to {path}"
+    except PermissionError:
+        return f"Error: permission denied: {path}"
+    except Exception as e:
+        return f"Error writing {path}: {e}"
 
 
-async def edit_file(path: str, old_string: str, new_string: str) -> str:
+async def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
     """Replace a specific text segment in a file with new text.
 
     Args:
         path: File path (relative to workspace)
         old_string: Exact text to find and replace
         new_string: Text to replace it with
+        replace_all: If True, replace all occurrences; if False (default), require uniqueness
     """
     try:
         resolved = _resolve_path(path)
     except ValueError as e:
         return f"Error: {e}"
-    from src.tools.snapshot import snapshot_before_write
 
-    await snapshot_before_write(_BASE_DIR)
-    async with _edit_condition:
-        try:
-            await asyncio.wait_for(_edit_condition.wait_for(lambda: os.path.exists(resolved)), timeout=10.0)
-        except asyncio.TimeoutError:
-            return f"Error: file not found: {path} (resolved to: {resolved}, workspace: {_BASE_DIR})"
+    # Read file content
+    try:
+        async with aiofiles.open(resolved, "r", encoding="utf-8") as f:
+            content = await f.read()
+    except FileNotFoundError:
+        return f"Error: file not found: {path} (resolved to: {resolved}, workspace: {_BASE_DIR})"
+    except Exception as e:
+        return f"Error reading {path}: {e}"
 
-        try:
-            async with aiofiles.open(resolved, "r", encoding="utf-8") as f:
-                content = await f.read()
-        except FileNotFoundError:
-            return f"Error: file not found: {path} (resolved to: {resolved}, workspace: {_BASE_DIR})"
-        except Exception as e:
-            return f"Error reading {path}: {e}"
-
+    # Handle empty old_string: only valid for empty files (file creation)
+    if old_string == "":
+        if content.strip() != "":
+            return f"Error: file already exists: {path}. Cannot create new file with edit_file."
+        new_content = new_string
+    else:
         count = content.count(old_string)
         if count == 0:
             return f"Error: text not found in {path}. Make sure old_string matches exactly (including whitespace)."
-        if count > 1:
-            return f"Error: found {count} matches in {path}. Please provide more context to make old_string unique."
+        if count > 1 and not replace_all:
+            return f"Error: found {count} matches in {path}. Please provide more context to make old_string unique, or set replace_all=True."
 
-        new_content = content.replace(old_string, new_string, 1)
-        try:
-            async with aiofiles.open(resolved, "w", encoding="utf-8") as f:
-                await f.write(new_content)
-            old_lines = old_string.count("\n") + 1
-            new_lines = new_string.count("\n") + 1
-            return f"Replaced {old_lines} lines with {new_lines} lines in {path}"
-        except Exception as e:
-            return f"Error writing {path}: {e}"
+        new_content = content.replace(old_string, new_string, -1 if replace_all else 1)
+
+    # Write
+    try:
+        await _direct_write(resolved, new_content)
+    except PermissionError:
+        return f"Error: permission denied: {path}"
+    except Exception as e:
+        return f"Error writing {path}: {e}"
+
+    old_lines = _count_lines(old_string) if old_string else 0
+    new_lines = _count_lines(new_string) if new_string else 0
+    suffix = ". All occurrences were replaced." if replace_all else ""
+    return f"Replaced {old_lines} line{'s' if old_lines != 1 else ''} with {new_lines} line{'s' if new_lines != 1 else ''} in {path}{suffix}"
 
 
 async def list_dir(path: str = ".") -> str:

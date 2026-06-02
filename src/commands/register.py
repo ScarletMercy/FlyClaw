@@ -120,10 +120,6 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 "/lang zh|en                     — 中英文切换",
                 "/voice                          — 语音模式开关与设置",
                 "",
-                "== 快照 ==",
-                "/snapshots [id]  — 查看/列出快照",
-                "/rollback <id> [文件] — 回滚到快照",
-                "",
                 "== 子 Agent ==",
                 "/agents [stop <id>] — 查看/管理子 Agent",
                 "",
@@ -157,10 +153,6 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 "/timezone <tz>                  — Timezone",
                 "/lang zh|en                     — Language switch",
                 "/voice                          — Voice mode toggle & settings",
-                "",
-                "== Snapshots ==",
-                "/snapshots [id]  — List/view snapshot diff",
-                "/rollback <id> [file] — Rollback to snapshot",
                 "",
                 "== Sub-agents ==",
                 "/agents [stop <id>] — View/manage sub-agents",
@@ -303,12 +295,12 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         reg_sessions = container.session_registry.list_sessions(user_key)
 
         if not reg_sessions:
-            orphaned = container.session_registry.find_orphaned_threads(
+            orphaned = await container.session_registry.find_orphaned_threads(
                 user_key,
                 container.state_store,
             )
             if not orphaned:
-                orphaned = container.session_registry.find_all_channel_threads(
+                orphaned = await container.session_registry.find_all_channel_threads(
                     user_key,
                     container.state_store,
                 )
@@ -662,6 +654,16 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         cfg = container.config
         arg = args.strip().lower()
 
+        if arg == "clear":
+            thread_id = ctx.get("thread_id", "")
+            from src.tools.approval import get_approval_manager
+
+            mgr = get_approval_manager()
+            mgr.clear_session_all(thread_id)
+            if zh:
+                return "✅ 已清除当前会话的所有批准缓存（包括始终允许）。"
+            return "✅ Cleared all session approvals (including always-allow)."
+
         valid = ("off", "ask", "on_denylist_miss", "always")
         if arg in valid:
             cfg.tools.exec.approval_mode = arg
@@ -674,8 +676,8 @@ def register_builtin_commands(dispatcher, container, tools, skills):
             return f"Approval mode set to: {arg}"
         current = getattr(cfg.tools.exec, "approval_mode", "off")
         if zh:
-            return f"审批模式: {current}\n用法: /approval off|ask|on_denylist_miss|always"
-        return f"Approval mode: {current}\nUsage: /approval off|ask|on_denylist_miss|always"
+            return f"审批模式: {current}\n用法: /approval off|ask|on_denylist_miss|always|clear"
+        return f"Approval mode: {current}\nUsage: /approval off|ask|on_denylist_miss|always|clear"
 
     dispatcher.register_builtin("approval", cmd_approval)
 
@@ -769,96 +771,6 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         return f"语言: {'中文 (zh)' if current == 'zh' else 'English (en)'}\n用法: /lang zh|en"
 
     dispatcher.register_builtin("lang", cmd_lang)
-
-    # ── Snapshot commands ──
-
-    async def cmd_snapshots(args: str, ctx: dict) -> str:
-        zh = container.config.agents.language == "zh"
-        from src.tools.snapshot import get_snapshot_manager
-
-        mgr = get_snapshot_manager()
-        if mgr is None:
-            return "快照功能未启用。" if zh else "Snapshots not enabled."
-
-        import os
-        from src.tools.file_tools import _BASE_DIR
-
-        work_dir = _BASE_DIR
-
-        arg = args.strip()
-        if arg:
-            # Show diff for a specific snapshot
-            diff_text = await mgr.diff(work_dir, arg)
-            if diff_text.startswith("Error"):
-                return diff_text
-            header = f"快照 {arg} 与当前差异:" if zh else f"Diff from snapshot {arg}:"
-            return f"{header}\n{diff_text}"
-
-        snapshots = await mgr.list_snapshots(work_dir)
-        if not snapshots:
-            return "暂无快照。" if zh else "No snapshots yet."
-
-        lines = []
-        if zh:
-            lines.append(f"快照列表 ({len(snapshots)}):")
-        else:
-            lines.append(f"Snapshots ({len(snapshots)}):")
-        for s in snapshots:
-            lines.append(f"  {s['id']}  {s['date']}  {s['message']}")
-        if zh:
-            lines.append("")
-            lines.append("用法:")
-            lines.append("  /snapshots <id>  — 查看快照差异")
-            lines.append("  /rollback <id>   — 回滚到快照")
-            lines.append("  /rollback <id> <文件> — 回滚单个文件")
-        else:
-            lines.append("")
-            lines.append("Usage:")
-            lines.append("  /snapshots <id>  — view snapshot diff")
-            lines.append("  /rollback <id>   — rollback to snapshot")
-            lines.append("  /rollback <id> <file> — rollback single file")
-        return "\n".join(lines)
-
-    dispatcher.register_builtin("snapshots", cmd_snapshots)
-
-    async def cmd_rollback(args: str, ctx: dict) -> str:
-        zh = container.config.agents.language == "zh"
-        parts = args.strip().split(None, 1)
-        if not parts:
-            if zh:
-                return "用法: /rollback <快照ID> [文件路径]"
-            return "Usage: /rollback <snapshot_id> [file_path]"
-
-        from src.tools.snapshot import get_snapshot_manager
-
-        mgr = get_snapshot_manager()
-        if mgr is None:
-            return "快照功能未启用。" if zh else "Snapshots not enabled."
-
-        import os
-        from src.tools.file_tools import _BASE_DIR
-
-        work_dir = _BASE_DIR
-
-        snap_id = parts[0]
-        file_path = parts[1].strip() if len(parts) > 1 else ""
-
-        if file_path:
-            result = await mgr.restore_file(work_dir, snap_id, file_path)
-        else:
-            result = await mgr.restore(work_dir, snap_id)
-
-        if result.startswith("Restore failed") or result.startswith("No snapshot"):
-            return result
-        if file_path:
-            if zh:
-                return f"已从快照 {snap_id} 恢复文件 {file_path}"
-            return result
-        if zh:
-            return f"已回滚到快照 {snap_id}"
-        return result
-
-    dispatcher.register_builtin("rollback", cmd_rollback)
 
     # ── Sub-agent commands ──
 

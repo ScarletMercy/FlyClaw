@@ -49,7 +49,13 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
     if channel == "qq":
         from src.channels.qq import _qq_channel
 
-        if _qq_channel and await _qq_channel.send_audio(chat_id, audio_bytes):
+        if _qq_channel and await _qq_channel.send_media(
+            chat_id,
+            "",
+            media_type="audio",
+            file_bytes=audio_bytes,
+            file_name="speech.mp3",
+        ):
             return f"Voice sent ({len(audio_bytes)} bytes, voice={voice})"
 
     if channel == "weixin":
@@ -62,7 +68,7 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
                 async with aiofiles.open(tmp_file, "wb") as f:
                     await f.write(audio_bytes)
                 try:
-                    if await _weixin_channel.send_voice(chat_id, tmp_file):
+                    if await _weixin_channel.send_media(chat_id, tmp_file, media_type="audio"):
                         return f"Voice sent ({len(audio_bytes)} bytes, voice={voice})"
                 finally:
                     try:

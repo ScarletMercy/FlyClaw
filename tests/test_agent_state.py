@@ -133,68 +133,90 @@ class TestMetaDict:
 
 class TestStateStore:
     def test_save_load_roundtrip(self, tmp_path):
-        store = StateStore(str(tmp_path / "test.db"))
-        state = AgentState(
-            messages=[{"role": "user", "content": "hello"}],
-            sender_id="u1",
-            channel="qq",
-        )
-        asyncio.run(store.save("t1", state))
-        loaded = store._load_sync("t1")
-        assert loaded is not None
-        assert loaded.messages[0]["content"] == "hello"
-        assert loaded.sender_id == "u1"
-        assert loaded.channel == "qq"
+        async def _test():
+            store = StateStore(str(tmp_path / "test.db"))
+            state = AgentState(
+                messages=[{"role": "user", "content": "hello"}],
+                sender_id="u1",
+                channel="qq",
+            )
+            await store.save("t1", state)
+            loaded = await store.load("t1")
+            assert loaded is not None
+            assert loaded.messages[0]["content"] == "hello"
+            assert loaded.sender_id == "u1"
+            assert loaded.channel == "qq"
+            await store.close()
+
+        asyncio.run(_test())
 
     def test_load_unknown_returns_none(self, tmp_path):
-        store = StateStore(str(tmp_path / "test.db"))
-        assert store._load_sync("nonexistent") is None
+        async def _test():
+            store = StateStore(str(tmp_path / "test.db"))
+            assert await store.load("nonexistent") is None
+            await store.close()
+
+        asyncio.run(_test())
 
     def test_delete(self, tmp_path):
-        store = StateStore(str(tmp_path / "test.db"))
-        state = AgentState(messages=[{"role": "user", "content": "x"}])
-        asyncio.run(store.save("t1", state))
-        assert store._delete_sync("t1") is True
-        assert store._load_sync("t1") is None
+        async def _test():
+            store = StateStore(str(tmp_path / "test.db"))
+            state = AgentState(messages=[{"role": "user", "content": "x"}])
+            await store.save("t1", state)
+            assert await store.delete("t1") is True
+            assert await store.load("t1") is None
+            await store.close()
+
+        asyncio.run(_test())
 
     def test_list_threads(self, tmp_path):
-        store = StateStore(str(tmp_path / "test.db"))
-        for i in range(3):
-            state = AgentState(messages=[{"role": "user", "content": str(i)}])
-            asyncio.run(store.save(f"t{i}", state))
-        threads = store._list_threads_sync()
-        assert len(threads) == 3
+        async def _test():
+            store = StateStore(str(tmp_path / "test.db"))
+            for i in range(3):
+                state = AgentState(messages=[{"role": "user", "content": str(i)}])
+                await store.save(f"t{i}", state)
+            threads = await store.list_threads()
+            assert len(threads) == 3
+            await store.close()
+
+        asyncio.run(_test())
 
     def test_model_validate_tolerates_extra_keys(self, tmp_path):
-        store = StateStore(str(tmp_path / "test.db"))
-        import json
+        async def _test():
+            import json
+            import aiosqlite
 
-        # Manually insert metadata with an extra key
-        store._db.execute(
-            "INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?)",
-            (
-                "t1",
-                json.dumps([{"role": "user", "content": "hi"}]),
-                json.dumps(
-                    {
-                        "system_prompt": "",
-                        "sender_id": "",
-                        "chat_id": "",
-                        "chat_type": "p2p",
-                        "message_id": "",
-                        "user_role": "",
-                        "channel": "",
-                        "pending_approval": None,
-                        "future_field": "should_be_ignored",
-                    }
+            store = StateStore(str(tmp_path / "test.db"))
+            conn = await store._get_conn()
+            # Manually insert metadata with an extra key
+            await conn.execute(
+                "INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?)",
+                (
+                    "t1",
+                    json.dumps([{"role": "user", "content": "hi"}]),
+                    json.dumps(
+                        {
+                            "system_prompt": "",
+                            "sender_id": "",
+                            "chat_id": "",
+                            "chat_type": "p2p",
+                            "message_id": "",
+                            "user_role": "",
+                            "channel": "",
+                            "pending_approval": None,
+                            "future_field": "should_be_ignored",
+                        }
+                    ),
+                    0.0,
                 ),
-                0.0,
-            ),
-        )
-        store._db.commit()
-        loaded = store._load_sync("t1")
-        assert loaded is not None
-        assert loaded.messages[0]["content"] == "hi"
+            )
+            await conn.commit()
+            loaded = await store.load("t1")
+            assert loaded is not None
+            assert loaded.messages[0]["content"] == "hi"
+            await store.close()
+
+        asyncio.run(_test())
 
 
 # ---------------------------------------------------------------------------
@@ -204,12 +226,16 @@ class TestStateStore:
 
 class TestMemoryStateStore:
     def test_memory_store_works(self):
-        store = MemoryStateStore()
-        state = AgentState(messages=[{"role": "user", "content": "test"}])
-        asyncio.run(store.save("t1", state))
-        loaded = store._load_sync("t1")
-        assert loaded is not None
-        assert loaded.messages[0]["content"] == "test"
+        async def _test():
+            store = MemoryStateStore()
+            state = AgentState(messages=[{"role": "user", "content": "test"}])
+            await store.save("t1", state)
+            loaded = await store.load("t1")
+            assert loaded is not None
+            assert loaded.messages[0]["content"] == "test"
+            await store.close()
+
+        asyncio.run(_test())
 
     def test_memory_store_has_locks(self):
         store = MemoryStateStore()
@@ -224,31 +250,35 @@ class TestMemoryStateStore:
 
 class TestConcurrencyLocks:
     def test_acquire_thread_returns_lock(self, tmp_path):
-        store = StateStore(str(tmp_path / "test.db"))
-        lock = asyncio.run(store.acquire_thread("t1"))
-        assert isinstance(lock, asyncio.Lock)
+        async def _test():
+            store = StateStore(str(tmp_path / "test.db"))
+            lock = await store.acquire_thread("t1")
+            assert isinstance(lock, asyncio.Lock)
+            await store.close()
+
+        asyncio.run(_test())
 
     def test_same_thread_returns_same_lock(self, tmp_path):
-        store = StateStore(str(tmp_path / "test.db"))
+        async def _test():
+            store = StateStore(str(tmp_path / "test.db"))
 
-        async def _get_two():
             l1 = await store.acquire_thread("t1")
             l2 = await store.acquire_thread("t1")
-            return l1, l2
+            assert l1 is l2
+            await store.close()
 
-        lock1, lock2 = asyncio.run(_get_two())
-        assert lock1 is lock2
+        asyncio.run(_test())
 
     def test_different_threads_different_locks(self, tmp_path):
-        store = StateStore(str(tmp_path / "test.db"))
+        async def _test():
+            store = StateStore(str(tmp_path / "test.db"))
 
-        async def _get_two():
             l1 = await store.acquire_thread("t1")
             l2 = await store.acquire_thread("t2")
-            return l1, l2
+            assert l1 is not l2
+            await store.close()
 
-        lock1, lock2 = asyncio.run(_get_two())
-        assert lock1 is not lock2
+        asyncio.run(_test())
 
     def test_same_thread_serialized(self):
         """Two coroutines hitting the same thread_id must run sequentially."""

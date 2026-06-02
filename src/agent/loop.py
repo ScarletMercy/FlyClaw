@@ -581,17 +581,10 @@ class AgentLoop:
                                 result = await self._execute_tool(tc, state, thread_id)
                             except ApprovalPending as ap:
                                 state.pending_approval = ap.to_pending_data()
-                                for t in assistant_msg["tool_calls"]:
-                                    tid = t.get("id", "")
-                                    if tid and tid not in existing_results and tid != tc_id:
-                                        state.append_message(
-                                            {
-                                                "role": "tool",
-                                                "tool_call_id": tid,
-                                                "content": "[已跳过] 等待审批中，执行已暂停。",
-                                            }
-                                        )
-                                        existing_results.add(tid)
+                                # Remaining tools without results will be
+                                # re-executed in the next resume cycle —
+                                # do NOT add fake results here, or
+                                # _resume_inner will skip them forever.
                                 await self._store.save(thread_id, state)
                                 raise
                             if not result:
@@ -1092,33 +1085,15 @@ class AgentLoop:
         try:
             result = await tool_def.execute(args)
             duration_ms = (_time.monotonic() - start) * 1000
-            try:
-                from src.security.redact import redact
-
-                result = redact(result)
-            except Exception:
-                pass
-            self._get_guardrails(thread_id).record(
-                tool_name, args, success=True, result=result if isinstance(result, str) else ""
-            )
-
-            if tool_name in _SKILL_TOOL_NAMES and self._skill_nudge_interval > 0:
-                self._iters_since_skill = 0
-
-            await emit_async(
-                "tool.exec_completed",
-                thread_id=thread_id,
+            return await self._record_tool_success(
                 tool_name=tool_name,
-                success=True,
+                args=args,
+                result=result,
+                thread_id=thread_id,
                 duration_ms=duration_ms,
-                result_length=len(result) if isinstance(result, str) else 0,
                 args_preview=args_preview,
-                sender_id=getattr(state, "sender_id", ""),
-                channel=getattr(state, "channel", ""),
+                state=state,
             )
-            if not result:
-                result = "[interrupted] 工具执行被打断"
-            return result
         except Exception as e:
             duration_ms = (_time.monotonic() - start) * 1000
             from src.tools.exec import ApprovalNeededError
@@ -1129,6 +1104,10 @@ class AgentLoop:
                 # ── 记忆删除：不可逆操作，始终需要审批 ──
                 if not isinstance(e, MemoryDeleteNeedsApproval):
                     # ── 审批绕过检查：owner 等高权限用户可跳过审批（仅 exec_command 等命令执行类） ──
+                    # try/except 仅包裹绕过资格判定（resolve_user / RBAC /
+                    # approve_session），工具实际执行放在 try/except 之外，
+                    # 避免执行阶段的异常被静默吞掉而落入正常审批流程。
+                    _bypass_ctx = None
                     try:
                         bypass_user = await self._resolve_user(state.sender_id)
                         if bypass_user:
@@ -1142,18 +1121,36 @@ class AgentLoop:
 
                                 mgr = get_approval_manager()
                                 mgr.approve_session(thread_id, tool_name, cmd)
-                                result = await tool_def.execute(args)
-
-                                logger.info(
-                                    "[approval-bypass] user=%s role=%s tool=%s cmd=%.200s",
-                                    bypass_user.user_id,
-                                    bypass_user.role.value,
-                                    tool_name,
-                                    cmd,
-                                )
-                                return result
+                                _bypass_ctx = (bypass_user, cmd)
                     except Exception as exc:
                         logger.debug("approval bypass check failed, falling back to normal flow: %s", exc)
+
+                    if _bypass_ctx is not None:
+                        bypass_user, cmd = _bypass_ctx
+                        # 直接重新执行工具（session 已批准，不会再抛
+                        # ApprovalNeededError），然后走完整审计链。
+                        # 注意：不能用递归 self._execute_tool()，
+                        # 否则 tool.exec_started 会双重发射。
+                        # 执行/审计异常自然传播到外层 except 处理。
+                        result = await tool_def.execute(args)
+                        duration_ms = (_time.monotonic() - start) * 1000
+
+                        logger.info(
+                            "[approval-bypass] user=%s role=%s tool=%s cmd=%.200s",
+                            bypass_user.user_id,
+                            bypass_user.role.value,
+                            tool_name,
+                            cmd,
+                        )
+                        return await self._record_tool_success(
+                            tool_name=tool_name,
+                            args=args,
+                            result=result,
+                            thread_id=thread_id,
+                            duration_ms=duration_ms,
+                            args_preview=args_preview,
+                            state=state,
+                        )
 
                 # ── 正常审批流程 ──
                 await emit_async(
@@ -1185,6 +1182,50 @@ class AgentLoop:
             return f"[error] 工具 {tool_name} 执行失败: {err_msg}"
         finally:
             _current_agent_context.reset(_ctx_token)
+
+    async def _record_tool_success(
+        self,
+        *,
+        tool_name: str,
+        args: dict,
+        result: str,
+        thread_id: str,
+        duration_ms: float,
+        args_preview: str,
+        state: AgentState,
+    ) -> str:
+        """审计工具执行成功：redact → guardrails → skill nudge → emit completed。
+
+        被 _execute_tool 成功路径和 approval-bypass 路径共用，
+        确保两条路径产生一致的审计事件。
+        """
+        from src.events import emit_async
+
+        try:
+            from src.security.redact import redact
+
+            result = redact(result)
+        except Exception:
+            pass
+        self._get_guardrails(thread_id).record(
+            tool_name, args, success=True, result=result if isinstance(result, str) else ""
+        )
+        if tool_name in _SKILL_TOOL_NAMES and self._skill_nudge_interval > 0:
+            self._iters_since_skill = 0
+        await emit_async(
+            "tool.exec_completed",
+            thread_id=thread_id,
+            tool_name=tool_name,
+            success=True,
+            duration_ms=duration_ms,
+            result_length=len(result) if isinstance(result, str) else 0,
+            args_preview=args_preview,
+            sender_id=getattr(state, "sender_id", ""),
+            channel=getattr(state, "channel", ""),
+        )
+        if not result:
+            result = "[interrupted] 工具执行被打断"
+        return result
 
     async def _execute_tools_parallel(
         self, tool_calls: list[Any], state: AgentState, thread_id: str, interrupt_event: asyncio.Event | None = None
@@ -1234,13 +1275,11 @@ class AgentLoop:
                 mgr = get_approval_manager()
                 for j in range(i + 1, len(results)):
                     if results[j] is NotImplemented:
-                        tc_j = tool_calls[j]
-                        tc_j_id = tc_j.id if hasattr(tc_j, "id") else tc_j.get("id", "")
-                        final.append((tc_j_id, "[已跳过] 等待审批中，执行已暂停。"))
+                        # Not started — will be re-executed on resume
+                        pass
                     elif isinstance(results[j], ApprovalPending):
-                        tc_j = tool_calls[j]
-                        tc_j_id = tc_j.id if hasattr(tc_j, "id") else tc_j.get("id", "")
-                        final.append((tc_j_id, "[已跳过] 等待审批中，执行已暂停。"))
+                        # Also needs approval — cancel request; will
+                        # re-request when _resume_inner re-executes it
                         mgr.cancel_pending(results[j].request_id)
                     elif not isinstance(results[j], BaseException):
                         final.append(results[j])
@@ -1290,6 +1329,7 @@ class AgentLoop:
             message_id=state.message_id,
             thread_id=thread_id,
             timeout_seconds=getattr(error, "timeout", None) or 120,
+            approval_key=getattr(error, "approval_key", ""),
         )
 
         raise ApprovalPending(

@@ -81,9 +81,7 @@ def _format_display(text: str) -> str:
 _SILENT_TOOLS = frozenset(
     {
         "text_to_speech",
-        "send_image",
-        "send_file",
-        "send_voice",
+        "send_media",
         "skill_view",
         "skill_manage",
         "skill_hub",
@@ -413,7 +411,13 @@ class MessageHandler:
 
         try:
             if channel_prefix == "qq":
-                return await channel.send_audio(chat_id, audio_bytes)
+                return await channel.send_media(
+                    chat_id,
+                    "",
+                    media_type="audio",
+                    file_bytes=audio_bytes,
+                    file_name="speech.mp3",
+                )
             elif channel_prefix == "weixin":
                 import tempfile as _tf
 
@@ -421,7 +425,7 @@ class MessageHandler:
                     f.write(audio_bytes)
                     tmp_file = f.name
                 try:
-                    return await channel.send_voice(chat_id, tmp_file)
+                    return await channel.send_media(chat_id, tmp_file, media_type="audio")
                 finally:
                     Path(tmp_file).unlink(missing_ok=True)
         except Exception as e:
@@ -924,7 +928,24 @@ class MessageHandler:
                         )
 
                 if not mgr.is_resolved(current_exc.request_id):
-                    await approval_ch.send_text(chat_id, msg_text)
+                    # Try interactive keyboard approval (QQ C2C/group with markdown)
+                    sent_keyboard = False
+                    if hasattr(approval_ch, "send_approval_keyboard"):
+                        try:
+                            result = await approval_ch.send_approval_keyboard(
+                                chat_id=chat_id,
+                                request_id=current_exc.request_id,
+                                command_preview=current_exc.command_preview,
+                                is_dangerous=current_exc.denylisted,
+                                timeout_seconds=approval_timeout,
+                                zh=zh,
+                            )
+                            sent_keyboard = result is not None
+                        except Exception as e:
+                            logger.debug("Keyboard approval failed, falling back to text: %s", e)
+
+                    if not sent_keyboard:
+                        await approval_ch.send_text(chat_id, msg_text)
                 decision, user_response = await mgr.await_approval(current_exc.request_id, timeout=approval_timeout)
                 if decision == "timeout":
                     if tool_name in ("memory_delete", "memory") or auto_deny:

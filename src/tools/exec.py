@@ -92,11 +92,19 @@ def is_sandbox_enabled() -> bool:
 
 
 class ApprovalNeededError(Exception):
-    def __init__(self, command: str, denylisted: bool, timeout: int | None = None, auto_deny: bool = False):
+    def __init__(
+        self,
+        command: str,
+        denylisted: bool,
+        timeout: int | None = None,
+        auto_deny: bool = False,
+        approval_key: str = "",
+    ):
         self.command = command
         self.denylisted = denylisted
         self.timeout = timeout
         self.auto_deny = auto_deny
+        self.approval_key = approval_key  # Pattern for "always allow" (e.g. "del ", "rm ")
         super().__init__(f"需要审批: {command[:100]}")
 
 
@@ -567,7 +575,13 @@ async def exec_command(
                     logger.info(
                         "[exec-audit] Delete operation requires approval ('%s'): %.200s", delete_pattern, command
                     )
-                    raise ApprovalNeededError(command, False, timeout=30, auto_deny=True)
+                    raise ApprovalNeededError(
+                        command,
+                        False,
+                        timeout=30,
+                        auto_deny=True,
+                        approval_key=delete_pattern,
+                    )
 
     # Unparseable shell constructs ($(), backticks, | sh, | bash) — always blocked.
     # These cannot be statically analyzed and are the primary vector for bypass attacks.

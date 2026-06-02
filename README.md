@@ -119,7 +119,7 @@ model:
 **媒体**
 
 - `describe_media` — 图片描述、音频转录、视频理解（URL/本地路径/base64）
-- `send_voice` — 音频文件作为语音消息发送
+- `send_media` — 统一媒体发送（自动识别图片/语音/文件，支持 `force_file` 强制以文件形式发送）
 - `text_to_speech` — edge-tts 语音合成，支持自定义音色
 
 **记忆**
@@ -148,7 +148,7 @@ model:
 
 **渠道通用**
 
-- `send_image` / `send_file` / `send_voice` — 图片/文件/语音发送（自动适配 QQ、微信）
+- `send_media` — 媒体文件发送（自动适配类型，支持图片/语音/文件）
 
 **AI**
 

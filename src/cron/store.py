@@ -44,7 +44,9 @@ class CronStore:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: Optional[aiosqlite.Connection] = None
-        self._lock = asyncio.Lock()
+        # Per-job locks: only serializes retries for the *same* job.
+        # Different jobs no longer block each other.
+        self._job_locks: dict[str, asyncio.Lock] = {}
 
     async def __aenter__(self):
         await self._get_conn()
@@ -77,8 +79,24 @@ class CronStore:
                 logger.warning("Failed to parse cron job: %s", e)
         return jobs
 
+    def _get_job_lock(self, job_id: str) -> asyncio.Lock:
+        """Return a per-job lock, auto-created on first use."""
+        # Fast path: lock already exists
+        lock = self._job_locks.get(job_id)
+        if lock is not None:
+            return lock
+        # Slow path: create if missing (race is harmless — two locks for the
+        # same id just means slightly less serialisation on the very first
+        # concurrent access, which the SQL-level optimistic lock already covers).
+        lock = asyncio.Lock()
+        self._job_locks[job_id] = lock
+        return lock
+
     async def save_job(self, job: CronJob, *, max_retries: int = 3) -> None:
-        async with self._lock:
+        # Per-job lock: only blocks concurrent saves for the *same* job_id.
+        # Different jobs run fully in parallel — SQL-level optimistic lock
+        # (version column) handles correctness.
+        async with self._get_job_lock(job.id):
             conn = await self._get_conn()
             for attempt in range(max_retries + 1):
                 new_version = job.version + 1
@@ -124,11 +142,12 @@ class CronStore:
                 )
 
     async def remove_job(self, job_id: str) -> bool:
-        async with self._lock:
-            conn = await self._get_conn()
-            cursor = await conn.execute("DELETE FROM cron_jobs WHERE id = ?", (job_id,))
-            await conn.commit()
-            return cursor.rowcount > 0
+        # DELETE by PK is atomic in SQLite — no Python-level lock needed.
+        conn = await self._get_conn()
+        cursor = await conn.execute("DELETE FROM cron_jobs WHERE id = ?", (job_id,))
+        await conn.commit()
+        self._job_locks.pop(job_id, None)  # clean up per-job lock
+        return cursor.rowcount > 0
 
     async def get_job(self, job_id: str) -> Optional[CronJob]:
         conn = await self._get_conn()

@@ -93,17 +93,12 @@ async def deliver_media(text: str, chat_id: str, channel_prefix: str, channel) -
         media_type = _resolve_type(tag, ext)
         try:
             if channel_prefix == "qq":
-                await _deliver_qq(channel, chat_id, p, media_type)
+                if media_type == "audio":
+                    data = p.read_bytes()
+                    await channel.send_media(chat_id, str(p), media_type, file_bytes=data, file_name=p.name)
+                else:
+                    await channel.send_media(chat_id, str(p), media_type)
         except Exception as e:
             logger.error("Media delivery failed for %s: %s", file_path, e)
 
     return strip_media_tags(text)
-
-
-async def _deliver_qq(channel, chat_id: str, p: Path, media_type: str):
-    if media_type == "audio":
-        data = p.read_bytes()
-        await channel.send_audio(chat_id, data, file_name=p.name)
-    else:
-        # image, video, file — all use send_file to preserve filename
-        await channel.send_file(chat_id, str(p))

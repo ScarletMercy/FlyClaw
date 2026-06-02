@@ -46,13 +46,15 @@ class Channel(ABC):
         pass
 
     @abstractmethod
-    async def send_image(self, chat_id: str, image_key: str) -> bool:
-        """Send an image message to a chat."""
-        pass
-
-    @abstractmethod
-    async def send_file(self, chat_id: str, file_key: str) -> bool:
-        """Send a file message to a chat."""
+    async def send_media(
+        self,
+        chat_id: str,
+        file_key: str,
+        media_type: str = "file",
+        file_bytes: bytes | None = None,
+        file_name: str = "",
+    ) -> bool:
+        """Send media to a chat. media_type: 'image', 'audio', 'file'."""
         pass
 
     @abstractmethod
