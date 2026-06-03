@@ -58,6 +58,11 @@ class MemorySearcher:
             )
         return formatted
 
+    async def close(self) -> None:
+        """Close the underlying store."""
+        if self.store:
+            await self.store.close()
+
     async def index_document(self, path: str, content: str) -> int:
         """Index a document: chunk, embed, and store.
 

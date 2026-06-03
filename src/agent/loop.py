@@ -81,12 +81,17 @@ def _repair_tool_args(args_str: str) -> str:
 
     s = args_str.strip()
 
-    for i in range(len(s)):
+    # Binary search for the longest valid JSON prefix (O(n log n) vs old O(n²)).
+    lo, hi = 0, len(s)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
         try:
-            json.loads(s[: len(s) - i], strict=False)
-            return s[: len(s) - i]
+            json.loads(s[:mid], strict=False)
+            lo = mid  # mid is valid, try longer
         except (json.JSONDecodeError, TypeError):
-            continue
+            hi = mid - 1  # mid is invalid, try shorter
+    if lo > 0:
+        return s[:lo]
 
     s = re.sub(r",\s*([}\]])", r"\1", s)
 

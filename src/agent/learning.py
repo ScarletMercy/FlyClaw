@@ -1,10 +1,9 @@
-"""Learning loop orchestrator that ties together memory extraction, skill proposal, and curation.
+"""Learning loop orchestrator that ties together curated sync and skill curation.
 
-This module coordinates the full learning lifecycle:
-1. Session-end memory extraction (Phase 1)
-2. Curated memory sync (Phase 2)
-3. Skill proposal from patterns (Phase 3)
-4. Background curation trigger (Phase 4)
+Memory extraction is handled per-turn in message.py (auto_extract_memory + _memory_llm_judge).
+This module handles session-end housekeeping:
+1. Curated memory sync
+2. Skill curation trigger
 """
 
 from __future__ import annotations
@@ -40,6 +39,10 @@ class LearningLoop:
     async def on_session_end(self, messages: list[dict]) -> dict:
         """会话结束时的学习循环。
 
+        注意：记忆提取已在每轮对话中由 message.py 的 per-turn 路径完成
+        （auto_extract_memory + _memory_llm_judge），此处不再重复提取，
+        避免同一段对话被提取两次。
+
         Args:
             messages: 完整的会话消息列表
 
@@ -47,29 +50,10 @@ class LearningLoop:
             学习结果字典
         """
         result = {
-            "memories_extracted": 0,
-            "skills_proposed": 0,
             "curated": False,
         }
 
-        # 1. 会话结束记忆提取
-        if self.config.memory_store.enabled:
-            try:
-                from src.tools.memory_tools import extract_session_end_memories
-
-                count = await extract_session_end_memories(
-                    messages,
-                    self.config.memory_store.memory_judge_model or self.config.model.name,
-                    self.config.memory_store.memory_judge_base_url or self.config.model.base_url,
-                    self.config.memory_store.memory_judge_api_key or self.config.model.api_key,
-                )
-                result["memories_extracted"] = count
-                if count > 0:
-                    logger.info("Learning loop: extracted %d memories from session", count)
-            except Exception as e:
-                logger.warning("Learning loop memory extraction failed: %s", e)
-
-        # 2. 同步策展记忆文件
+        # 1. 同步策展记忆文件
         try:
             workspace = Path(self.config.agents.workspace).expanduser().resolve()
             await sync_memories_to_curated_files(workspace)
@@ -77,7 +61,7 @@ class LearningLoop:
         except Exception as e:
             logger.warning("Learning loop curated sync failed: %s", e)
 
-        # 3. 检查是否需要触发策展
+        # 2. 检查是否需要触发策展
         if self.curator.days_since_last_review() >= self.curator.review_interval_days:
             try:
                 await self.curator.review_skills()

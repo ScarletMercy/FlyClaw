@@ -183,12 +183,7 @@ class StateStore:
 
 class MemoryStateStore(StateStore):
     def __init__(self):
-        self._db_path = ":memory:"
-        self._conn: Optional[aiosqlite.Connection] = None
-        self._init_lock = asyncio.Lock()
-        self._locks: dict[str, asyncio.Lock] = {}
-        self._locks_lock = asyncio.Lock()
-        self._interrupt_flags = InterruptFlagStore()
+        super().__init__(":memory:")
 
 
 _MAX_FLAGS = 4096

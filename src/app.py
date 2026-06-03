@@ -46,7 +46,6 @@ class ServiceContainer:
         self.dispatcher: CommandDispatcher | None = None
         self.cron_service: CronService | None = None
         self.api = None
-        self.memory_store = None
         self.memory_searcher = None
         self.rbac = None
         self.session_index = None
@@ -227,7 +226,6 @@ class ServiceContainer:
                     fts_tokenizer=self.config.memory.fts_tokenizer,
                 )
             await store.initialize()
-            self.memory_store = store
 
             embeddings = None
             if getattr(self.config.memory, "api_key", "") or self.config.model.api_key:
@@ -502,8 +500,8 @@ class ServiceContainer:
                 if state and state.messages:
                     try:
                         result = await learning_loop.on_session_end(state.messages)
-                        if result.get("memories_extracted", 0) > 0:
-                            logger.info("学习循环: 从 %s 提取了 %d 条记忆", result["memories_extracted"], tid)
+                        if result.get("curated"):
+                            logger.debug("学习循环: 会话 %s 策展完成", tid)
                     except Exception as e:
                         logger.debug("学习循环会话结束处理失败: %s", e)
 
@@ -712,8 +710,8 @@ class ServiceContainer:
         try:
             if self._config_watcher:
                 await self._config_watcher.stop()
-            if self.memory_store:
-                await self.memory_store.close()
+            if self.memory_searcher:
+                await self.memory_searcher.close()
             if getattr(self.config, "memory_store", None) and self.config.memory_store.enabled:
                 try:
                     from src.tools.memory_tools import get_memory_store

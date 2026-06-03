@@ -168,51 +168,6 @@ def _build_tooling_rules(tools: list | None = None) -> list[str]:
     return lines
 
 
-def _build_tool_guidance(tools: list) -> list[str]:
-    """Full tool signatures with parameters. Kept for fallback / non-OpenAI models."""
-    if not tools:
-        return []
-    lines = ["## 可用工具", ""]
-    for t in tools:
-        desc = t.description.split("\n")[0].strip()
-        props = t.parameters.get("properties", {})
-        required = set(t.parameters.get("required", []))
-        if not props:
-            lines.append(f"- {t.name}() — {desc}")
-            continue
-        sig_parts = []
-        has_more = False
-        shown_optional = 0
-        for pname, pdef in props.items():
-            is_req = pname in required
-            enum_vals = pdef.get("enum")
-            if is_req or enum_vals or shown_optional < 2:
-                ptype = pdef.get("type", "string")
-                if enum_vals:
-                    type_str = "|".join(json.dumps(v) for v in enum_vals)
-                elif ptype == "array":
-                    type_str = "array"
-                else:
-                    type_str = ptype
-                default = pdef.get("default")
-                if is_req:
-                    sig_parts.append(f"{pname}: {type_str}")
-                elif default is not None:
-                    sig_parts.append(f"{pname}: {type_str} = {json.dumps(default)}")
-                else:
-                    sig_parts.append(f"{pname}: {type_str}")
-                if not is_req and not enum_vals:
-                    shown_optional += 1
-            else:
-                has_more = True
-        sig = ", ".join(sig_parts)
-        if has_more:
-            sig += ", ..."
-        lines.append(f"- {t.name}({sig}) — {desc}")
-    lines.append("")
-    return lines
-
-
 def _build_tool_index(tools: list) -> list[str]:
     """Compact tool index: name + one-line description only (no parameter signatures).
 

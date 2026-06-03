@@ -53,23 +53,12 @@ def reset_config_cache():
     _cached_config = None
 
 
-def _collect_skill_dirs(cfg) -> list:
-    from pathlib import Path
+def _collect_skill_dirs() -> list:
+    """复用 App._build_skill_directories() 的集中目录列表，消除重复。"""
+    from src._container import get_container
 
-    dirs: list[Path] = []
-    workspace = Path(cfg.agents.workspace).expanduser().resolve()
-    dirs.append((Path.home() / ".flyclaw" / "skills").resolve())
-    ws_skills = workspace / "skills"
-    if ws_skills.exists():
-        dirs.append(ws_skills)
-    ap_skills = workspace / ".agents" / "skills"
-    if ap_skills.exists():
-        dirs.append(ap_skills)
-    for extra in cfg.skills.extra_dirs or []:
-        p = Path(extra).expanduser().resolve()
-        if p.exists():
-            dirs.append(p)
-    return dirs
+    container = get_container()
+    return [p for _, p in container._build_skill_directories()]
 
 
 def set_sandbox_enabled(enabled: bool) -> None:
@@ -516,7 +505,7 @@ async def exec_command(
         allowed = (
             [workspace.resolve()]
             + [Path(d).expanduser().resolve() for d in sandbox_allowed_dirs]
-            + _collect_skill_dirs(cfg)
+            + _collect_skill_dirs()
             + [(Path.home() / ".flyclaw" / "temp").resolve()]
         )
 
