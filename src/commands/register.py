@@ -96,97 +96,101 @@ def register_auth_commands(dispatcher, container):
 def register_builtin_commands(dispatcher, container, tools, skills):
     async def cmd_help(args: str, ctx: dict) -> str:
         zh = container.config.agents.language == "zh"
+        show_all = args.strip().lower() in ("all", "全部")
 
         if zh:
             lines = [
-                "== 系统命令 ==",
-                "/help    — 显示此帮助",
-                "/status  — 系统状态",
                 "/reset   — 重置当前会话",
-                "",
-                "== 会话命令 ==",
                 "/new     — 新建会话",
                 "/old     — 列出历史会话",
                 "/re <id> — 切换会话",
-                "",
-                "== 配置命令 ==",
-                "/model [list|switch|temp|name]  — 查看/设置模型",
-                "/sandbox on|off                 — sandbox 开关",
-                "/approval off|ask|always        — 审批模式",
-                "/rounds <n>                     — 最大工具轮数",
-                "/compress on|off                — 压缩开关",
-                "/progress on|off                — 工具进度通知开关",
-                "/timezone <tz>                  — 时区设置",
-                "/lang zh|en                     — 中英文切换",
-                "/voice                          — 语音模式开关与设置",
-                "",
-                "== 子 Agent ==",
-                "/agents [stop <id>] — 查看/管理子 Agent",
-                "",
-                "== 后台进程 ==",
-                "/ps [kill <id>] — 后台进程管理",
-                "",
-                "== 其他 ==",
-                "/skills  — 技能列表",
-                "/search  — 搜索会话",
-                "/prune   — 清理旧会话",
+                "/voice   — 语音模式开关与设置",
+                "/lang zh|en   — 中英文切换",
+                "/timezone <tz> — 时区设置",
+                "/interrupt — 中断当前回复",
             ]
         else:
             lines = [
-                "== System ==",
-                "/help    — Show this help",
-                "/status  — System status",
                 "/reset   — Reset current session",
-                "",
-                "== Session ==",
                 "/new     — New session",
                 "/old     — List sessions",
                 "/re <id> — Switch session",
-                "",
-                "== Config ==",
-                "/model [list|switch|temp|name]  — View/set model",
-                "/sandbox on|off                 — Sandbox toggle",
-                "/approval off|ask|always        — Approval mode",
-                "/rounds <n>                     — Max tool rounds",
-                "/compress on|off                — Compression toggle",
-                "/progress on|off                — Tool progress notifications toggle",
-                "/timezone <tz>                  — Timezone",
-                "/lang zh|en                     — Language switch",
-                "/voice                          — Voice mode toggle & settings",
-                "",
-                "== Sub-agents ==",
-                "/agents [stop <id>] — View/manage sub-agents",
-                "",
-                "== Background ==",
-                "/ps [kill <id>] — Background process management",
-                "",
-                "== Other ==",
-                "/skills  — Skill list",
-                "/search  — Search sessions",
-                "/prune   — Prune old sessions",
+                "/voice   — Voice mode toggle & settings",
+                "/lang zh|en   — Language switch",
+                "/timezone <tz> — Timezone",
+                "/interrupt — Interrupt current reply",
             ]
 
-        commands = dispatcher.list_commands()
-        skill_cmds = [c for c in commands if not c.get("builtin")]
-        if skill_cmds:
-            lines.append("")
-            lines.append("== 技能命令 ==" if zh else "== Skills ==")
-            for c in skill_cmds:
-                desc = c.get("description", "")[:40]
-                lines.append(f"/{c['name']:<12} — {desc}")
-
-        auth_cmds = [c for c in commands if c.get("builtin") and c["name"] in ("pair", "whoami", "role")]
-        if auth_cmds:
-            lines.append("")
-            lines.append("== 认证命令 ==" if zh else "== Auth ==")
+        if show_all:
             if zh:
-                lines.append("/pair   — 生成配对码")
-                lines.append("/whoami — 查看身份")
-                lines.append("/role   — 修改用户角色")
+                lines += [
+                    "",
+                    "== 高级命令 ==",
+                    "/status  — 系统状态",
+                    "/skills  — 技能列表",
+                    "/search  — 搜索会话",
+                    "/agents [stop <id>] — 查看/管理子 Agent",
+                    "/steer <msg> — 引导当前回复方向",
+                    "/ps [kill <id>] — 后台进程管理",
+                    "/prune   — 清理旧会话",
+                    "",
+                    "== 配置命令 ==",
+                    "/model [list|switch|temp|name]  — 查看/设置模型",
+                    "/sandbox on|off                 — sandbox 开关",
+                    "/approval off|ask|always        — 审批模式",
+                    "/rounds <n>                     — 最大工具轮数",
+                    "/compress on|off                — 压缩开关",
+                    "/progress on|off                — 工具进度通知开关",
+                    "/auto on|off                    — 自主工作模式",
+                    "/restart                        — 重启服务",
+                ]
             else:
-                lines.append("/pair   — Generate pairing code")
-                lines.append("/whoami — View identity")
-                lines.append("/role   — Change user role")
+                lines += [
+                    "",
+                    "== Advanced ==",
+                    "/status  — System status",
+                    "/skills  — Skill list",
+                    "/search  — Search sessions",
+                    "/agents [stop <id>] — View/manage sub-agents",
+                    "/steer <msg> — Steer current reply",
+                    "/ps [kill <id>] — Background process management",
+                    "/prune   — Prune old sessions",
+                    "",
+                    "== Config ==",
+                    "/model [list|switch|temp|name]  — View/set model",
+                    "/sandbox on|off                 — Sandbox toggle",
+                    "/approval off|ask|always        — Approval mode",
+                    "/rounds <n>                     — Max tool rounds",
+                    "/compress on|off                — Compression toggle",
+                    "/progress on|off                — Tool progress notifications toggle",
+                    "/auto on|off                    — Autonomous mode",
+                    "/restart                        — Restart service",
+                ]
+
+            commands = dispatcher.list_commands()
+            skill_cmds = [c for c in commands if not c.get("builtin")]
+            if skill_cmds:
+                lines.append("")
+                lines.append("== 技能命令 ==" if zh else "== Skills ==")
+                for c in skill_cmds:
+                    desc = c.get("description", "")[:40]
+                    lines.append(f"/{c['name']:<12} — {desc}")
+
+            auth_cmds = [c for c in commands if c.get("builtin") and c["name"] in ("pair", "whoami", "role")]
+            if auth_cmds:
+                lines.append("")
+                lines.append("== 认证命令 ==" if zh else "== Auth ==")
+                if zh:
+                    lines.append("/pair   — 生成配对码")
+                    lines.append("/whoami — 查看身份")
+                    lines.append("/role   — 修改用户角色")
+                else:
+                    lines.append("/pair   — Generate pairing code")
+                    lines.append("/whoami — View identity")
+                    lines.append("/role   — Change user role")
+        else:
+            lines.append("")
+            lines.append("/help all — 查看全部命令" if zh else "/help all — Show all commands")
 
         return "\n".join(lines)
 

@@ -661,11 +661,14 @@ class QQChannel(Channel):
         if action == "always":
             pending = mgr.get_pending(request_id)
             if pending:
-                if pending.approval_key:
+                if pending.approval_key and pending.approval_key == pending.tool_name:
+                    # Tool-level pattern — survives clear_session at loop end
+                    mgr.approve_session_pattern(pending.thread_id, pending.approval_key)
+                elif pending.approval_key:
                     # Pattern-level approval (e.g. "del " for exec_command)
                     mgr.approve_session_pattern(pending.thread_id, pending.approval_key)
                 else:
-                    # Tool-level approval (exact args match)
+                    # Exact args match
                     mgr.approve_session(
                         pending.thread_id,
                         pending.tool_name,

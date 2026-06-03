@@ -81,7 +81,7 @@ def _format_display(text: str) -> str:
 _SILENT_TOOLS = frozenset(
     {
         "text_to_speech",
-        "send_media",
+        "send_file",
         "skill_view",
         "skill_manage",
         "skill_hub",
@@ -487,6 +487,79 @@ class MessageHandler:
                 else "⏳ Message queued, will process after the current interrupted task."
             )
 
+    def _subscribe_agent_events(self, thread_id: str, reply_fn):
+        """Subscribe to tool progress and assistant message events for a thread.
+
+        Returns a cleanup callable that unsubscribes all handlers.
+        """
+        from src.events import subscribe_async, unsubscribe
+
+        zh = self._container.config.agents.language == "zh"
+        show_progress = self._container.config.agents.tool_progress_notifications
+
+        async def _on_tool_event(event: str, **kwargs):
+            if not show_progress:
+                return
+            tid = kwargs.get("thread_id", "")
+            if tid != thread_id:
+                return
+            try:
+                if event == "tool.exec_started":
+                    tool = kwargs.get("tool_name", "")
+                    if tool in _SILENT_TOOLS:
+                        return
+                    raw_args = kwargs.get("args_preview", "")
+                    try:
+                        parsed = json.loads(raw_args)
+                        if isinstance(parsed, dict):
+                            vals = list(parsed.values())
+                            args_preview = (
+                                str(vals[0])[:80]
+                                if len(parsed) == 1
+                                else ", ".join(f"{k}={v}" for k, v in parsed.items())[:80]
+                            )
+                        else:
+                            args_preview = raw_args[:80]
+                    except (json.JSONDecodeError, ValueError):
+                        args_preview = raw_args[:80]
+                    if zh:
+                        msg = f"🔧 {tool}: {args_preview}" if args_preview else f"🔧 执行 {tool}..."
+                    else:
+                        msg = f"🔧 {tool}: {args_preview}" if args_preview else f"🔧 Running {tool}..."
+                    await reply_fn(msg)
+                elif event == "tool.exec_failed":
+                    tool = kwargs.get("tool_name", "")
+                    err = kwargs.get("error", "")[:80]
+                    if zh:
+                        msg = f"❌ {tool} 失败: {err}"
+                    else:
+                        msg = f"❌ {tool} failed: {err}"
+                    await reply_fn(msg)
+            except Exception:
+                pass
+
+        async def _on_assistant_message(event: str, **kwargs):
+            tid = kwargs.get("thread_id", "")
+            if tid != thread_id:
+                return
+            content = kwargs.get("content", "")
+            if not content:
+                return
+            try:
+                formatted = _format_display(content)
+                await reply_fn(formatted)
+            except Exception:
+                pass
+
+        subscribe_async("tool.*", _on_tool_event)
+        subscribe_async("agent_loop.assistant_message", _on_assistant_message)
+
+        def _cleanup():
+            unsubscribe("tool.*", _on_tool_event)
+            unsubscribe("agent_loop.assistant_message", _on_assistant_message)
+
+        return _cleanup
+
     async def _run_agent_turn(
         self,
         input_state,
@@ -515,75 +588,7 @@ class MessageHandler:
         messages = []
 
         zh = self._container.config.agents.language == "zh"
-        show_progress = self._container.config.agents.tool_progress_notifications
-        active_chat_id = chat_id
-        channel = channel_prefix
-        _progress_unsub = None
-
-        async def _on_tool_event(event: str, **kwargs):
-            if not show_progress:
-                return
-            tid = kwargs.get("thread_id", "")
-            if tid != thread_id:
-                return
-            try:
-                progress_ch = self._get_channel(channel)
-                if event == "tool.exec_started":
-                    tool = kwargs.get("tool_name", "")
-                    if tool in _SILENT_TOOLS:
-                        return
-                    raw_args = kwargs.get("args_preview", "")
-                    try:
-                        parsed = json.loads(raw_args)
-                        if isinstance(parsed, dict):
-                            vals = list(parsed.values())
-                            args_preview = (
-                                str(vals[0])[:80]
-                                if len(parsed) == 1
-                                else ", ".join(f"{k}={v}" for k, v in parsed.items())[:80]
-                            )
-                        else:
-                            args_preview = raw_args[:80]
-                    except (json.JSONDecodeError, ValueError):
-                        args_preview = raw_args[:80]
-                    if zh:
-                        msg = f"🔧 {tool}: {args_preview}" if args_preview else f"🔧 执行 {tool}..."
-                    else:
-                        msg = f"🔧 {tool}: {args_preview}" if args_preview else f"🔧 Running {tool}..."
-                    if progress_ch:
-                        await progress_ch.send_text(active_chat_id, msg)
-                elif event == "tool.exec_failed":
-                    tool = kwargs.get("tool_name", "")
-                    err = kwargs.get("error", "")[:80]
-                    if zh:
-                        msg = f"❌ {tool} 失败: {err}"
-                    else:
-                        msg = f"❌ {tool} failed: {err}"
-                    if progress_ch:
-                        await progress_ch.send_text(active_chat_id, msg)
-            except Exception:
-                pass
-
-        from src.events import subscribe_async, unsubscribe
-
-        _progress_unsub = subscribe_async("tool.*", _on_tool_event)
-
-        _assistant_msg_unsub = None
-
-        async def _on_assistant_message(event: str, **kwargs):
-            tid = kwargs.get("thread_id", "")
-            if tid != thread_id:
-                return
-            content = kwargs.get("content", "")
-            if not content:
-                return
-            try:
-                formatted = _format_display(content)
-                await reply_fn(formatted)
-            except Exception:
-                pass
-
-        _assistant_msg_unsub = subscribe_async("agent_loop.assistant_message", _on_assistant_message)
+        _cleanup_events = self._subscribe_agent_events(thread_id, reply_fn)
 
         try:
             logger.debug("[flow] agent_loop run start, state has %d messages, depth=%d", pre_msg_count, depth)
@@ -676,10 +681,7 @@ class MessageHandler:
                 channel=channel_prefix,
             )
         finally:
-            if _progress_unsub:
-                unsubscribe("tool.*", _on_tool_event)
-            if _assistant_msg_unsub:
-                unsubscribe("agent_loop.assistant_message", _on_assistant_message)
+            _cleanup_events()
 
         if assistant_text:
             if (
@@ -906,6 +908,9 @@ class MessageHandler:
             current_exc = exc
             consecutive_denies = 0
 
+            async def _approval_reply(text):
+                await approval_ch.send_text(chat_id, text)
+
             while True:
                 approval_timeout = getattr(current_exc, "timeout", None) or 120
                 auto_deny = getattr(current_exc, "auto_deny", False)
@@ -973,7 +978,11 @@ class MessageHandler:
                     consecutive_denies = 0
 
                 try:
-                    result_state = await self._container.agent_loop.resume(current_exc.thread_id, decision)
+                    _cleanup_events = self._subscribe_agent_events(current_exc.thread_id, _approval_reply)
+                    try:
+                        result_state = await self._container.agent_loop.resume(current_exc.thread_id, decision)
+                    finally:
+                        _cleanup_events()
                     assistant_text = ""
                     for msg in reversed(result_state.messages):
                         if msg.get("role") == "assistant" and msg.get("content"):
@@ -1036,6 +1045,10 @@ class MessageHandler:
         task has already exited (e.g. due to an exception or chained ApprovalPending).
         If _handle_approval_pending is still running, resume() will fail with
         a lock conflict and we silently ignore it.
+
+        No event subscription needed here: this is a lightweight fallback that
+        only sends the final reply. If resume() raises ApprovalPending again,
+        a new _handle_approval_pending is spawned which handles event subscriptions.
         """
         try:
             state = await self._container.state_store.load(thread_id)

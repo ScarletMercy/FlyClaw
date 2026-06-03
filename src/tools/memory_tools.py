@@ -28,6 +28,7 @@ class MemoryDeleteNeedsApproval(Exception):
         self.auto_deny = True
         self.request_id = ""
         self.denylisted = False
+        self.approval_key = "memory_delete"
         self.thread_id = ""
         super().__init__(f"记忆删除需要审批: {len(keys)} 条")
 
@@ -529,7 +530,7 @@ async def memory(
     - save: 保存记忆（自动去重）。需要 content，可选 key/category
     - get: 按键取回完整记忆内容。键名即记忆摘要，先用 list 查看键名
     - list: 列出记忆。每条记忆的键名就是该条记忆的内容摘要，默认只返回键名。verbose=true 时同时返回完整内容
-    - delete: 删除指定记忆条目。需要 keys 数组。删除前会弹出确认按钮
+    - delete: 删除指定记忆条目。需要 keys 数组
 
     不要保存：任务进度、闲聊、一次性指令、通用知识。
 
@@ -583,7 +584,24 @@ async def memory(
                 previews.append(f"- [{k}]: {c[:80]}")
         if not previews:
             return json.dumps({"error": "None of the specified keys exist"}, ensure_ascii=False)
-        raise MemoryDeleteNeedsApproval(found_keys, previews)
+
+        # Check session/durable approval before raising (same pattern as exec_command)
+        from src.tools.approval import get_approval_manager
+        from src.tools.exec import _current_agent_context
+
+        _mgr = get_approval_manager()
+        _args_preview = "\n".join(previews)[:200]
+        _tid = _current_agent_context.get({}).get("parent_thread_id", "")
+        if not _mgr.has_durable_approval("memory_delete", _args_preview):
+            if not _mgr.has_session_approval(_tid, "memory_delete", _args_preview):
+                raise MemoryDeleteNeedsApproval(found_keys, previews)
+
+        # Approved via session/durable — execute delete directly
+        deleted = []
+        for k in found_keys:
+            await s.forget(k)
+            deleted.append(k)
+        return json.dumps({"ok": True, "deleted": deleted, "count": len(deleted)}, ensure_ascii=False)
 
     return json.dumps({"error": f"Unknown action '{action}'. Use: save, get, list, delete"}, ensure_ascii=False)
 

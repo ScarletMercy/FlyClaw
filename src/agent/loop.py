@@ -903,12 +903,6 @@ class AgentLoop:
             user = await self._resolve_user(sender_id)
             tools = apply_tool_policy(tools, sender_id, self._config, user=user)
 
-        channel = state.channel
-        if channel == "qq":
-            tools = [t for t in tools if not t.name.startswith("weixin_")]
-        elif channel == "weixin":
-            tools = [t for t in tools if not t.name.startswith("qq_")]
-
         return tools
 
     async def _resolve_user(self, sender_id: str):

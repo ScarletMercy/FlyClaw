@@ -52,12 +52,16 @@ def _infer_media_type(file_key: str) -> str:
     return "file"
 
 
-async def send_media(file_key: str = "", force_file: bool = False) -> str:
-    """Send a media file (image, audio, or generic file) to the current chat.
-    Auto-detects type by extension. Supports local file paths and URLs.
+async def send_file(file_key: str = "", force_file: bool = False) -> str:
+    """Send a file to the current chat. Supports images, audio, documents, and any other file type.
+    If the file is a media file (image or audio), it is sent as native media by default
+    (inline display / playable audio); otherwise it is sent as a downloadable file attachment.
+    Use force_file=True to always send as a generic file attachment regardless of type.
+
+    Supports local file paths and URLs.
 
     Args:
-        file_key: Local file path or URL of the media file.
+        file_key: Local file path or URL of the file to send.
         force_file: When True, force sending as a generic file attachment
                     instead of native media type (e.g. send an image as a file).
     """
@@ -99,5 +103,5 @@ def get_tools() -> list:
     from src.agent.tooldef import ToolDef
 
     return [
-        ToolDef.from_function(send_media),
+        ToolDef.from_function(send_file),
     ]
