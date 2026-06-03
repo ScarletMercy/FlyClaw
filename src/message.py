@@ -299,9 +299,6 @@ class MessageHandler:
                 await reply_fn("未知命令。输入 /help 查看可用命令。")
                 return
 
-            from src.tools.cron_tools import set_current_chat_id
-
-            set_current_chat_id(chat_id)
             from src.tools.media_tools import set_current_channel
 
             set_current_channel(channel_prefix)

@@ -46,7 +46,6 @@ ROLE_PERMISSIONS: dict[UserRole, dict[str, Any]] = {
             "file_read",
             "file_list",
             "chat_tools",
-            "media_tools",
         ],
         "admin_api": False,
         "approval_bypass": False,

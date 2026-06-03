@@ -23,13 +23,41 @@ from src.skills.types import Skill, SkillMetadata
 
 logger = logging.getLogger("flyclaw.skills.manager")
 
+_WIN_RETRIES = 5
+_WIN_DELAY = 0.15
+
+
+async def _safe_unlink(path: Path) -> None:
+    """Delete a file, retrying on PermissionError (WinError 32)."""
+    for i in range(1, _WIN_RETRIES + 1):
+        try:
+            await asyncio.to_thread(path.unlink)
+            return
+        except PermissionError:
+            if i == _WIN_RETRIES:
+                raise
+            await asyncio.sleep(_WIN_DELAY * (2 ** (i - 1)))
+
+
+async def _safe_rmtree(directory: Path) -> None:
+    """Delete a directory tree, retrying on PermissionError (WinError 32)."""
+    import shutil
+
+    for i in range(1, _WIN_RETRIES + 1):
+        try:
+            await asyncio.to_thread(shutil.rmtree, directory)
+            return
+        except PermissionError:
+            if i == _WIN_RETRIES:
+                raise
+            await asyncio.sleep(_WIN_DELAY * (2 ** (i - 1)))
+
+
 _USER_SKILLS_DIR = Path.home() / ".flyclaw" / "skills"
 
 # Validation limits
 _MAX_NAME_LENGTH = 64
 _MAX_DESCRIPTION_LENGTH = 1024
-_MAX_SKILL_CONTENT_BYTES = 256 * 1024
-
 # Security patterns for injection detection
 _INJECTION_PATTERNS = [
     re.compile(r"ignore\s+(all\s+)?previous\s+instructions", re.IGNORECASE),
@@ -61,16 +89,14 @@ def _scan_for_injection(content: str) -> Optional[str]:
 
 def _format_skill_frontmatter(name: str, description: str, category: str = "") -> str:
     """Generate YAML frontmatter for SKILL.md."""
-    lines = [
-        "---",
-        f"name: {name}",
-        f'description: "{description}"',
-    ]
+    import yaml
+
+    meta: dict = {"name": name, "description": description}
     if category:
-        lines.append(f"category: {category}")
-    lines.append("---")
-    lines.append("")
-    return "\n".join(lines)
+        meta["category"] = category
+    # yaml.dump adds trailing newline; strip it so we control formatting
+    yaml_block = yaml.dump(meta, allow_unicode=True, default_flow_style=False).rstrip("\n")
+    return f"---\n{yaml_block}\n---\n"
 
 
 SUPPORTING_DIRS = frozenset({"references", "templates", "scripts", "assets"})
@@ -141,6 +167,10 @@ class SkillManager:
         Returns:
             (Skill, error_message) - error_message is None on success
         """
+        error = _validate_skill_name(name)
+        if error:
+            return None, error  # type: ignore[return-value]
+
         skill_dir = self.skills_dir / name
         skill_md = skill_dir / "SKILL.md"
 
@@ -176,6 +206,10 @@ class SkillManager:
         Returns:
             (success, error_message)
         """
+        error = _validate_skill_name(name)
+        if error:
+            return False, error
+
         skill_dir = (self.skills_dir / name).resolve()
         base = str(self.skills_dir.resolve()) + os.sep
         if not (str(skill_dir) + os.sep).startswith(base):
@@ -188,10 +222,8 @@ class SkillManager:
         if skill and skill.source not in ("user", "agents-project"):
             return False, f"Cannot delete system skill: {name}"
 
-        import shutil
-
         try:
-            shutil.rmtree(skill_dir)
+            await _safe_rmtree(skill_dir)
             await self._record_usage(name, action="deleted")
             return True, None
         except Exception as e:
@@ -218,6 +250,10 @@ class SkillManager:
         replace_all: bool = False,
     ) -> tuple[bool, Optional[str]]:
         """Targeted find-and-replace in SKILL.md or a supporting file."""
+        error = _validate_skill_name(name)
+        if error:
+            return False, error
+
         skill_dir = self.skills_dir / name
         if not await aiofiles.os.path.exists(skill_dir):
             return False, f"Skill not found: {name}"
@@ -255,6 +291,10 @@ class SkillManager:
         file_content: str,
     ) -> tuple[bool, Optional[str]]:
         """Write a supporting file under a skill (references/templates/scripts/assets)."""
+        error = _validate_skill_name(name)
+        if error:
+            return False, error
+
         skill_dir = self.skills_dir / name
         if not await aiofiles.os.path.exists(skill_dir):
             return False, f"Skill not found: {name}"
@@ -272,6 +312,10 @@ class SkillManager:
 
     async def remove_supporting_file(self, name: str, file_path: str) -> tuple[bool, Optional[str]]:
         """Remove a supporting file from a skill."""
+        error = _validate_skill_name(name)
+        if error:
+            return False, error
+
         skill_dir = self.skills_dir / name
         if not await aiofiles.os.path.exists(skill_dir):
             return False, f"Skill not found: {name}"
@@ -280,7 +324,7 @@ class SkillManager:
             return False, "Path traversal not allowed"
         if not await aiofiles.os.path.exists(target):
             return False, f"File not found: {file_path}"
-        target.unlink()
+        await _safe_unlink(target)
         return True, None
 
     async def _read_usage(self) -> dict:
@@ -522,9 +566,18 @@ def get_tools() -> list:
                 return json.dumps({"error": "name is required for toggle"})
             from src.config import save_config
 
+            # Look up in cache first, then fall back to disk.
+            # Disabled skills are excluded from the cache by discover_skills(),
+            # but toggle must be able to re-enable them.
             skills = container.skills_cache or []
-            if not any(s.name == name for s in skills):
-                return json.dumps({"error": f"Skill not found: {name}"})
+            found = any(s.name == name for s in skills)
+            if not found:
+                skill_dir = manager.skills_dir / name
+                skill_md = skill_dir / "SKILL.md"
+                if await aiofiles.os.path.exists(skill_md):
+                    found = True
+                else:
+                    return json.dumps({"error": f"Skill not found: {name}"})
             config = container.config
             action_result = "no change"
             if channel:
@@ -818,9 +871,7 @@ def get_tools() -> list:
             if not str(skill_dir).startswith(str(manager.skills_dir)):
                 return json.dumps({"error": f"Can only uninstall user skills in {manager.skills_dir}"})
             try:
-                import shutil
-
-                await asyncio.to_thread(shutil.rmtree, skill_dir)
+                await _safe_rmtree(skill_dir)
             except Exception as e:
                 return json.dumps({"error": f"Failed to remove skill directory: {str(e)}"})
             config = container.config

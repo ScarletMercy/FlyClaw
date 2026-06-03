@@ -316,11 +316,18 @@ async def _ref_to_locator(page, ref: str):
     except ValueError:
         return None
 
+    cdp = None
     try:
         cdp = await page.context.new_cdp_session(page)
         result = await cdp.send("Accessibility.getFullAXTree")
     except Exception:
         return None
+    finally:
+        if cdp:
+            try:
+                await cdp.detach()
+            except Exception:
+                logger.debug("CDP detach failed", exc_info=True)
 
     from src.tools.browser.snapshot import get_interactive_nodes
 

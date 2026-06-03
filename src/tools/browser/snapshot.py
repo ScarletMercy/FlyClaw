@@ -70,6 +70,7 @@ async def get_snapshot(page, compact: bool = True) -> dict:
     url = page.url
     title = await page.title()
 
+    cdp = None
     try:
         cdp = await page.context.new_cdp_session(page)
         result = await cdp.send("Accessibility.getFullAXTree")
@@ -81,6 +82,12 @@ async def get_snapshot(page, compact: bool = True) -> dict:
             "snapshot": "(snapshot unavailable)",
             "element_count": 0,
         }
+    finally:
+        if cdp:
+            try:
+                await cdp.detach()
+            except Exception:
+                logger.debug("CDP detach failed", exc_info=True)
 
     nodes = result.get("nodes", [])
     if not nodes:

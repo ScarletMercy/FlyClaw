@@ -283,6 +283,16 @@ async def _exec_streaming(
         """Kill process tree, ignoring ProcessLookupError if already exited."""
         await kill_process_tree(proc)
 
+    async def _wait_for_output_or_exit():
+        """Wait until we get output OR the process exits."""
+        while proc.returncode is None:
+            try:
+                await asyncio.wait_for(output_event.wait(), timeout=0.5)
+                return True  # Got output
+            except asyncio.TimeoutError:
+                continue
+        return False  # Process exited
+
     try:
         deadline = start + timeout
         while True:
@@ -301,16 +311,6 @@ async def _exec_streaming(
 
             # Wait for output or process exit (bounded by both timeouts)
             wait_timeout = min(remaining, no_output_timeout)
-
-            async def _wait_for_output_or_exit():
-                """Wait until we get output OR the process exits."""
-                while proc.returncode is None:
-                    try:
-                        await asyncio.wait_for(output_event.wait(), timeout=0.5)
-                        return True  # Got output
-                    except asyncio.TimeoutError:
-                        continue
-                return False  # Process exited
 
             got_output = await asyncio.wait_for(_wait_for_output_or_exit(), timeout=wait_timeout)
 
@@ -388,6 +388,14 @@ def _get_first_token(command: str) -> str:
 
 
 def _is_denylisted(command: str, deny_patterns: list[str]) -> tuple[bool, str]:
+    """Check if a command matches any deny pattern.
+
+    Two-layer matching (both intentional, not redundant):
+    1. fnmatch — full-string glob matching for patterns with wildcards (e.g. ``dd if=*of=/dev/*``)
+    2. regex substring — ``\\b``-bounded search catches prefixed variants
+       that fnmatch misses (e.g. ``sudo rm -rf /`` won't fnmatch ``rm -rf``,
+       but ``\\brm\\b`` finds it).
+    """
     import re
 
     cmd_normalized = re.sub(r"\s+", " ", command.strip()).lower()
@@ -395,6 +403,8 @@ def _is_denylisted(command: str, deny_patterns: list[str]) -> tuple[bool, str]:
         pattern_lower = pattern.lower()
         if fnmatch.fnmatch(cmd_normalized, pattern_lower):
             return True, pattern
+        # fnmatch is full-string — missed if command has a prefix/suffix.
+        # regex substring + word boundary catches those cases.
         start_boundary = r"\b" if pattern_lower[0:1].isalnum() or pattern_lower[0:1] == "_" else ""
         end_boundary = r"\b" if pattern_lower[-1:].isalnum() or pattern_lower[-1:] == "_" else ""
         try:
@@ -475,6 +485,11 @@ async def exec_command(
         workdir: Working directory. Defaults to agents.workspace in config.yaml.
         background: Run in background. Returns session ID immediately.
     """
+    if timeout is None:
+        timeout = 30
+    elif timeout <= 0:
+        raise ToolExecutionError(f"timeout 必须为正整数，收到: {timeout}")
+
     cfg = _get_config()
 
     deny_patterns = (cfg.tools.exec.deny_patterns if cfg else None) or _DEFAULT_DENY_PATTERNS
@@ -529,6 +544,44 @@ async def exec_command(
         blocked_bg, matched_bg = _is_denylisted(command, deny_patterns)
         if blocked_bg:
             raise ToolExecutionError(f"Command blocked by denylist (matched: {matched_bg})")
+
+        # Unparseable shell constructs — always blocked in background mode.
+        # These cannot be statically analyzed and are the primary bypass vector.
+        unparseable_bg, unparseable_bg_detail = _has_unparseable_shell(command)
+        if unparseable_bg:
+            logger.warning(
+                "[exec-audit] BLOCKED unparseable shell in background mode ('%s'): %.200s",
+                unparseable_bg_detail,
+                command,
+            )
+            raise ToolExecutionError(
+                f"Command uses unparseable shell construct ('{unparseable_bg_detail}') "
+                f"and cannot be run in background mode"
+            )
+
+        # Shell executor patterns — blocked in background mode.
+        # Approval gating is not feasible for async processes; block outright.
+        executor_bg, executor_bg_detail = _has_shell_executor(command)
+        if executor_bg:
+            logger.warning(
+                "[exec-audit] BLOCKED shell executor in background mode ('%s'): %.200s",
+                executor_bg_detail,
+                command,
+            )
+            raise ToolExecutionError(
+                f"Command uses shell executor ('{executor_bg_detail}') and cannot be run in background mode"
+            )
+
+        # Non-recursive delete — blocked in background mode (approval not feasible).
+        if _get_first_token(command) not in _COMMAND_PREFIX_WHITELIST:
+            delete_bg, delete_bg_pattern = _is_denylisted(command, _DELETE_APPROVAL_PATTERNS)
+            if delete_bg:
+                logger.warning(
+                    "[exec-audit] BLOCKED delete operation in background mode ('%s'): %.200s",
+                    delete_bg_pattern,
+                    command,
+                )
+                raise ToolExecutionError(f"Delete operation ('{delete_bg_pattern}') cannot be run in background mode")
 
         env = None
         if sandbox_enabled:

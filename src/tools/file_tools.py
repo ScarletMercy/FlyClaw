@@ -81,23 +81,27 @@ async def read_file(path: str, offset: int = 0, head_limit: int = 500) -> str:
         ext = os.path.splitext(resolved)[1].lower()
         if ext in _BINARY_EXTS:
             return f"Error: binary file: {path}"
-        # Null-byte probe: catch binary files with unknown extensions
+        # Single open — binary probe + text read on the SAME fd to eliminate TOCTOU.
         async with aiofiles.open(resolved, "rb") as raw:
             chunk = await raw.read(8192)
             if b"\x00" in chunk:
                 return f"Error: binary file: {path}"
+            # Decode remaining data (after probe chunk) + read rest of file,
+            # all through the same file descriptor.
+            tail = await raw.read()
+        # Decode the whole file content from bytes we already hold in memory.
+        full_text = chunk.decode("utf-8", errors="replace") + tail.decode("utf-8", errors="replace")
+        lines = full_text.splitlines(keepends=True)
+        total = len(lines)
         selected: list[str] = []
-        total = 0
-        async with aiofiles.open(resolved, "r", encoding="utf-8") as f:
-            idx = 0
-            async for line in f:
-                total += 1
-                if idx < offset:
-                    idx += 1
-                    continue
-                if len(selected) < head_limit:
-                    selected.append(line)
+        idx = 0
+        for line in lines:
+            if idx < offset:
                 idx += 1
+                continue
+            if len(selected) < head_limit:
+                selected.append(line)
+            idx += 1
         if total == 0:
             return f"File: {path} (empty, 0 lines)"
         if offset >= total:
@@ -554,11 +558,14 @@ async def _glob_impl(pattern: str, path: str = ".", head_limit: int = 50, offset
             lines = []
             for m in page:
                 rel = str(m.relative_to(resolved))
+                try:
+                    st = m.stat()
+                except OSError:
+                    continue
                 if m.is_dir():
                     lines.append(f"  {rel}/")
                 else:
-                    size = m.stat().st_size
-                    lines.append(f"  {rel}  ({size}B)")
+                    lines.append(f"  {rel}  ({st.st_size}B)")
             header = f"Found {len(page)} of {total} match(es) for '{pattern}':\n"
             suffix = ""
             if truncated:

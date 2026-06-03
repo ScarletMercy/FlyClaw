@@ -11,9 +11,10 @@ from typing import Literal, Optional
 from src._container import get_container
 from src.agent.tooldef import ToolDef
 
+from src.tools.chat_tools import _current_chat_id
+
 logger = logging.getLogger("flyclaw.task_tools")
 
-_current_chat_id: ContextVar[str] = ContextVar("_current_chat_id", default="")
 _current_sender_id: ContextVar[str] = ContextVar("_current_sender_id", default="")
 _current_thread_id: ContextVar[str] = ContextVar("_current_thread_id", default="")
 
@@ -303,6 +304,8 @@ async def _task_status_impl() -> str:
 
 async def _task_advance_impl(step_index: int, result_summary: str, run_id: str) -> str:
     from src.task.store import get_task_store
+
+    step_index = int(step_index)
 
     container = get_container()
     store = get_task_store(container.config.task.db_path)

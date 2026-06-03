@@ -19,6 +19,8 @@ import httpx
 
 logger = logging.getLogger("flyclaw.security.url_safety")
 
+MAX_URL_LENGTH = 2000
+
 # Cloud metadata hostnames — always blocked regardless of config
 _BLOCKED_HOSTNAMES = frozenset(
     {
@@ -209,8 +211,8 @@ async def safe_fetch(
         raise ValueError(f"Unsupported URL scheme: {parsed.scheme}")
     if not parsed.hostname:
         raise ValueError("URL has no hostname")
-    if len(url) > 2000:
-        raise ValueError(f"URL exceeds maximum length of 2000 characters")
+    if len(url) > MAX_URL_LENGTH:
+        raise ValueError(f"URL exceeds maximum length of {MAX_URL_LENGTH} characters")
 
     merged_headers = {**_DEFAULT_FETCH_HEADERS, **(headers or {})}
 

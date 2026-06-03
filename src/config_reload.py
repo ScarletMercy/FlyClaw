@@ -84,8 +84,17 @@ class ReloadExecutor:
 
     async def _do_reload_tools(self):
         from src.tools.exec import reset_config_cache
+        from src.tools import web_tools
 
         reset_config_cache()
+        web_tools._cached_api_key = None
+        old_client = web_tools._tavily_client
+        web_tools._tavily_client = None
+        if old_client is not None:
+            try:
+                await old_client.close()
+            except Exception:
+                pass
         tools = self._app._collect_builtin_tools()
         registry = self._app.tool_registry
         if registry is not None:

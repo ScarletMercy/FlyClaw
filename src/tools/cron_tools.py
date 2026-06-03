@@ -1,18 +1,12 @@
 from __future__ import annotations
 
 import logging
-from contextvars import ContextVar
 from typing import Literal
 
 from src._container import get_container
+from src.tools.chat_tools import _current_chat_id
 
 logger = logging.getLogger("flyclaw.cron_tools")
-
-_current_chat_id: ContextVar[str] = ContextVar("_current_chat_id", default="")
-
-
-def set_current_chat_id(chat_id: str):
-    _current_chat_id.set(chat_id)
 
 
 def _get_service():

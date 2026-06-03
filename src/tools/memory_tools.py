@@ -479,7 +479,7 @@ async def memory(
             try:
                 data = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
-                data = {}
+                data = {"error": f"Failed to parse memory data for key '{k}'"}
             if "error" not in data:
                 found_keys.append(k)
                 c = data.get("content", "")

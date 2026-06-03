@@ -15,7 +15,7 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
         text: 要转为语音的文本内容
         voice: edge-tts 音色名称，默认 zh-CN-YunxiNeural
     """
-    from src.tools.cron_tools import _current_chat_id
+    from src.tools.chat_tools import _current_chat_id
     from src.tools.media_tools import _current_channel
 
     chat_id = _current_chat_id.get("")
@@ -28,6 +28,7 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
 
     import edge_tts
 
+    tmp_path: str | None = None
     try:
         communicate = edge_tts.Communicate(text, voice=voice)
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
@@ -35,13 +36,15 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
         await communicate.save(tmp_path)
         async with aiofiles.open(tmp_path, "rb") as f:
             audio_bytes = await f.read()
-        try:
-            await aiofiles.os.remove(tmp_path)
-        except OSError:
-            pass
     except Exception as e:
         logger.error("edge-tts synthesis failed: %s", e)
         return f"[error] TTS synthesis failed: {e}"
+    finally:
+        if tmp_path:
+            try:
+                await aiofiles.os.remove(tmp_path)
+            except OSError:
+                pass
 
     if not audio_bytes:
         return "[error] TTS produced empty audio"

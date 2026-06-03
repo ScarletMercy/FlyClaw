@@ -6,7 +6,6 @@ web_search: Tavily API search (requires API key). Falls back to Bing scraping wh
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import re
 import time
@@ -15,15 +14,16 @@ from urllib.parse import urlparse
 import httpx
 
 from src.agent.tooldef import ToolDef
+from src.security.url_safety import MAX_URL_LENGTH
 
 logger = logging.getLogger("flyclaw.web_tools")
 
 _cached_api_key: str | None = None
+_tavily_client: AsyncTavilyClient | None = None
 
 FETCH_TIMEOUT = 30.0
 BING_TIMEOUT = 15.0
 MAX_MARKDOWN_LENGTH = 100_000
-MAX_URL_LENGTH = 2000
 
 _BING_HEADERS = {
     "User-Agent": "flyclaw/1.0 (compatible; web-search)",
@@ -57,6 +57,20 @@ def _get_api_key() -> str:
         logger.warning("Failed to load web search config: %s", e)
         _cached_api_key = ""
     return _cached_api_key
+
+
+async def _get_tavily_client():
+    """Return a cached AsyncTavilyClient, creating one if needed."""
+    global _tavily_client
+    api_key = _get_api_key()
+    if not api_key:
+        return None
+    if _tavily_client is not None:
+        return _tavily_client
+    from tavily import AsyncTavilyClient
+
+    _tavily_client = AsyncTavilyClient(api_key=api_key)
+    return _tavily_client
 
 
 def _is_binary_content_type(content_type: str) -> bool:
@@ -171,9 +185,10 @@ async def web_fetch(url: str) -> str:
     except Exception:
         return f"Invalid URL: {url}"
 
-    # Prefer HTTPS
+    # Prefer HTTPS — rebuild from parsed components to avoid corrupting
+    # "http://" substrings that appear in the path or query (e.g. ?url=http://...)
     if parsed.scheme == "http":
-        url = url.replace("http://", "https://", 1)
+        url = parsed._replace(scheme="https").geturl()
 
     try:
         from src.security.url_safety import safe_fetch
@@ -222,20 +237,17 @@ async def web_search(query: str, max_results: int = 5) -> str:
         query: The search query string.
         max_results: Maximum number of results to return. Default 5.
     """
-    api_key = _get_api_key()
     logger.info("web_search raw query: %r", query)
     query = _unescape_unicode(query)
     logger.info("web_search after unescape: %r", query)
-    if not api_key:
+
+    client = await _get_tavily_client()
+    if client is None:
         logger.info("No Tavily API key configured, falling back to Bing search")
         return await _bing_search(query, max_results)
 
     try:
-        from tavily import TavilyClient
-
-        client = TavilyClient(api_key=api_key)
-        response = await asyncio.to_thread(
-            client.search,
+        response = await client.search(
             query=query,
             max_results=max_results,
             include_answer=False,
