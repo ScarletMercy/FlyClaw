@@ -510,7 +510,13 @@ def register_dashboard(app: FastAPI, application):
             if _app_ref.agent_loop:
                 from src.agent.client import create_chain
 
+                old_client = _app_ref.agent_loop._client
                 _app_ref.agent_loop._client = create_chain(new_cfg)
+                if hasattr(old_client, "close"):
+                    try:
+                        await old_client.close()
+                    except Exception:
+                        pass
             return {"ok": True, "message": "Config reloaded"}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -760,7 +766,13 @@ def register_dashboard(app: FastAPI, application):
                 try:
                     from src.agent.client import create_chain
 
+                    old_client = _app_ref.agent_loop._client
                     _app_ref.agent_loop._client = create_chain(cfg)
+                    if hasattr(old_client, "close"):
+                        try:
+                            await old_client.close()
+                        except Exception:
+                            pass
                 except Exception:
                     pass
 

@@ -69,10 +69,8 @@ class LanceMemoryStore(BaseMemoryStore):
     async def _vec_search(self, query_embedding: list[float], limit: int = 24) -> list[dict]:
         if self._lance_table is None:
             return []
-        results = []
         try:
-            query_vec = np.array(query_embedding, dtype=np.float32)
-            lance_df = self._lance_table.search(query_vec).limit(limit).to_pandas()
+            lance_df = await asyncio.to_thread(self._sync_lance_search, query_embedding, limit)
 
             if lance_df.empty:
                 return []
@@ -86,6 +84,7 @@ class LanceMemoryStore(BaseMemoryStore):
             )
             chunk_map = {row["id"]: row for row in await cursor.fetchall()}
 
+            results = []
             for _, row in lance_df.iterrows():
                 chunk_id = int(row["id"])
                 chunk = chunk_map.get(chunk_id)
@@ -101,9 +100,15 @@ class LanceMemoryStore(BaseMemoryStore):
                         "vec_score": 1.0 - float(row.get("_distance", 1.0)),
                     }
                 )
+            return results
         except Exception as e:
             logger.warning("LanceDB vector search failed: %s", e)
-        return results
+            return []
+
+    def _sync_lance_search(self, query_embedding: list[float], limit: int):
+        """同步执行 LanceDB 搜索，由 asyncio.to_thread 调用。"""
+        query_vec = np.array(query_embedding, dtype=np.float32)
+        return self._lance_table.search(query_vec).limit(limit).to_pandas()
 
     async def _store_embeddings(self, chunk_ids: list[int], embeddings: list[list[float]]) -> None:
         if self._lance_table is None:
@@ -113,7 +118,8 @@ class LanceMemoryStore(BaseMemoryStore):
             [np.array(v, dtype=np.float32) for v in embeddings],
             type=pa.list_(pa.float32(), self.dimensions),
         )
-        self._lance_table.add(pa.table({"id": ids, "vector": vecs}))
+        table = pa.table({"id": ids, "vector": vecs})
+        await asyncio.to_thread(self._lance_table.add, table)
 
     async def _delete_vectors(self, ids: list[int]) -> None:
         if self._lance_table is None:

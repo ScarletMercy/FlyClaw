@@ -746,6 +746,12 @@ class ServiceContainer:
                 await self.weixin.stop()
             if self.state_store:
                 await self.state_store.close()
+            # 关闭 AI 客户端连接池
+            if self.agent_loop:
+                try:
+                    await self.agent_loop.close()
+                except Exception as e:
+                    logger.debug("Failed to close AI client: %s", e)
             # Clear all tool cache temp files on shutdown
             try:
                 from src.agent.tool_cache import clear_all_caches

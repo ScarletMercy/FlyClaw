@@ -4,6 +4,7 @@ import asyncio
 import fnmatch
 import logging
 import os
+import re as _re
 from pathlib import Path
 from typing import Literal
 
@@ -13,6 +14,26 @@ import aiofiles.os
 logger = logging.getLogger("flyclaw.file_tools")
 
 _BASE_DIR = os.path.abspath(os.environ.get("FLYCLAW_WORKSPACE", "."))
+
+# ReDoS 防护
+_MAX_REGEX_LENGTH = 500
+_NESTED_QUANTIFIER_RE = _re.compile(
+    r"\([^)]*[+*{][^)]*\)[+*{]",  # 嵌套量词如 (a+)+, (a*)*, (a{1,3})+
+)
+
+
+def _validate_regex(pattern: str):
+    """编译正则并检查安全性。返回 re.Pattern 或错误字符串。"""
+    if len(pattern) > _MAX_REGEX_LENGTH:
+        return f"Error: regex pattern too long (max {_MAX_REGEX_LENGTH} chars)"
+    try:
+        regex = _re.compile(pattern)
+    except _re.error as e:
+        return f"Error: invalid regex pattern: {e}"
+    # 检测灾难性回溯模式: 嵌套量词
+    if _NESTED_QUANTIFIER_RE.search(pattern):
+        return "Error: potentially catastrophic regex pattern (nested quantifiers)"
+    return regex
 
 
 def set_workspace(path: str):
@@ -360,12 +381,10 @@ async def _grep_impl(
     if not await aiofiles.os.path.exists(resolved):
         return await _path_not_found_hint(path, resolved)
 
-    import re
-
-    try:
-        regex = re.compile(pattern)
-    except re.error as e:
-        return f"Error: invalid regex pattern: {e}"
+    regex_or_err = _validate_regex(pattern)
+    if isinstance(regex_or_err, str):
+        return regex_or_err
+    regex = regex_or_err
 
     # Single file path — search directly
     if await aiofiles.os.path.isfile(resolved):

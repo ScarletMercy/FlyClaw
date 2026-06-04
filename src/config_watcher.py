@@ -97,6 +97,27 @@ class DiffEngine:
 
             if isinstance(old_val, BaseModel) and isinstance(new_val, BaseModel):
                 changes.extend(DiffEngine.diff(old_val, new_val, path))
+            elif isinstance(old_val, list) and isinstance(new_val, list):
+                if old_val != new_val:
+                    # 对列表中 BaseModel 项做递归比较（按位置配对）
+                    max_len = max(len(old_val), len(new_val))
+                    for idx in range(max_len):
+                        item_path = f"{path}[{idx}]"
+                        ov = old_val[idx] if idx < len(old_val) else None
+                        nv = new_val[idx] if idx < len(new_val) else None
+                        if isinstance(ov, BaseModel) and isinstance(nv, BaseModel):
+                            changes.extend(DiffEngine.diff(ov, nv, item_path))
+                        elif ov != nv:
+                            changes.append(ConfigChange(path=item_path, old_value=ov, new_value=nv))
+                    # 长度差异单独记录
+                    if len(old_val) != len(new_val):
+                        changes.append(
+                            ConfigChange(
+                                path=f"{path}.length",
+                                old_value=len(old_val),
+                                new_value=len(new_val),
+                            )
+                        )
             elif old_val != new_val:
                 changes.append(ConfigChange(path=path, old_value=old_val, new_value=new_val))
 

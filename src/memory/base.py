@@ -280,7 +280,8 @@ class BaseMemoryStore(ABC):
             if r["id"] not in combined:
                 combined[r["id"]] = r.copy()
 
-        fts_scores = [r["fts_score"] for r in combined.values() if r["fts_score"] != 0]
+        # BM25 返回负值（越负 = 匹配越好），取 abs 后归一化
+        fts_scores = [abs(r["fts_score"]) for r in combined.values() if r["fts_score"] != 0]
         vec_scores = [r["vec_score"] for r in combined.values() if r["vec_score"] != 0]
 
         fts_min = min(fts_scores) if fts_scores else 0
@@ -292,7 +293,9 @@ class BaseMemoryStore(ABC):
 
         for r in combined.values():
             if r["fts_score"]:
-                fts_norm = 1.0 if len(fts_scores) <= 1 or fts_max == fts_min else (r["fts_score"] - fts_min) / fts_range
+                fts_norm = (
+                    1.0 if len(fts_scores) <= 1 or fts_max == fts_min else (abs(r["fts_score"]) - fts_min) / fts_range
+                )
             else:
                 fts_norm = 0
 

@@ -208,9 +208,19 @@ def _account_file(account_id: str) -> Path:
 
 async def _atomic_json_write(path: Path, data: dict) -> None:
     tmp = path.with_suffix(".tmp")
-    async with aiofiles.open(tmp, "w", encoding="utf-8") as f:
-        await f.write(json.dumps(data, ensure_ascii=False, indent=2))
-    await asyncio.to_thread(tmp.replace, path)
+    try:
+        async with aiofiles.open(tmp, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(data, ensure_ascii=False, indent=2))
+            await f.flush()
+            await asyncio.to_thread(os.fsync, f.fileno())  # type: ignore[arg-type]
+        await asyncio.to_thread(tmp.replace, path)
+    except BaseException:
+        # 写入或重命名失败时清理临时文件
+        try:
+            await asyncio.to_thread(tmp.unlink)
+        except Exception:
+            pass
+        raise
 
 
 async def save_weixin_account(

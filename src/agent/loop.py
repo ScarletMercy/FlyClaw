@@ -45,89 +45,6 @@ async def interruptible(event: asyncio.Event, coro):
     return None
 
 
-def _escape_control_in_json_strings(s: str) -> str:
-    out: list[str] = []
-    in_str = False
-    esc = False
-    for ch in s:
-        if esc:
-            out.append(ch)
-            esc = False
-            continue
-        if ch == "\\":
-            out.append(ch)
-            esc = True
-            continue
-        if ch == '"':
-            in_str = not in_str
-            out.append(ch)
-            continue
-        if in_str and ord(ch) < 0x20:
-            out.append(f"\\u{ord(ch):04x}")
-            continue
-        out.append(ch)
-    return "".join(out)
-
-
-def _repair_tool_args(args_str: str) -> str:
-    if not args_str:
-        return "{}"
-
-    try:
-        json.loads(args_str, strict=False)
-        return args_str
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    s = args_str.strip()
-
-    # Binary search for the longest valid JSON prefix (O(n log n) vs old O(n²)).
-    lo, hi = 0, len(s)
-    while lo < hi:
-        mid = (lo + hi + 1) // 2
-        try:
-            json.loads(s[:mid], strict=False)
-            lo = mid  # mid is valid, try longer
-        except (json.JSONDecodeError, TypeError):
-            hi = mid - 1  # mid is invalid, try shorter
-    if lo > 0:
-        return s[:lo]
-
-    s = re.sub(r",\s*([}\]])", r"\1", s)
-
-    opens_brace = s.count("{") - s.count("}")
-    opens_bracket = s.count("[") - s.count("]")
-    if opens_brace > 0:
-        s += "}" * opens_brace
-    if opens_bracket > 0:
-        s += "]" * opens_bracket
-    try:
-        json.loads(s, strict=False)
-        return s
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    for _ in range(min(len(s), 50)):
-        if s.endswith("}") or s.endswith("]"):
-            trimmed = s[:-1]
-            try:
-                json.loads(trimmed, strict=False)
-                return trimmed
-            except (json.JSONDecodeError, TypeError):
-                s = trimmed
-        else:
-            break
-
-    s = _escape_control_in_json_strings(args_str)
-    try:
-        json.loads(s, strict=False)
-        return s
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    return "{}"
-
-
 class ApprovalPending(Exception):
     """Raised when a tool needs user approval. Loop pauses, caller resumes."""
 
@@ -288,6 +205,11 @@ class AgentLoop:
 
     def get_store(self) -> StateStore:
         return self._store
+
+    async def close(self) -> None:
+        """关闭底层客户端连接池。"""
+        if hasattr(self._client, "close"):
+            await self._client.close()
 
     def invalidate_memory_cache(self) -> None:
         self._memory_summary_ts = 0
@@ -719,18 +641,21 @@ class AgentLoop:
         messages_snapshot = list(state.messages)
 
         async def _bg_review():
-            from src.skills.review import spawn_background_review
+            try:
+                from src.skills.review import spawn_background_review
 
-            summary = await spawn_background_review(
-                client=self._client,
-                tools=self._tools,
-                config=self._config,
-                messages_snapshot=messages_snapshot,
-                review_skills=True,
-                review_memory=False,
-            )
-            if summary:
-                logger.info("💾 Self-improvement review: %s", summary)
+                summary = await spawn_background_review(
+                    client=self._client,
+                    tools=self._tools,
+                    config=self._config,
+                    messages_snapshot=messages_snapshot,
+                    review_skills=True,
+                    review_memory=False,
+                )
+                if summary:
+                    logger.info("💾 Self-improvement review: %s", summary)
+            except Exception as e:
+                logger.warning("Background skill review failed: %s", e)
 
         try:
             task = asyncio.create_task(_bg_review())
@@ -1042,23 +967,17 @@ class AgentLoop:
     def _build_assistant_msg(self, response: ChatResponse) -> dict:
         msg: dict[str, Any] = {"role": "assistant", "content": response.content}
         if response.tool_calls:
-            fixed_calls = []
-            for tc in response.tool_calls:
-                args_str = tc.function.arguments
-                repaired = _repair_tool_args(args_str)
-                if repaired != args_str:
-                    logger.warning("Repaired arguments for %s", tc.function.name)
-                fixed_calls.append(
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": repaired,
-                        },
-                    }
-                )
-            msg["tool_calls"] = fixed_calls
+            msg["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in response.tool_calls
+            ]
         return msg
 
     def _redact_last_assistant(self, state: AgentState) -> None:
@@ -1088,7 +1007,7 @@ class AgentLoop:
                 args_str = tc.function.arguments
             args = json.loads(args_str) if args_str else {}
         except json.JSONDecodeError:
-            args = {}
+            return f"[error] Tool '{tool_name}' arguments were malformed/truncated, please retry with valid JSON."
 
         tool_def = self._tool_map.get(tool_name)
         if tool_def is None:

@@ -28,7 +28,6 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
 
     import edge_tts
 
-    tmp_path: str | None = None
     try:
         communicate = edge_tts.Communicate(text, voice=voice)
         with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
@@ -36,15 +35,13 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
         await communicate.save(tmp_path)
         async with aiofiles.open(tmp_path, "rb") as f:
             audio_bytes = await f.read()
+        try:
+            await aiofiles.os.remove(tmp_path)
+        except OSError:
+            pass
     except Exception as e:
         logger.error("edge-tts synthesis failed: %s", e)
         return f"[error] TTS synthesis failed: {e}"
-    finally:
-        if tmp_path:
-            try:
-                await aiofiles.os.remove(tmp_path)
-            except OSError:
-                pass
 
     if not audio_bytes:
         return "[error] TTS produced empty audio"

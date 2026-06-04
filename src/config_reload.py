@@ -39,7 +39,14 @@ class ReloadExecutor:
 
         new_client = create_chain(self._app.config)
         if self._app.agent_loop:
+            old_client = self._app.agent_loop._client
             self._app.agent_loop._client = new_client
+            # 关闭旧客户端连接池，避免资源泄漏
+            if hasattr(old_client, "close"):
+                try:
+                    await old_client.close()
+                except Exception:
+                    pass
         else:
             logger.warning("agent_loop not initialized, model reload deferred")
 

@@ -148,6 +148,14 @@ class FallbackChain:
         active = self._all[self._active_idx]
         return f"FallbackChain(active={active!r}, total={len(self._all)})"
 
+    async def close(self) -> None:
+        """关闭所有底层客户端的 HTTP 连接池。"""
+        for client in self._all:
+            try:
+                await client.close()
+            except Exception:
+                pass
+
 
 def create_client(
     provider: str,

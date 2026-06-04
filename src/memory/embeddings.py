@@ -28,40 +28,40 @@ class EmbeddingProvider:
         }
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """Batch embed texts. Returns list of float vectors."""
+        """Batch embed texts. Returns list of float vectors.
+
+        Raises on any batch failure to prevent index misalignment
+        (partial failures would silently shift subsequent embeddings
+        to wrong indices). Callers should handle exceptions.
+        """
         if not texts:
             return []
 
-        # OpenAI supports batch embedding; process in groups of 100
         all_embeddings: list[list[float]] = []
         batch_size = 100
 
-        for i in range(0, len(texts), batch_size):
-            batch = texts[i : i + batch_size]
-            payload = {
-                "model": self._model,
-                "input": batch,
-            }
-            if self._dimensions:
-                payload["dimensions"] = self._dimensions
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i : i + batch_size]
+                payload = {
+                    "model": self._model,
+                    "input": batch,
+                }
+                if self._dimensions:
+                    payload["dimensions"] = self._dimensions
 
-            try:
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    resp = await client.post(self._url, json=payload, headers=self._headers)
-                    resp.raise_for_status()
-                    data = resp.json()
-                    # Sort by index to ensure correct order
-                    items = sorted(data["data"], key=lambda x: x["index"])
-                    all_embeddings.extend([item["embedding"] for item in items])
-            except Exception as e:
-                logger.error("Embedding batch failed (texts %d-%d): %s", i, i + len(batch), e)
-                # Fill with zero vectors on failure
-                for _ in batch:
-                    all_embeddings.append([0.0] * self._dimensions)
+                resp = await client.post(self._url, json=payload, headers=self._headers)
+                resp.raise_for_status()
+                data = resp.json()
+                # Sort by index to ensure correct order
+                items = sorted(data["data"], key=lambda x: x["index"])
+                all_embeddings.extend([item["embedding"] for item in items])
 
         return all_embeddings
 
     async def embed_query(self, text: str) -> list[float]:
-        """Embed a single query string."""
+        """Embed a single query string. Raises RuntimeError on failure."""
         results = await self.embed_texts([text])
-        return results[0] if results else []
+        if not results:
+            raise RuntimeError("Embedding query failed — no results returned")
+        return results[0]
