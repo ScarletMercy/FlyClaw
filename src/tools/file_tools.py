@@ -54,6 +54,7 @@ def _resolve_path(path: str) -> str:
 async def _direct_write(path: str, content: str, encoding: str = "utf-8") -> None:
     async with aiofiles.open(path, "w", encoding=encoding) as f:
         await f.write(content)
+        await f.flush()
 
 
 def _count_lines(text: str) -> int:
@@ -77,39 +78,27 @@ async def read_file(path: str, offset: int = 0, head_limit: int = 500) -> str:
         return f"Error: {e}"
 
     try:
-        # Extension check (no file open needed — no TOCTOU possible)
         ext = os.path.splitext(resolved)[1].lower()
         if ext in _BINARY_EXTS:
             return f"Error: binary file: {path}"
-        # Single open — binary probe + text read on the SAME fd to eliminate TOCTOU.
+        # Binary probe — only reads 8KB.
         async with aiofiles.open(resolved, "rb") as raw:
-            chunk = await raw.read(8192)
-            if b"\x00" in chunk:
+            if b"\x00" in await raw.read(8192):
                 return f"Error: binary file: {path}"
-            # Decode remaining data (after probe chunk) + read rest of file,
-            # all through the same file descriptor.
-            tail = await raw.read()
-        # Decode the whole file content from bytes we already hold in memory.
-        full_text = chunk.decode("utf-8", errors="replace") + tail.decode("utf-8", errors="replace")
-        lines = full_text.splitlines(keepends=True)
-        total = len(lines)
+        # Stream lines — only selected lines in memory.
         selected: list[str] = []
-        idx = 0
-        for line in lines:
-            if idx < offset:
-                idx += 1
-                continue
-            if len(selected) < head_limit:
-                selected.append(line)
-            idx += 1
+        total = 0
+        async with aiofiles.open(resolved, "r", encoding="utf-8", errors="replace") as f:
+            async for line in f:
+                total += 1
+                if total > offset and len(selected) < head_limit:
+                    selected.append(line)
         if total == 0:
             return f"File: {path} (empty, 0 lines)"
-        if offset >= total:
+        if offset > 0 and not selected:
             return f"Error: offset {offset} exceeds file length ({total} lines)"
         end = offset + head_limit
-        result = []
-        for i, line in enumerate(selected):
-            result.append(f"{offset + i + 1}\t{line.rstrip()}")
+        result = [f"{offset + i + 1}\t{line.rstrip()}" for i, line in enumerate(selected)]
         header = f"File: {path} (lines {offset + 1}-{min(end, total)} of {total})\n"
         if end < total:
             header += f"(showing {head_limit} of {total - offset} remaining lines)\n"
