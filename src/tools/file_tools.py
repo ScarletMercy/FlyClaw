@@ -15,11 +15,9 @@ logger = logging.getLogger("flyclaw.file_tools")
 
 _BASE_DIR = os.path.abspath(os.environ.get("FLYCLAW_WORKSPACE", "."))
 
-# ReDoS 防护
+# ReDoS 防护: 限制 pattern 长度 + 运行时超时
 _MAX_REGEX_LENGTH = 500
-_NESTED_QUANTIFIER_RE = _re.compile(
-    r"\([^)]*[+*{][^)]*\)[+*{]",  # 嵌套量词如 (a+)+, (a*)*, (a{1,3})+
-)
+_GREP_TIMEOUT = 30.0
 
 
 def _validate_regex(pattern: str):
@@ -30,9 +28,6 @@ def _validate_regex(pattern: str):
         regex = _re.compile(pattern)
     except _re.error as e:
         return f"Error: invalid regex pattern: {e}"
-    # 检测灾难性回溯模式: 嵌套量词
-    if _NESTED_QUANTIFIER_RE.search(pattern):
-        return "Error: potentially catastrophic regex pattern (nested quantifiers)"
     return regex
 
 
@@ -102,18 +97,21 @@ async def read_file(path: str, offset: int = 0, head_limit: int = 500) -> str:
         ext = os.path.splitext(resolved)[1].lower()
         if ext in _BINARY_EXTS:
             return f"Error: binary file: {path}"
-        # Binary probe — only reads 8KB.
-        async with aiofiles.open(resolved, "rb") as raw:
-            if b"\x00" in await raw.read(8192):
+        # 单 fd：二进制探测 + 文本流式读取，消除 TOCTOU
+        fd = os.open(resolved, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+        try:
+            if b"\x00" in os.read(fd, 8192):
                 return f"Error: binary file: {path}"
-        # Stream lines — only selected lines in memory.
-        selected: list[str] = []
-        total = 0
-        async with aiofiles.open(resolved, "r", encoding="utf-8", errors="replace") as f:
-            async for line in f:
-                total += 1
-                if total > offset and len(selected) < head_limit:
-                    selected.append(line)
+            os.lseek(fd, 0, os.SEEK_SET)
+            selected: list[str] = []
+            total = 0
+            async with aiofiles.open(fd, "r", encoding="utf-8", errors="replace", closefd=False) as f:
+                async for line in f:
+                    total += 1
+                    if total > offset and len(selected) < head_limit:
+                        selected.append(line)
+        finally:
+            os.close(fd)
         if total == 0:
             return f"File: {path} (empty, 0 lines)"
         if offset > 0 and not selected:
@@ -463,7 +461,10 @@ async def _grep_impl(
             return results, truncated, str(e)
         return results, truncated, None
 
-    results, truncated, error = await asyncio.to_thread(_walk_grep)
+    try:
+        results, truncated, error = await asyncio.wait_for(asyncio.to_thread(_walk_grep), timeout=_GREP_TIMEOUT)
+    except asyncio.TimeoutError:
+        return "Error: grep timed out (pattern may cause excessive backtracking on large files)"
     if error:
         return f"Error searching: {error}"
 
@@ -558,7 +559,14 @@ async def _glob_impl(pattern: str, path: str = ".", head_limit: int = 50, offset
                     break
             if not all_matches:
                 return f"No files matched '{pattern}' in {path}"
-            all_matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+            def _safe_mtime(p: Path) -> float:
+                try:
+                    return p.stat().st_mtime
+                except OSError:
+                    return 0.0
+
+            all_matches.sort(key=_safe_mtime, reverse=True)
             total = len(all_matches)
             if offset >= total:
                 return f"Error: offset {offset} exceeds total matches ({total})"

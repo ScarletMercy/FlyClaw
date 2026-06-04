@@ -8,7 +8,7 @@ import pytest
 import yaml
 from unittest.mock import AsyncMock
 
-from src.config import AppConfig, GatewayConfig, ModelConfig, CronConfig
+from src.config import AppConfig, GatewayConfig, ModelConfig, ModelFallback, CronConfig
 from src.config_watcher import ConfigChange, ConfigWatcher, DiffEngine, ReloadPlan
 
 
@@ -46,6 +46,124 @@ class TestDiffEngine:
         change = next(c for c in changes if c.path == "cron.enabled")
         assert change.old_value is True
         assert change.new_value is False
+
+    def test_list_str_no_changes(self):
+        a = AppConfig()
+        b = AppConfig()
+        changes = DiffEngine.diff(a, b)
+        list_changes = [c for c in changes if "[" in c.path or ".length" in c.path]
+        assert list_changes == []
+
+    def test_list_str_item_changed(self):
+        from src.config import ExecToolConfig, ToolsConfig
+
+        a = AppConfig(tools=ToolsConfig(exec=ExecToolConfig(deny_patterns=["a", "b", "c"])))
+        b = AppConfig(tools=ToolsConfig(exec=ExecToolConfig(deny_patterns=["a", "x", "c"])))
+        changes = DiffEngine.diff(a, b)
+        paths = [c.path for c in changes]
+        assert "tools.exec.deny_patterns[1]" in paths
+        change = next(c for c in changes if c.path == "tools.exec.deny_patterns[1]")
+        assert change.old_value == "b"
+        assert change.new_value == "x"
+
+    def test_list_str_appended(self):
+        from src.config import ExecToolConfig, ToolsConfig
+
+        a = AppConfig(tools=ToolsConfig(exec=ExecToolConfig(deny_patterns=["a", "b"])))
+        b = AppConfig(tools=ToolsConfig(exec=ExecToolConfig(deny_patterns=["a", "b", "c"])))
+        changes = DiffEngine.diff(a, b)
+        paths = [c.path for c in changes]
+        assert "tools.exec.deny_patterns[2]" in paths
+        change = next(c for c in changes if c.path == "tools.exec.deny_patterns[2]")
+        assert change.old_value is None
+        assert change.new_value == "c"
+
+    def test_list_str_removed(self):
+        from src.config import ExecToolConfig, ToolsConfig
+
+        a = AppConfig(tools=ToolsConfig(exec=ExecToolConfig(deny_patterns=["a", "b", "c"])))
+        b = AppConfig(tools=ToolsConfig(exec=ExecToolConfig(deny_patterns=["a"])))
+        changes = DiffEngine.diff(a, b)
+        paths = [c.path for c in changes]
+        assert "tools.exec.deny_patterns[1]" in paths
+        assert "tools.exec.deny_patterns[2]" in paths
+        c1 = next(c for c in changes if c.path == "tools.exec.deny_patterns[1]")
+        assert c1.old_value == "b"
+        assert c1.new_value is None
+
+    def test_list_basemodel_recursive_diff(self):
+        a = AppConfig(
+            model=ModelConfig(
+                fallbacks=[
+                    ModelFallback(provider="openai", name="gpt-4o"),
+                    ModelFallback(provider="anthropic", name="claude"),
+                ]
+            )
+        )
+        b = AppConfig(
+            model=ModelConfig(
+                fallbacks=[
+                    ModelFallback(provider="openai", name="gpt-4o-mini"),
+                    ModelFallback(provider="anthropic", name="claude"),
+                ]
+            )
+        )
+        changes = DiffEngine.diff(a, b)
+        paths = [c.path for c in changes]
+        # 只应报告 fallbacks[0].name 变更，不报整个列表
+        assert "model.fallbacks[0].name" in paths
+        assert "model.fallbacks[1].name" not in paths
+        change = next(c for c in changes if c.path == "model.fallbacks[0].name")
+        assert change.old_value == "gpt-4o"
+        assert change.new_value == "gpt-4o-mini"
+
+    def test_list_basemodel_added_item(self):
+        a = AppConfig(
+            model=ModelConfig(
+                fallbacks=[
+                    ModelFallback(provider="openai", name="gpt-4o"),
+                ]
+            )
+        )
+        b = AppConfig(
+            model=ModelConfig(
+                fallbacks=[
+                    ModelFallback(provider="openai", name="gpt-4o"),
+                    ModelFallback(provider="anthropic", name="claude"),
+                ]
+            )
+        )
+        changes = DiffEngine.diff(a, b)
+        paths = [c.path for c in changes]
+        # 新增 BaseModel 项时，old=None/new=BaseModel，报整项级变更
+        assert "model.fallbacks[1]" in paths
+        change = next(c for c in changes if c.path == "model.fallbacks[1]")
+        assert change.old_value is None
+        assert isinstance(change.new_value, ModelFallback)
+
+    def test_list_basemodel_removed_item(self):
+        a = AppConfig(
+            model=ModelConfig(
+                fallbacks=[
+                    ModelFallback(provider="openai", name="gpt-4o"),
+                    ModelFallback(provider="anthropic", name="claude"),
+                ]
+            )
+        )
+        b = AppConfig(
+            model=ModelConfig(
+                fallbacks=[
+                    ModelFallback(provider="openai", name="gpt-4o"),
+                ]
+            )
+        )
+        changes = DiffEngine.diff(a, b)
+        paths = [c.path for c in changes]
+        # 删除 BaseModel 项时，old=BaseModel/new=None，报整项级变更
+        assert "model.fallbacks[1]" in paths
+        change = next(c for c in changes if c.path == "model.fallbacks[1]")
+        assert isinstance(change.old_value, ModelFallback)
+        assert change.new_value is None
 
 
 class TestReloadPlan:

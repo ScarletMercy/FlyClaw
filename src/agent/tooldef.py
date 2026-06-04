@@ -6,7 +6,6 @@ for OpenAI tool calling (name, description, parameter schema).
 
 from __future__ import annotations
 
-import asyncio
 import enum
 import inspect
 import logging
@@ -15,8 +14,6 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Union, get_type_hints
 
 logger = logging.getLogger("flyclaw.agent.tooldef")
-
-from src.tools.exceptions import ToolExecutionError
 
 _TYPE_MAP: dict[type, str] = {
     str: "string",
@@ -51,23 +48,12 @@ class ToolDef:
             },
         }
 
-    # Maximum time a single tool invocation may run before being cancelled.
-    # This is a safety net — individual tools may enforce tighter limits.
-    _EXEC_TIMEOUT = 600  # 10 minutes
-
     async def execute(self, args: dict) -> str:
         filtered = {k: v for k, v in args.items() if k in self._valid_params}
-
-        async def _invoke() -> str:
-            result = self.fn(**filtered)
-            if inspect.isawaitable(result):
-                result = await result
-            return str(result) if result is not None else ""
-
-        try:
-            return await asyncio.wait_for(_invoke(), timeout=self._EXEC_TIMEOUT)
-        except asyncio.TimeoutError:
-            raise ToolExecutionError(f"Tool '{self.name}' timed out after {self._EXEC_TIMEOUT}s")
+        result = self.fn(**filtered)
+        if inspect.isawaitable(result):
+            result = await result
+        return str(result) if result is not None else ""
 
     @classmethod
     def from_function(cls, fn: Callable, name: str | None = None) -> ToolDef:
@@ -143,7 +129,6 @@ def _parse_args_doc(fn: Callable) -> dict[str, str]:
 
 def _typing_eval_namespace() -> dict[str, Any]:
     """Namespace with common typing + builtin names for eval'ing string annotations."""
-    import builtins
     import typing as _typing
 
     ns: dict[str, Any] = {}

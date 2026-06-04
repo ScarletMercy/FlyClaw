@@ -61,7 +61,7 @@ async def send_file(file_key: str = "", force_file: bool = False) -> str:
     Supports local file paths and URLs.
 
     Args:
-        file_key: Local file path or URL of the file to send.
+        file_key: (Required) The local file path or URL of the file to send.
         force_file: When True, force sending as a generic file attachment
                     instead of native media type (e.g. send an image as a file).
     """
