@@ -3,7 +3,8 @@
 轻量级多渠道 AI 助手框架。运行时仅 ~100MB 内存，40+ 内置工具，支持 QQ/微信渠道接入。事件驱动架构，全异步设计。
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![GitHub](https://img.shields.io/badge/GitHub-ScarletMercy%2FFlyClaw-blue?logo=github)](https://github.com/ScarletMercy/FlyClaw)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/ScarletMercy/FlyClaw/blob/main/LICENSE)
 
 ---
 

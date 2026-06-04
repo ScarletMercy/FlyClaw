@@ -9,9 +9,13 @@ from __future__ import annotations
 import logging
 import re
 import time
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import httpx
+
+if TYPE_CHECKING:
+    from tavily import AsyncTavilyClient
 
 from src.agent.tooldef import ToolDef
 from src.security.url_safety import MAX_URL_LENGTH
