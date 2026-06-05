@@ -782,13 +782,17 @@ async def process_status(
     return f"Unknown action: '{normalized}'. Use: list, poll, wait, kill, log."
 
 
+_EXEC_COMMAND_ORIGINAL_DOC = exec_command.__doc__
+
+
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef
 
     # Patch the workdir description with the resolved default path so the LLM
     # sees the actual value instead of a cryptic config variable name.
+    # Always patch from the original docstring so this is idempotent across hot-reloads.
     _resolved = _resolve_default_workdir()
-    exec_command.__doc__ = exec_command.__doc__.replace(
+    exec_command.__doc__ = _EXEC_COMMAND_ORIGINAL_DOC.replace(
         "Defaults to agents.workspace in config.yaml.",
         f"Defaults to {_resolved}.",
     )
