@@ -39,23 +39,46 @@ def set_workspace(path: str):
 
 
 def _resolve_path(path: str) -> str:
-    """Resolve path relative to workspace. Enforces sandbox when enabled."""
+    """Resolve path relative to workspace. Enforces sandbox when enabled.
+
+    On Linux the AI may drop the leading ``/`` from an absolute path it saw
+    in the system prompt (e.g. ``home/ubuntu/.flyclaw/workspace/file.txt``).
+    We detect this by tentatively prepending ``/`` and checking whether the
+    result lands inside the workspace (``relative_to``).  If it does *and*
+    the normal workspace-relative resolution does not exist on disk, we use
+    the corrected interpretation.  Gated to POSIX only — on Windows
+    ``Path("/")`` resolves to the current-drive root which can match the
+    workspace, so the heuristic is skipped entirely.
+    """
     p = Path(path)
-    if not p.is_absolute():
-        p = Path(_BASE_DIR) / p
+
     try:
-        real = p.resolve(strict=False)
+        if p.is_absolute():
+            real = p.resolve(strict=False)
+        else:
+            base = Path(_BASE_DIR).resolve()
+            real = (base / p).resolve(strict=False)
+            # Fallback (POSIX only): AI dropped leading '/' on a Linux absolute path
+            if os.name == "posix" and not real.exists():
+                try:
+                    abs_candidate = (Path("/") / p).resolve(strict=False)
+                    abs_candidate.relative_to(base)  # raises ValueError if outside
+                    real = abs_candidate
+                except (ValueError, OSError):
+                    pass  # not a mis-prefixed path, keep original resolution
     except Exception:
         raise ValueError(f"Path '{path}' could not be resolved")
+
     from src.tools.exec import is_sandbox_enabled
     from src.agent.tool_cache import cache_root as get_cache_root
 
     if not is_sandbox_enabled():
         return str(real)
+
     base = Path(_BASE_DIR).resolve()
+
     cache_root = get_cache_root()
-    allowed_roots = [base, cache_root]
-    for root in allowed_roots:
+    for root in (base, cache_root):
         try:
             real.relative_to(root)
             return str(real)

@@ -67,9 +67,7 @@ DEFAULT_SOUL_MD = (
 PLATFORM_HINTS: dict[str, str] = {
     "qq": (
         "你运行在 QQ 消息平台上。支持 markdown 格式和表情。"
-        "发送文件：在回复中用 <media>路径</media> 标签包裹本地文件路径，图片和音频会作为原生媒体发送，"
-        "其他文件作为可下载文档发送。"
-        "也可以使用 send_file 工具直接发送。"
+        "发送文件、图片、音频：使用 send_file 工具，系统自动识别类型并以原生媒体发送。"
     ),
     "api": ("你通过 API 服务响应。渲染层未知，假设纯文本输出，不使用 markdown 格式。保持回复简洁自然。"),
     "ws": ("你通过 WebSocket 连接响应。渲染层未知，假设纯文本输出，不使用 markdown 格式。保持回复简洁自然。"),
@@ -152,7 +150,7 @@ def _build_tooling_rules(tools: list | None = None) -> list[str]:
         "## 工具使用约定",
         "- edit_file 前必须先 read_file，需要精确匹配 old_string",
         "- 优先使用 file_tools（read_file/write_file/edit_file/list_dir/grep/glob）而非 exec_command",
-        "- 在回复文本中用 <media>path</media> 标签包裹本地文件路径，系统自动识别类型并发送",
+        "- 发送文件、图片、音频时使用 send_file 工具，系统自动识别媒体类型",
     ]
     if "browser_navigate" in tool_names:
         lines.append(

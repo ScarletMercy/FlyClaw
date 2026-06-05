@@ -767,6 +767,7 @@ class MessageHandler:
                     if extracted:
                         content, category = extracted
                         await save_memory(content, category=category)
+                        await reply_fn(f"\U0001f4be update memory: {content[:50]}")
                     else:
                         task = asyncio.create_task(
                             self._memory_llm_judge(

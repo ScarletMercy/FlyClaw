@@ -473,21 +473,21 @@ def _has_shell_executor(command: str) -> tuple[bool, str]:
 
 async def exec_command(
     command: str,
-    timeout: Optional[int] = 30,
+    timeout: int = 300,
     workdir: Optional[str] = None,
     background: bool = False,
 ) -> str:
     """Execute a shell command and return its output.
 
+    If a command fails due to timeout, increase the timeout value and retry.
+
     Args:
         command: The shell command to execute.
-        timeout: Timeout in seconds. Default 30.
+        timeout: Timeout in seconds. Default 300. Increase this value for long-running commands like npm install or docker build.
         workdir: Working directory. Defaults to agents.workspace in config.yaml.
         background: Run in background. Returns session ID immediately.
     """
-    if timeout is None:
-        timeout = 30
-    elif timeout <= 0:
+    if timeout <= 0:
         raise ToolExecutionError(f"timeout 必须为正整数，收到: {timeout}")
 
     cfg = _get_config()
@@ -784,6 +784,14 @@ async def process_status(
 
 def get_tools() -> list:
     from src.agent.tooldef import ToolDef
+
+    # Patch the workdir description with the resolved default path so the LLM
+    # sees the actual value instead of a cryptic config variable name.
+    _resolved = _resolve_default_workdir()
+    exec_command.__doc__ = exec_command.__doc__.replace(
+        "Defaults to agents.workspace in config.yaml.",
+        f"Defaults to {_resolved}.",
+    )
 
     return [
         ToolDef.from_function(exec_command),

@@ -35,12 +35,24 @@ async def browser_navigate(url: str) -> str:
         mgr = get_browser_manager()
         page = await mgr.get_page(_session_id())
         await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        await page.wait_for_load_state("networkidle", timeout=10000)
     except Exception as e:
         return f"Error navigating to {url}: {e}"
 
+    # Wait up to 10s for network idle; SPA/websocket pages may never reach it.
+    # Timeout is not an error — just means the page has ongoing connections.
+    idle = True
+    try:
+        await page.wait_for_load_state("networkidle", timeout=10000)
+    except Exception as _e:
+        if "timeout" not in str(_e).lower():
+            raise  # Non-timeout error (browser crash etc.) — propagate
+        idle = False
+
     snap = await get_snapshot(page)
-    return build_page_info(snap["url"], snap["title"], snap["snapshot"], snap["element_count"])
+    result = build_page_info(snap["url"], snap["title"], snap["snapshot"], snap["element_count"])
+    if not idle:
+        result += "\n(Page may still be loading — network activity ongoing)"
+    return result
 
 
 async def browser_snapshot(full: bool = False) -> str:
@@ -224,7 +236,7 @@ async def browser_press(key: str) -> str:
     url_before = page.url
     try:
         await page.keyboard.press(key)
-        await page.wait_for_load_state("networkidle", timeout=3000)
+        await page.wait_for_load_state("networkidle", timeout=5000)
     except Exception as e:
         url_after = page.url
         if url_after != url_before:

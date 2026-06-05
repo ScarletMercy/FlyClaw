@@ -621,7 +621,7 @@ wheels = [
 
 [[package]]
 name = "flyclaw"
-version = "2026.6.4"
+version = "2026.6.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },

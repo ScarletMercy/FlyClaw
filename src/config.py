@@ -152,7 +152,6 @@ class SessionConfig(BaseModel):
 
 class ExecToolConfig(BaseModel):
     enabled: bool = True
-    timeout_seconds: int = 30
     no_output_timeout_seconds: int = 60  # Kill process if no output for N seconds, 0=disabled
     require_approval: bool = False
     approval_mode: Literal["off", "ask", "on_denylist_miss", "always"] = "off"
