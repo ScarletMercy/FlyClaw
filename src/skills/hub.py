@@ -457,9 +457,6 @@ class ClawHubSource(SkillSource):
     def source_id(self) -> str:
         return "clawhub"
 
-    def trust_level_for(self, identifier: str) -> str:
-        return "community"
-
     async def search(self, query: str, limit: int = 10) -> list[SkillMeta]:
         query = query.strip()
         if query:
@@ -773,9 +770,6 @@ class UrlSource(SkillSource):
 
     def source_id(self) -> str:
         return "url"
-
-    def trust_level_for(self, identifier: str) -> str:
-        return "community"
 
     async def search(self, query: str, limit: int = 10) -> list[SkillMeta]:
         return []

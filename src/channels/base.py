@@ -57,16 +57,6 @@ class Channel(ABC):
         """Send media to a chat. media_type: 'image', 'audio', 'file'."""
         pass
 
-    @abstractmethod
-    async def send_card(
-        self,
-        chat_id: str,
-        card_content: str,
-        reply_to: Optional[str] = None,
-    ) -> Any:
-        """Send an interactive card to a chat."""
-        pass
-
     # ── Shared helpers ──────────────────────────────────────
 
     async def check_dedup(self, message_id: str) -> bool:

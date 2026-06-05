@@ -153,7 +153,6 @@ class SessionConfig(BaseModel):
 class ExecToolConfig(BaseModel):
     enabled: bool = True
     no_output_timeout_seconds: int = 60  # Kill process if no output for N seconds, 0=disabled
-    require_approval: bool = False
     approval_mode: Literal["off", "ask", "on_denylist_miss", "always"] = "off"
     deny_patterns: list[str] = []
     max_output_bytes: int = 102400
@@ -246,9 +245,6 @@ class WindowsUseConfig(BaseModel):
     """Windows desktop automation via pyautogui."""
 
     enabled: bool = True
-    screenshot_dir: str = ""
-    default_timeout: float = 5.0
-    ocr_lang: str = "ch"
 
 
 class GuardrailConfig(BaseModel):
@@ -306,16 +302,13 @@ class HubConfig(BaseModel):
     enabled: bool = True
     cache_ttl_seconds: int = 3600
     guard_enabled: bool = True
-    search_timeout_seconds: int = 30
 
 
 class CuratorConfig(BaseModel):
     enabled: bool = True
     interval_hours: int = 168
-    min_idle_hours: int = 2
     stale_after_days: int = 30
     archive_after_days: int = 90
-    max_review_iterations: int = 16
 
 
 class SkillsConfig(BaseModel):
@@ -354,7 +347,6 @@ class MemoryStoreConfig(BaseModel):
 
     enabled: bool = False
     db_path: str = "~/.flyclaw/data/memories.db"
-    workspace: str = ""
     memory_judge_model: str = ""
     memory_judge_base_url: str = ""
     memory_judge_api_key: str = ""

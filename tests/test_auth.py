@@ -279,10 +279,3 @@ class TestRBAC:
         assert rbac.check_admin_access(User(user_id="a", role=UserRole.admin)) is True
         assert rbac.check_admin_access(User(user_id="u", role=UserRole.user)) is False
         assert rbac.check_admin_access(User(user_id="g", role=UserRole.guest)) is False
-
-    def test_require_role(self, tmp_path):
-        from src.auth.models import User, UserRole
-
-        rbac, store = self._make_rbac(tmp_path)
-        assert rbac.require_role(User(user_id="a", role=UserRole.admin), UserRole.user) is True
-        assert rbac.require_role(User(user_id="g", role=UserRole.guest), UserRole.admin) is False

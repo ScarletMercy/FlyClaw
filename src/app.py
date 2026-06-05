@@ -105,10 +105,9 @@ class ServiceContainer:
             self.agent_loop._skills_prompt = build_skills_prompt(self.skills_cache)
             from src.prompt import _build_skills_section
 
-            self.agent_loop._prompt_skills = (
-                "\n".join(_build_skills_section(self.agent_loop._skills_prompt))
-                if self.agent_loop._skills_prompt
-                else ""
+            hub_on = getattr(self.config.skills.hub, "enabled", True)
+            self.agent_loop._prompt_skills = "\n".join(
+                _build_skills_section(self.agent_loop._skills_prompt, hub_enabled=hub_on)
             )
         if self.dispatcher:
             self.dispatcher._reload_skills(self.skills_cache)
@@ -127,11 +126,11 @@ class ServiceContainer:
             "src.tools.cron_tools",
             "src.tools.media_understanding_tools",
             "src.tools.session_search_tools",
+            "src.skills.manager",
             "src.tools.web_tools",
             "src.tools.tts_tools",
             "src.tools.memory_tools",
             "src.tools.task_tools",
-            "src.skills.manager",
             "src.agents.delegate",
         ]
         if getattr(self.config.tools, "browser", None) and self.config.tools.browser.enabled:

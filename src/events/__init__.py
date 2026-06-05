@@ -27,14 +27,6 @@ def get_hook_manager() -> HookManager:
     return _hook_manager
 
 
-def reset_event_bus() -> EventBus:
-    """Reset the global event bus (for testing)."""
-    global _bus, _hook_manager
-    _bus = EventBus()
-    _hook_manager = HookManager(_bus)
-    return _bus
-
-
 def subscribe(event: str, handler, priority: int = 0):
     """Subscribe a handler to an event on the global bus."""
     return get_event_bus().subscribe(event, handler, priority)
@@ -70,7 +62,6 @@ __all__ = [
     "emit_async",
     "get_event_bus",
     "get_hook_manager",
-    "reset_event_bus",
     "subscribe",
     "subscribe_async",
     "unsubscribe",

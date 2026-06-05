@@ -124,10 +124,9 @@ class ReloadExecutor:
 
             from src.prompt import _build_skills_section
 
-            self._app.agent_loop._prompt_skills = (
-                "\n".join(_build_skills_section(self._app.agent_loop._skills_prompt))
-                if self._app.agent_loop._skills_prompt
-                else ""
+            hub_on = getattr(self._app.config.skills.hub, "enabled", True)
+            self._app.agent_loop._prompt_skills = "\n".join(
+                _build_skills_section(self._app.agent_loop._skills_prompt, hub_enabled=hub_on)
             )
 
             # Update CommandDispatcher with new skills

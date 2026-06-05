@@ -489,7 +489,8 @@ class QQChannel(Channel):
         self._ws_client: Optional[_QQWebSocketClient] = None
         self._http_client: Optional[httpx.AsyncClient] = None
         self._seq_counter = 0
-        self._typing_unsupported = False
+        self._typing_disabled = False  # Circuit breaker: disable typing after consecutive failures
+        self._typing_fail_count = 0
         # Typing indicator state: {chat_id -> Task}
         self._typing_tasks: dict[str, asyncio.Task] = {}
         self._mu_runner = None  # Media understanding runner for audio transcription
@@ -915,7 +916,7 @@ class QQChannel(Channel):
         msg_id: str | None = None,
     ) -> bool:
         """Send typing indicator for C2C chat via input_notify API."""
-        if self._typing_unsupported:
+        if self._typing_disabled:
             return False
         kind, target = _parse_chat_id(chat_id)
         if kind != "c2c":
@@ -940,7 +941,12 @@ class QQChannel(Channel):
                 description="QQ typing notify",
             )
             if result is None:
+                self._typing_fail_count += 1
+                if self._typing_fail_count >= 3:
+                    self._typing_disabled = True
+                    logger.debug("QQ typing API failed %d times, disabled for this session", self._typing_fail_count)
                 return False
+            self._typing_fail_count = 0
             return True
         except Exception as e:
             logger.debug("QQ typing error: %s", e)
@@ -1199,41 +1205,6 @@ class QQChannel(Channel):
             return await self._send_message(chat_id, file_key) is not None
         return False
 
-    async def send_card(
-        self,
-        chat_id: str,
-        card_content: str,
-        reply_to: Optional[str] = None,
-    ) -> Any:
-        """Send card content. Uses markdown if supported, otherwise plain text."""
-        text = card_content
-        try:
-            data = json.loads(card_content)
-            if isinstance(data, dict):
-                elements = []
-                for elem in data.get("elements", []):
-                    if "content" in elem:
-                        elements.append(elem["content"])
-                    elif "text" in elem:
-                        elements.append(elem["text"].get("content", str(elem["text"])))
-                if elements:
-                    text = "\n".join(elements)
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-        if self.config.markdown_support:
-            kind, _ = _parse_chat_id(chat_id)
-            if kind in ("c2c", "group"):
-                return await self._send_message(
-                    chat_id,
-                    text,
-                    reply_to=reply_to,
-                    msg_type=2,
-                    markdown={"content": text},
-                )
-
-        return await self.send_text(chat_id, text, reply_to)
-
     # --- Approval keyboard ---
 
     async def send_approval_keyboard(
@@ -1337,5 +1308,3 @@ class QQChannel(Channel):
             markdown={"content": md_content},
             keyboard=keyboard,
         )
-
-    # --- Helpers ---

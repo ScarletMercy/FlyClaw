@@ -194,28 +194,47 @@ def _build_safety() -> list[str]:
     ]
 
 
-def _build_skills_section(skills_prompt: str) -> list[str]:
+def _build_skills_section(skills_prompt: str, hub_enabled: bool = True) -> list[str]:
     trimmed = skills_prompt.strip()
-    if not trimmed:
-        return []
-    return [
-        "## 可用技能",
-        "以下是可用的专业技能：\n",
-        trimmed,
-        "",
-        "### 使用方式",
-        "1. **发现**：浏览上方技能列表，根据描述判断是否有匹配用户需求的技能。",
-        '2. **加载**：当用户请求匹配某个技能时，用 skill_view(name="技能名") 加载完整指令。如果技能有问题，用 skill_manage(action="patch") 修补。',
-        "3. **执行**：遵循技能指令完成任务。技能可能包含 scripts 目录下的脚本，可用 exec_command 执行。",
-        "",
-        "如果没有匹配的技能，不要调用任何技能工具（skill_view/skill_manage/skill_hub）。不要用 read_file 读取技能文件。",
-        '如果本地技能都不适用，用 skill_hub(action="search_hub", query="...") 搜索远程技能库。',
-        '搜索到合适的技能后，用 skill_hub(action="inspect_hub", identifier="...") 查看详情，确认后用 skill_hub(action="install_hub", identifier="...") 安装。',
-        '当用户发送了 skill 压缩包文件时，先保存到本地，再用 skill_hub(action="install", source="保存路径") 安装。',
-        "注意：如果 search_hub/inspect_hub/install_hub 返回 'Hub is disabled in configuration'，说明远程技能库已禁用，只能使用本地技能。",
+    has_local = bool(trimmed)
+
+    lines: list[str] = []
+
+    # ── 本地技能列表（仅在有技能时显示）──
+    if has_local:
+        lines += [
+            "## 可用技能",
+            "以下是可用的专业技能：\n",
+            trimmed,
+            "",
+            "### 本地技能使用方式",
+            "1. **发现**：浏览上方技能列表，根据描述判断是否有匹配用户需求的技能。",
+            '2. **加载**：当用户请求匹配某个技能时，用 skill_view(name="技能名") 加载完整指令。如果技能有问题，用 skill_manage(action="patch") 修补。',
+            "3. **执行**：遵循技能指令完成任务。技能可能包含 scripts 目录下的脚本，可用 exec_command 执行。",
+            "",
+            "如果没有匹配的本地技能，不要调用 skill_view 或 skill_manage（它们只用于已安装的本地技能）。不要用 read_file 读取技能文件。",
+            "",
+        ]
+
+    # ── 远程技能库引导（始终显示）──
+    if hub_enabled:
+        lines += [
+            "## 远程技能库",
+            "当需要安装新技能或本地技能不适用时，**必须使用 skill_hub 工具**（不要用 web_fetch/web_search 替代）：",
+            '1. **搜索**：skill_hub(action="search_hub", query="关键词")',
+            '2. **查看详情**：skill_hub(action="inspect_hub", identifier="标识符")',
+            '3. **安装**：skill_hub(action="install_hub", identifier="标识符")',
+            '4. **从文件安装**：用户发送 skill 压缩包时，先保存到本地，再用 skill_hub(action="install", source="保存路径")。',
+            "注意：如果 search_hub/inspect_hub/install_hub 返回 'Hub is disabled in configuration'，说明远程技能库已禁用。",
+            "",
+        ]
+
+    lines += [
         "限制：最多加载一个技能；仅在选定后加载。完成困难任务后，主动提出保存为技能。",
         "",
     ]
+
+    return lines
 
 
 def _build_workspace(workspace_dir: str) -> list[str]:

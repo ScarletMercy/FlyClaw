@@ -115,14 +115,6 @@ class RBAC:
                 )
         return filtered
 
-    def require_role(self, user: User, minimum_role: UserRole) -> bool:
-        """Check if user has at least the minimum required role."""
-        from src.auth.models import ROLE_HIERARCHY
-
-        user_level = ROLE_HIERARCHY.get(user.role, 0)
-        required_level = ROLE_HIERARCHY.get(minimum_role, 0)
-        return user_level >= required_level
-
 
 # ── Module-level singleton — delegates to ServiceContainer ──
 

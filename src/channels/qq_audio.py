@@ -18,8 +18,6 @@ import aiofiles
 
 logger = logging.getLogger("flyclaw.channels.qq_audio")
 
-_VOICE_EXTENSIONS = frozenset({".silk", ".amr", ".mp3", ".wav", ".ogg", ".m4a", ".aac", ".speex", ".flac"})
-
 
 def guess_audio_ext(data: bytes) -> str:
     if data[:9] == b"#!SILK_V3" or data[:5] == b"#!SILK":

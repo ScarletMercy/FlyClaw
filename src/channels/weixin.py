@@ -60,8 +60,6 @@ ILINK_APP_CLIENT_VERSION = (2 << 16) | (2 << 8) | 0
 
 EP_GET_UPDATES = "ilink/bot/getupdates"
 EP_SEND_MESSAGE = "ilink/bot/sendmessage"
-EP_SEND_TYPING = "ilink/bot/sendtyping"
-EP_GET_CONFIG = "ilink/bot/getconfig"
 EP_GET_UPLOAD_URL = "ilink/bot/getuploadurl"
 EP_GET_BOT_QR = "ilink/bot/get_bot_qrcode"
 EP_GET_QR_STATUS = "ilink/bot/get_qrcode_status"
@@ -95,9 +93,6 @@ ITEM_VIDEO = 5
 MSG_TYPE_USER = 1
 MSG_TYPE_BOT = 2
 MSG_STATE_FINISH = 2
-
-TYPING_START = 1
-TYPING_STOP = 2
 
 _HEADER_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _TABLE_RULE_RE = re.compile(r"^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$")
@@ -414,26 +409,6 @@ async def _api_post(
         return json.loads(raw)
 
 
-async def _api_get(
-    session: aiohttp.ClientSession,
-    *,
-    base_url: str,
-    endpoint: str,
-    timeout_ms: int,
-) -> dict[str, Any]:
-    url = f"{base_url.rstrip('/')}/{endpoint}"
-    hdrs = {
-        "iLink-App-Id": ILINK_APP_ID,
-        "iLink-App-ClientVersion": str(ILINK_APP_CLIENT_VERSION),
-    }
-    timeout = aiohttp.ClientTimeout(total=timeout_ms / 1000)
-    async with session.get(url, headers=hdrs, timeout=timeout) as response:
-        raw = await response.text()
-        if not response.ok:
-            raise RuntimeError(f"iLink GET {endpoint} HTTP {response.status}: {raw[:200]}")
-        return json.loads(raw)
-
-
 async def _get_updates(
     session: aiohttp.ClientSession,
     *,
@@ -484,50 +459,6 @@ async def _send_message_api(
         payload={"msg": message},
         token=token,
         timeout_ms=API_TIMEOUT_MS,
-    )
-
-
-async def _send_typing_api(
-    session: aiohttp.ClientSession,
-    *,
-    base_url: str,
-    token: str,
-    to_user_id: str,
-    typing_ticket: str,
-    status: int,
-) -> None:
-    await _api_post(
-        session,
-        base_url=base_url,
-        endpoint=EP_SEND_TYPING,
-        payload={
-            "ilink_user_id": to_user_id,
-            "typing_ticket": typing_ticket,
-            "status": status,
-        },
-        token=token,
-        timeout_ms=CONFIG_TIMEOUT_MS,
-    )
-
-
-async def _get_config_api(
-    session: aiohttp.ClientSession,
-    *,
-    base_url: str,
-    token: str,
-    user_id: str,
-    context_token: Optional[str],
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {"ilink_user_id": user_id}
-    if context_token:
-        payload["context_token"] = context_token
-    return await _api_post(
-        session,
-        base_url=base_url,
-        endpoint=EP_GET_CONFIG,
-        payload=payload,
-        token=token,
-        timeout_ms=CONFIG_TIMEOUT_MS,
     )
 
 
@@ -932,24 +863,6 @@ class ContextTokenStore:
             logger.warning("weixin: failed to persist context tokens for %s: %s", _safe_id(account_id), exc)
 
 
-class TypingTicketCache:
-    def __init__(self, ttl_seconds: float = 600.0):
-        self._ttl_seconds = ttl_seconds
-        self._cache: dict[str, tuple[str, float]] = {}
-
-    def get(self, user_id: str) -> Optional[str]:
-        entry = self._cache.get(user_id)
-        if not entry:
-            return None
-        if time.time() - entry[1] >= self._ttl_seconds:
-            self._cache.pop(user_id, None)
-            return None
-        return entry[0]
-
-    def set(self, user_id: str, ticket: str) -> None:
-        self._cache[user_id] = (ticket, time.time())
-
-
 # ── WeixinChannel ─────────────────────────────────────────────────────────
 
 
@@ -963,7 +876,6 @@ class WeixinChannel(Channel):
         self._running = False
         self._on_message_callback: Optional[Callable] = None
         self._token_store = ContextTokenStore()
-        self._typing_cache = TypingTicketCache()
         self._poll_session: Optional[aiohttp.ClientSession] = None
         self._send_session: Optional[aiohttp.ClientSession] = None
         self._poll_task: Optional[asyncio.Task] = None
@@ -1108,59 +1020,6 @@ class WeixinChannel(Channel):
         except Exception as exc:
             logger.error("weixin send_media failed to=%s: %s", _safe_id(chat_id), exc)
             return False
-
-    async def send_card(self, chat_id: str, card_content: str, reply_to: Optional[str] = None) -> Any:
-        text = card_content
-        try:
-            data = json.loads(card_content)
-            if isinstance(data, dict):
-                elements = []
-                for elem in data.get("elements", []):
-                    if "content" in elem:
-                        elements.append(elem["content"])
-                    elif "text" in elem:
-                        elements.append(elem["text"].get("content", str(elem["text"])))
-                if elements:
-                    text = "\n".join(elements)
-        except (json.JSONDecodeError, TypeError):
-            pass
-        return await self.send_text(chat_id, text, reply_to)
-
-    async def send_typing(self, chat_id: str) -> None:
-        if not self._send_session or not self._token:
-            return
-        typing_ticket = self._typing_cache.get(chat_id)
-        if not typing_ticket:
-            return
-        try:
-            await _send_typing_api(
-                self._send_session,
-                base_url=self._base_url,
-                token=self._token,
-                to_user_id=chat_id,
-                typing_ticket=typing_ticket,
-                status=TYPING_START,
-            )
-        except Exception as exc:
-            logger.debug("weixin typing start failed for %s: %s", _safe_id(chat_id), exc)
-
-    async def stop_typing(self, chat_id: str) -> None:
-        if not self._send_session or not self._token:
-            return
-        typing_ticket = self._typing_cache.get(chat_id)
-        if not typing_ticket:
-            return
-        try:
-            await _send_typing_api(
-                self._send_session,
-                base_url=self._base_url,
-                token=self._token,
-                to_user_id=chat_id,
-                typing_ticket=typing_ticket,
-                status=TYPING_STOP,
-            )
-        except Exception as exc:
-            logger.debug("weixin typing stop failed for %s: %s", _safe_id(chat_id), exc)
 
     def _spawn_task(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
@@ -1310,7 +1169,6 @@ class WeixinChannel(Channel):
         context_token = str(message.get("context_token") or "").strip()
         if context_token:
             await self._token_store.set(self._account_id, sender_id, context_token)
-        self._spawn_task(self._maybe_fetch_typing_ticket(sender_id, context_token or None))
 
         media_paths: list[str] = []
         media_mimes: list[str] = []
@@ -1347,25 +1205,6 @@ class WeixinChannel(Channel):
             message_id=message_id or "",
             reply_fn=reply_fn,
         )
-
-    async def _maybe_fetch_typing_ticket(self, user_id: str, context_token: Optional[str]) -> None:
-        if not self._poll_session or not self._token:
-            return
-        if self._typing_cache.get(user_id):
-            return
-        try:
-            response = await _get_config_api(
-                self._poll_session,
-                base_url=self._base_url,
-                token=self._token,
-                user_id=user_id,
-                context_token=context_token,
-            )
-            typing_ticket = str(response.get("typing_ticket") or "")
-            if typing_ticket:
-                self._typing_cache.set(user_id, typing_ticket)
-        except Exception as exc:
-            logger.debug("weixin: getConfig failed for %s: %s", _safe_id(user_id), exc)
 
     async def _collect_media(self, item: dict[str, Any], media_paths: list[str], media_mimes: list[str]) -> None:
         item_type = item.get("type")

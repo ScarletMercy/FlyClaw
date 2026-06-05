@@ -873,7 +873,8 @@ class AgentLoop:
         self._prompt_tool_rules = "\n".join(_build_tooling_rules(tools))
         self._prompt_tool_guidance = "\n".join(_build_tool_index(tools))
         self._prompt_safety = "\n".join(_build_safety())
-        self._prompt_skills = "\n".join(_build_skills_section(skills_prompt)) if skills_prompt else ""
+        hub_on = bool(self._config and getattr(self._config.skills.hub, "enabled", True))
+        self._prompt_skills = "\n".join(_build_skills_section(skills_prompt, hub_enabled=hub_on))
         self._prompt_workspace = "\n".join(_build_workspace(workspace_dir))
         self._prompt_bootstrap = "\n".join(_build_bootstrap_context(self._context_files)) if self._context_files else ""
         self._prompt_platform_cache: dict[str, str] = {}

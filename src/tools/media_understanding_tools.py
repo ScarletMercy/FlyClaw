@@ -58,6 +58,31 @@ async def _resolve_media_input(source: str, default_mime: str) -> tuple[bytes, s
     return resp.content, mime_type
 
 
+_AUDIO_EXTENSIONS = frozenset(
+    {".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac", ".wma", ".opus", ".silk", ".amr", ".speex"}
+)
+
+
+def _guess_is_audio(source: str) -> bool:
+    """Quick check whether a source looks like audio without downloading it."""
+    # data: URL — check MIME part
+    if source.startswith("data:"):
+        try:
+            header = source.split(",", 1)[0]
+            mime = header.split(":", 1)[1].split(";")[0]
+            return mime.startswith("audio/")
+        except (IndexError, ValueError):
+            return False
+
+    # Local file — check extension
+    parsed = urlparse(source)
+    if not parsed.scheme or (len(parsed.scheme) == 1 and parsed.scheme.isalpha()):
+        return Path(source).suffix.lower() in _AUDIO_EXTENSIONS
+
+    # Remote URL — check extension from path
+    return Path(parsed.path).suffix.lower() in _AUDIO_EXTENSIONS
+
+
 async def describe_media(media_url: str) -> str:
     """Describe/analyze an image or video. Provide a URL, a data: base64 URL, or a local file path.
 
@@ -69,6 +94,10 @@ async def describe_media(media_url: str) -> str:
         return "[error] Media understanding not enabled. Set tools.media_understanding.enabled: true in config."
 
     try:
+        # Early rejection: skip downloading audio files entirely
+        if _guess_is_audio(media_url):
+            return "[error] Audio files are not supported by describe_media."
+
         data, mime_type = await _resolve_media_input(media_url, "image/png")
 
         from src.media_understanding.types import MediaCapability
@@ -76,7 +105,7 @@ async def describe_media(media_url: str) -> str:
 
         capability = MediaUnderstandingRunner.guess_capability_from_mime(mime_type) or MediaCapability.IMAGE
         if capability == MediaCapability.AUDIO:
-            capability = MediaCapability.IMAGE
+            return "[error] Audio files are not supported by describe_media."
 
         result = await runner.understand(data, capability, mime_type=mime_type)
         if result.error:

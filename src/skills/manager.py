@@ -978,10 +978,9 @@ async def _reload_skills(container) -> None:
     container.skills_cache = skills
     if container.agent_loop:
         container.agent_loop._skills_prompt = build_skills_prompt(skills)
-        container.agent_loop._prompt_skills = (
-            "\n".join(_build_skills_section(container.agent_loop._skills_prompt))
-            if container.agent_loop._skills_prompt
-            else ""
+        hub_on = getattr(container.config.skills.hub, "enabled", True)
+        container.agent_loop._prompt_skills = "\n".join(
+            _build_skills_section(container.agent_loop._skills_prompt, hub_enabled=hub_on)
         )
     dispatcher = getattr(container, "dispatcher", None)
     if dispatcher is not None:

@@ -62,16 +62,6 @@ class ToolDef:
         parameters = _extract_parameters(fn)
         return cls(name=tool_name, description=description, parameters=parameters, fn=fn)
 
-    @classmethod
-    def from_schema(
-        cls,
-        name: str,
-        description: str,
-        parameters: dict[str, Any],
-        fn: Callable,
-    ) -> ToolDef:
-        return cls(name=name, description=description, parameters=parameters, fn=fn)
-
 
 def _extract_description(fn: Callable) -> str:
     doc = fn.__doc__
