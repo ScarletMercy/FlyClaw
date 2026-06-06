@@ -158,6 +158,14 @@ class ReloadExecutor:
         app = self._app
         config = app.config
 
+        # 重置 memory_tools 模块级单例，使 get_memory_store() 返回新实例
+        try:
+            from src.tools.memory_tools import reset_memory_store
+
+            await reset_memory_store()
+        except Exception:
+            pass
+
         # 关闭旧的
         if app.memory_searcher:
             try:
@@ -210,6 +218,11 @@ class ReloadExecutor:
 
             app.memory_searcher = MemorySearcher(store, embeddings, config.memory)
             store = None  # 所有权已转移给 MemorySearcher，不再需要清理
+
+            # 清空 agent_loop 的记忆摘要缓存
+            if app.agent_loop:
+                app.agent_loop.invalidate_memory_cache()
+
             logger.info("Memory system reloaded")
         except Exception as e:
             # 清理已初始化但未移交的 store
@@ -222,6 +235,11 @@ class ReloadExecutor:
             raise
 
     async def _do_reload_security(self):
+        # 重置 url_safety 模块级缓存，使 allow_private_urls 变更立即生效
+        from src.security.url_safety import reset_cache
+
+        reset_cache()
+
         config = self._app.config.security
         logger.info(
             "Security config reloaded: enabled=%s, audit_on_startup=%s, allow_private_urls=%s",

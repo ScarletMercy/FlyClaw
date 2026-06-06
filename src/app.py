@@ -803,6 +803,11 @@ class ServiceContainer:
         # Phase 2: 执行子系统级重载
         result = await self._reload_executor.execute(plan)
 
-        # 如果有关键 handler 失败，抛异常让 ConfigWatcher 不提交状态
+        # handler 失败已由 execute() 逐个记录。不抛异常 —
+        # 抛异常会导致 ConfigWatcher 不提交 hash，造成 split-brain
+        # （Phase 1 已完成，无法安全回滚）。
         if result and result.get("failed"):
-            raise RuntimeError(f"Reload actions failed: {result['failed']}")
+            logger.warning(
+                "部分 reload handler 失败: %s — config 已提交，这些子系统可能需要手动重启",
+                result["failed"],
+            )

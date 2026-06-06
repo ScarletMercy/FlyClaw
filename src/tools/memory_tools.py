@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -84,6 +85,7 @@ _CATEGORY_PREFIX_RE = re.compile(r"^\[(\w+)\]\s*")
 
 store: MemoryStore | None = None
 _store_initialized: bool = False
+_store_lock: asyncio.Lock = asyncio.Lock()
 
 
 class MemoryStore:
@@ -251,12 +253,31 @@ class MemoryStore:
 
 async def get_memory_store(db_path: str = "~/.flyclaw/data/memories.db") -> MemoryStore:
     global store, _store_initialized
-    if store is None:
-        store = MemoryStore(db_path)
-    if not _store_initialized:
+    if _store_initialized:
+        return store
+    async with _store_lock:
+        if _store_initialized:
+            return store
+        if store is None:
+            store = MemoryStore(db_path)
         await store.initialize()
         _store_initialized = True
     return store
+
+
+async def reset_memory_store() -> None:
+    """关闭并重置模块级 MemoryStore 单例（供热重载调用）。
+
+    调用后下次 get_memory_store() 将用新的 db_path 创建实例。
+    """
+    global store, _store_initialized
+    if store is not None:
+        try:
+            await store.close()
+        except Exception:
+            pass
+    store = None
+    _store_initialized = False
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +289,8 @@ def auto_extract_memory(user_input: str, ai_response: str) -> Optional[tuple[str
     """从用户输入中提取值得记忆的事实片段。
 
     匹配到模式后，只返回包含匹配的句子/分句，而非全文。
+
+    Note: ai_response 参数当前未使用，保留供未来扩展。
     """
     if not user_input or len(user_input.strip()) < 4:
         return None
@@ -394,6 +417,8 @@ async def judge_memory_with_llm(
     except Exception as e:
         logger.debug("Memory judge error: %s", e)
         return None
+    finally:
+        await model.close()
 
 
 # ---------------------------------------------------------------------------
