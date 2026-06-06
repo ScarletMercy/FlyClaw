@@ -20,6 +20,58 @@ _MAX_REGEX_LENGTH = 500
 _GREP_TIMEOUT = 30.0
 
 
+_skill_ref_dirs_cache: list | None = None
+
+
+def _collect_skill_reference_dirs() -> list:
+    """Return resolved paths of references/ dirs under each skill directory."""
+    global _skill_ref_dirs_cache
+    if _skill_ref_dirs_cache is not None:
+        return _skill_ref_dirs_cache
+    try:
+        from src._container import get_container
+
+        container = get_container()
+        dirs = []
+        for _, skill_dir in container._build_skill_directories():
+            ref = (Path(skill_dir) / "references").resolve()
+            if ref.is_dir():
+                dirs.append(ref)
+        _skill_ref_dirs_cache = dirs
+        return dirs
+    except Exception:
+        return []
+
+
+def _try_skill_ref_readonly(path: str) -> str | None:
+    """If *path* falls under a skill references/ dir, return resolved abs path; else None."""
+    p = Path(path)
+    try:
+        if p.is_absolute():
+            candidates = [p.resolve(strict=False)]
+        else:
+            real = (Path(_BASE_DIR).resolve() / p).resolve(strict=False)
+            candidates = [real]
+            # POSIX correction: AI may drop leading '/' on Linux (mirrors _resolve_path
+            # heuristic but without workspace-only constraint so user-skill refs work).
+            if os.name == "posix" and not real.exists():
+                try:
+                    candidates.append((Path("/") / p).resolve(strict=False))
+                except (ValueError, OSError):
+                    pass
+    except OSError:
+        return None
+    ref_dirs = _collect_skill_reference_dirs()
+    for c in candidates:
+        for ref_dir in ref_dirs:
+            try:
+                c.relative_to(ref_dir)
+                return str(c)
+            except ValueError:
+                continue
+    return None
+
+
 def _validate_regex(pattern: str):
     """编译正则并检查安全性。返回 re.Pattern 或错误字符串。"""
     if len(pattern) > _MAX_REGEX_LENGTH:
@@ -84,6 +136,7 @@ def _resolve_path(path: str) -> str:
             return str(real)
         except ValueError:
             continue
+
     raise ValueError(f"当前为沙盒模式，无法访问工作目录之外的路径：{path}（允许范围：{_BASE_DIR}、{cache_root}）")
 
 
@@ -113,8 +166,16 @@ async def read_file(path: str, offset: int = 0, head_limit: int = 500) -> str:
     """
     try:
         resolved = _resolve_path(path)
-    except ValueError as e:
-        return f"Error: {e}"
+    except ValueError as sandbox_err:
+        # _resolve_path blocked the path — try skill references/ as read-only exception
+        from src.tools.exec import is_sandbox_enabled
+
+        if is_sandbox_enabled():
+            resolved = _try_skill_ref_readonly(path)
+            if resolved is None:
+                return f"Error: {sandbox_err}"
+        else:
+            return f"Error: {sandbox_err}"
 
     try:
         ext = os.path.splitext(resolved)[1].lower()
@@ -237,7 +298,14 @@ async def list_dir(path: str = ".") -> str:
     try:
         resolved = _resolve_path(path)
     except ValueError as e:
-        return f"Error: {e}"
+        from src.tools.exec import is_sandbox_enabled
+
+        if is_sandbox_enabled():
+            resolved = _try_skill_ref_readonly(path)
+            if resolved is None:
+                return f"Error: {e}"
+        else:
+            return f"Error: {e}"
     try:
         entries = sorted(await aiofiles.os.listdir(resolved))
         if not entries:
@@ -398,7 +466,14 @@ async def _grep_impl(
     try:
         resolved = _resolve_path(path)
     except ValueError as e:
-        return f"Error: {e}"
+        from src.tools.exec import is_sandbox_enabled
+
+        if is_sandbox_enabled():
+            resolved = _try_skill_ref_readonly(path)
+            if resolved is None:
+                return f"Error: {e}"
+        else:
+            return f"Error: {e}"
     if not await aiofiles.os.path.exists(resolved):
         return await _path_not_found_hint(path, resolved)
 
@@ -560,7 +635,14 @@ async def _glob_impl(pattern: str, path: str = ".", head_limit: int = 50, offset
     try:
         resolved = _resolve_path(path)
     except ValueError as e:
-        return f"Error: {e}"
+        from src.tools.exec import is_sandbox_enabled
+
+        if is_sandbox_enabled():
+            resolved = _try_skill_ref_readonly(path)
+            if resolved is None:
+                return f"Error: {e}"
+        else:
+            return f"Error: {e}"
     if not await aiofiles.os.path.exists(resolved):
         return await _path_not_found_hint(path, resolved)
     if not await aiofiles.os.path.isdir(resolved):

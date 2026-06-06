@@ -491,6 +491,9 @@ class QQChannel(Channel):
         self._seq_counter = 0
         self._typing_disabled = False  # Circuit breaker: disable typing after consecutive failures
         self._typing_fail_count = 0
+        self._typing_disabled_since: float = 0.0  # monotonic timestamp when disabled
+        self._typing_cooldown: float = 300.0  # seconds before retry probe is allowed
+        self._typing_probing = False  # True while a half-open probe is in-flight
         # Typing indicator state: {chat_id -> Task}
         self._typing_tasks: dict[str, asyncio.Task] = {}
         self._mu_runner = None  # Media understanding runner for audio transcription
@@ -917,12 +920,25 @@ class QQChannel(Channel):
     ) -> bool:
         """Send typing indicator for C2C chat via input_notify API."""
         if self._typing_disabled:
-            return False
+            if self._typing_probing:
+                return False  # another task is already probing
+            if _time.monotonic() - self._typing_disabled_since < self._typing_cooldown:
+                return False
+            # Half-open: allow exactly one probe; _typing_disabled stays True
+            # until the probe succeeds so other tasks remain blocked.
+            self._typing_fail_count = 0
+            logger.debug("QQ typing circuit breaker: cooldown elapsed, probing")
+            should_probe = True
+        else:
+            should_probe = False
         kind, target = _parse_chat_id(chat_id)
         if kind != "c2c":
             return False
         if not self._http_client or not self._token_manager:
             return False
+        # Past all early returns — claim the probe slot (no await above, so atomic)
+        if should_probe:
+            self._typing_probing = True
         try:
             self._seq_counter = (self._seq_counter + 1) % _MSG_SEQ_MAX
             body: dict = {
@@ -944,13 +960,25 @@ class QQChannel(Channel):
                 self._typing_fail_count += 1
                 if self._typing_fail_count >= 3:
                     self._typing_disabled = True
-                    logger.debug("QQ typing API failed %d times, disabled for this session", self._typing_fail_count)
+                    self._typing_disabled_since = _time.monotonic()
+                    logger.debug(
+                        "QQ typing API failed %d times, disabled for %ds",
+                        self._typing_fail_count,
+                        int(self._typing_cooldown),
+                    )
+                elif should_probe:
+                    # Probe failed below threshold — back off for another cooldown
+                    self._typing_disabled_since = _time.monotonic()
                 return False
             self._typing_fail_count = 0
+            if should_probe:
+                self._typing_disabled = False  # probe succeeded → open circuit
             return True
         except Exception as e:
             logger.debug("QQ typing error: %s", e)
             return False
+        finally:
+            self._typing_probing = False
 
     async def _typing_loop(self, chat_id: str, msg_id: str | None = None):
         """Send typing indicator every 50 seconds (QQ timeout is 60s)."""

@@ -102,6 +102,12 @@ class ReloadExecutor:
 
         reset_config_cache()
         web_tools._cached_api_key = None
+
+        # Invalidate skill reference directory cache so newly discovered skills'
+        # references/ dirs become accessible after hot-reload.
+        import src.tools.file_tools as _ft
+
+        _ft._skill_ref_dirs_cache = None
         old_client = web_tools._tavily_client
         web_tools._tavily_client = None
         if old_client is not None:
