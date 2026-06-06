@@ -158,27 +158,26 @@ class ReloadExecutor:
         app = self._app
         config = app.config
 
-        # 重置 memory_tools 模块级单例，使 get_memory_store() 返回新实例
-        try:
-            from src.tools.memory_tools import reset_memory_store
-
-            await reset_memory_store()
-        except Exception:
-            pass
-
-        # 关闭旧的
-        if app.memory_searcher:
+        if not (getattr(config, "memory", None) and config.memory.enabled):
+            # Memory disabled — clean up old components first, then reset singleton
+            if app.memory_searcher:
+                try:
+                    await app.memory_searcher.close()
+                except Exception:
+                    pass
+                app.memory_searcher = None
             try:
-                await app.memory_searcher.close()
+                from src.tools.memory_tools import reset_memory_store
+
+                await reset_memory_store()
             except Exception:
                 pass
-            app.memory_searcher = None
-
-        if not (getattr(config, "memory", None) and config.memory.enabled):
             logger.info("Memory system disabled after reload")
             return
 
+        # --- Build new components BEFORE tearing down old ones ---
         store = None
+        new_searcher = None
         try:
             from src.memory.search import MemorySearcher
 
@@ -216,8 +215,28 @@ class ReloadExecutor:
                 except Exception as e:
                     logger.warning("Embedding provider init failed, using FTS5-only: %s", e)
 
-            app.memory_searcher = MemorySearcher(store, embeddings, config.memory)
+            new_searcher = MemorySearcher(store, embeddings, config.memory)
             store = None  # 所有权已转移给 MemorySearcher，不再需要清理
+
+            # --- Atomic swap: install new, tear down old ---
+            old_searcher = app.memory_searcher
+            app.memory_searcher = new_searcher
+            new_searcher = None  # ownership transferred
+
+            # Reset module-level singleton so future get_memory_store() creates fresh instance
+            try:
+                from src.tools.memory_tools import reset_memory_store
+
+                await reset_memory_store()
+            except Exception:
+                pass
+
+            # Close old searcher AFTER swap
+            if old_searcher:
+                try:
+                    await old_searcher.close()
+                except Exception:
+                    pass
 
             # 清空 agent_loop 的记忆摘要缓存
             if app.agent_loop:
@@ -225,7 +244,12 @@ class ReloadExecutor:
 
             logger.info("Memory system reloaded")
         except Exception as e:
-            # 清理已初始化但未移交的 store
+            # 清理已初始化但未移交的组件
+            if new_searcher is not None:
+                try:
+                    await new_searcher.close()
+                except Exception:
+                    pass
             if store is not None:
                 try:
                     await store.close()

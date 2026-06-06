@@ -96,7 +96,9 @@ class TestReloadAuth:
 
 class TestRequiresRestart:
     @pytest.mark.asyncio
-    async def test_requires_restart_skips_all_actions(self):
+    async def test_requires_restart_still_runs_actions(self):
+        """Bug #4 fix: hot-reloadable actions still execute even when
+        requires_restart=True, so that mixed changes get partially applied."""
         app = _make_app()
         executor = ReloadExecutor(app)
         plan = ReloadPlan(
@@ -107,11 +109,8 @@ class TestRequiresRestart:
             requires_restart=True,
         )
 
-        with (
-            patch("src.agent.client.create_chain") as mock_chain,
-            patch("src.tools.registry.get_tool_registry") as mock_reg,
-        ):
+        with patch("src.agent.client.create_chain") as mock_chain:
             await executor.execute(plan)
 
-        mock_chain.assert_not_called()
-        mock_reg.assert_not_called()
+        mock_chain.assert_called_once()
+        app._collect_builtin_tools.assert_called_once()

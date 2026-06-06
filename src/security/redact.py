@@ -36,19 +36,34 @@ _MD_INLINE_RE = re.compile(r"(?<!`)(`[^`\n]+`)(?!`)")
 
 
 def _protect_markdown(text: str) -> tuple[str, dict[str, str]]:
-    """Replace markdown code blocks and inline code with placeholders."""
+    """Replace markdown code blocks and inline code with placeholders.
+
+    Credentials inside code regions are still redacted — only the structural
+    delimiters (backticks, fences) are preserved so the markdown remains valid.
+    """
     placeholders: dict[str, str] = {}
     idx = 0
 
-    def _sub(m: re.Match) -> str:
+    def _sub_fence(m: re.Match) -> str:
         nonlocal idx
         key = f"{NULL}MKD{idx}{NULL}"
         idx += 1
-        placeholders[key] = m.group(0)
+        # Redact credentials inside the code block body, keep fence delimiters
+        opener, body, closer = m.group(1), m.group(2), m.group(3)
+        placeholders[key] = opener + _redact_credentials_only(body) + closer
         return key
 
-    text = _MD_FENCE_BLOCK_RE.sub(_sub, text)
-    text = _MD_INLINE_RE.sub(_sub, text)
+    def _sub_inline(m: re.Match) -> str:
+        nonlocal idx
+        key = f"{NULL}MKD{idx}{NULL}"
+        idx += 1
+        # Redact credentials inside inline code, keep backtick delimiters
+        full = m.group(0)
+        placeholders[key] = full[0] + _redact_credentials_only(full[1:-1]) + full[-1]
+        return key
+
+    text = _MD_FENCE_BLOCK_RE.sub(_sub_fence, text)
+    text = _MD_INLINE_RE.sub(_sub_inline, text)
     return text, placeholders
 
 
@@ -56,6 +71,60 @@ def _restore_markdown(text: str, placeholders: dict[str, str]) -> str:
     """Restore markdown code blocks and inline code from placeholders."""
     for key, value in placeholders.items():
         text = text.replace(key, value)
+    return text
+
+
+def _redact_credentials_only(text: str) -> str:
+    """Apply credential redaction patterns to text without markdown protection.
+
+    Used for code-block bodies where credentials should still be masked
+    but the surrounding fence structure must be preserved.
+    """
+    if not text or not isinstance(text, str):
+        return text
+
+    text = _PREFIX_RE.sub(lambda m: _mask(m.group(1)), text)
+
+    def _redact_env_quoted(m):
+        name, quote, value = m.group(1), m.group(2), m.group(3)
+        return f"{name}={quote}{_mask(value)}{quote}"
+
+    text = _ENV_QUOTED_RE.sub(_redact_env_quoted, text)
+
+    def _redact_env_unquoted(m):
+        name, value = m.group(1), m.group(2)
+        return f"{name}={_mask(value)}"
+
+    text = _ENV_UNQUOTED_RE.sub(_redact_env_unquoted, text)
+
+    def _redact_json(m):
+        key, value = m.group(1), m.group(2)
+        return f'{key}: "{_mask(value)}"'
+
+    text = _JSON_FIELD_RE.sub(_redact_json, text)
+    text = _AUTH_HEADER_RE.sub(
+        lambda m: m.group(1) + _mask(m.group(2)),
+        text,
+    )
+    text = _PRIVATE_KEY_RE.sub("[REDACTED PRIVATE KEY]", text)
+    text = _DB_CONNSTR_RE.sub(lambda m: f"{m.group(1)}***{m.group(3)}", text)
+    text = _JWT_RE.sub(lambda m: _mask(m.group(0)), text)
+    text = _URL_USERINFO_RE.sub(
+        lambda m: f"{m.group(1)}://{m.group(2)}:***@",
+        text,
+    )
+
+    def _redact_url_query(m):
+        scheme, authority, path, query, fragment = (
+            m.group(1),
+            m.group(2),
+            m.group(3),
+            m.group(4),
+            m.group(5) or "",
+        )
+        return f"{scheme}://{authority}{path}?{_redact_query_string(query)}{fragment}"
+
+    text = _URL_WITH_QUERY_RE.sub(_redact_url_query, text)
     return text
 
 
@@ -170,6 +239,7 @@ def redact(text: str) -> str:
 
     Safe to call on any string — non-matching text passes through unchanged.
     Markdown code blocks and inline code are protected from modification.
+    Credentials inside fenced code blocks are still redacted.
     """
     if not text or not isinstance(text, str):
         return text
@@ -177,63 +247,8 @@ def redact(text: str) -> str:
     # --- Protect markdown code regions from redaction ---
     text, placeholders = _protect_markdown(text)
 
-    # Known API key prefixes
-    text = _PREFIX_RE.sub(lambda m: _mask(m.group(1)), text)
-
-    # ENV assignments — quoted values (API_KEY="value")
-    def _redact_env_quoted(m):
-        name, quote, value = m.group(1), m.group(2), m.group(3)
-        return f"{name}={quote}{_mask(value)}{quote}"
-
-    text = _ENV_QUOTED_RE.sub(_redact_env_quoted, text)
-
-    # ENV assignments — unquoted values (API_KEY=value)
-    def _redact_env_unquoted(m):
-        name, value = m.group(1), m.group(2)
-        return f"{name}={_mask(value)}"
-
-    text = _ENV_UNQUOTED_RE.sub(_redact_env_unquoted, text)
-
-    # JSON fields
-    def _redact_json(m):
-        key, value = m.group(1), m.group(2)
-        return f'{key}: "{_mask(value)}"'
-
-    text = _JSON_FIELD_RE.sub(_redact_json, text)
-
-    # Authorization headers
-    text = _AUTH_HEADER_RE.sub(
-        lambda m: m.group(1) + _mask(m.group(2)),
-        text,
-    )
-
-    # Private key blocks
-    text = _PRIVATE_KEY_RE.sub("[REDACTED PRIVATE KEY]", text)
-
-    # DB connection string passwords
-    text = _DB_CONNSTR_RE.sub(lambda m: f"{m.group(1)}***{m.group(3)}", text)
-
-    # JWT tokens
-    text = _JWT_RE.sub(lambda m: _mask(m.group(0)), text)
-
-    # URL userinfo
-    text = _URL_USERINFO_RE.sub(
-        lambda m: f"{m.group(1)}://{m.group(2)}:***@",
-        text,
-    )
-
-    # URL query params
-    def _redact_url_query(m):
-        scheme, authority, path, query, fragment = (
-            m.group(1),
-            m.group(2),
-            m.group(3),
-            m.group(4),
-            m.group(5) or "",
-        )
-        return f"{scheme}://{authority}{path}?{_redact_query_string(query)}{fragment}"
-
-    text = _URL_WITH_QUERY_RE.sub(_redact_url_query, text)
+    # Apply credential redaction to non-code regions
+    text = _redact_credentials_only(text)
 
     # --- Restore markdown code regions ---
     text = _restore_markdown(text, placeholders)

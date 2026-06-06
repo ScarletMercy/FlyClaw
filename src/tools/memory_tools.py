@@ -271,13 +271,14 @@ async def reset_memory_store() -> None:
     调用后下次 get_memory_store() 将用新的 db_path 创建实例。
     """
     global store, _store_initialized
-    if store is not None:
-        try:
-            await store.close()
-        except Exception:
-            pass
-    store = None
-    _store_initialized = False
+    async with _store_lock:
+        if store is not None:
+            try:
+                await store.close()
+            except Exception:
+                pass
+        store = None
+        _store_initialized = False
 
 
 # ---------------------------------------------------------------------------

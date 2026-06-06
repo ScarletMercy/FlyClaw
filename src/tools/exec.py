@@ -489,6 +489,8 @@ async def exec_command(
     """
     if timeout <= 0:
         raise ToolExecutionError(f"timeout 必须为正整数，收到: {timeout}")
+    if timeout > 3600:
+        raise ToolExecutionError(f"timeout 上限为 3600 秒，收到: {timeout}")
 
     cfg = _get_config()
 
