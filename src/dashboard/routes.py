@@ -472,7 +472,10 @@ def register_dashboard(app: FastAPI, application):
             import json
 
             store = await get_memory_store()
-            return json.loads(await store.forget(key))
+            result = json.loads(await store.forget(key))
+            if _app_ref.agent_loop:
+                _app_ref.agent_loop.invalidate_memory_cache()
+            return result
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
@@ -490,6 +493,8 @@ def register_dashboard(app: FastAPI, application):
             import json
 
             result = json.loads(await save_memory(content, key, category=category))
+            if _app_ref.agent_loop:
+                _app_ref.agent_loop.invalidate_memory_cache()
             return result
         except HTTPException:
             raise

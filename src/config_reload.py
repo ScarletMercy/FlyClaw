@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from src.config_watcher import ReloadPlan
@@ -15,24 +16,30 @@ class ReloadExecutor:
     def __init__(self, app: ServiceContainer):
         self._app = app
 
-    async def execute(self, plan: ReloadPlan) -> None:
+    async def execute(self, plan: ReloadPlan) -> dict:
         if plan.requires_restart:
             logger.warning(
-                "Config change requires gateway restart — skipping hot-reload for: %s",
+                "Config change requires gateway restart — hot-reloadable changes will still be applied: %s",
                 [a.action for a in plan.actions],
             )
-            return
+
+        succeeded: list[str] = []
+        failed: list[str] = []
 
         for action in plan.actions:
             handler = getattr(self, f"_do_{action.action}", None)
             if handler:
                 try:
                     await handler()
+                    succeeded.append(action.action)
                     logger.info("Reload action '%s' applied", action.action)
                 except Exception as e:
+                    failed.append(action.action)
                     logger.error("Reload action '%s' failed: %s", action.action, e, exc_info=True)
             else:
                 logger.warning("No handler for reload action '%s'", action.action)
+
+        return {"succeeded": succeeded, "failed": failed}
 
     async def _do_reload_model(self):
         from src.agent.client import create_chain
@@ -146,3 +153,79 @@ class ReloadExecutor:
                 logger.info("Old AuthStore connection closed on reload")
         except Exception as e:
             logger.warning("Auth reload failed: %s", e)
+
+    async def _do_reload_memory(self):
+        app = self._app
+        config = app.config
+
+        # 关闭旧的
+        if app.memory_searcher:
+            try:
+                await app.memory_searcher.close()
+            except Exception:
+                pass
+            app.memory_searcher = None
+
+        if not (getattr(config, "memory", None) and config.memory.enabled):
+            logger.info("Memory system disabled after reload")
+            return
+
+        store = None
+        try:
+            from src.memory.search import MemorySearcher
+
+            backend = getattr(config.memory, "backend", "sqlite")
+            dimensions = getattr(config.memory, "embedding_dimensions", 1536)
+
+            if backend == "lancedb":
+                from src.memory.lance_store import LanceMemoryStore
+
+                lancedb_uri = getattr(
+                    config.memory, "lancedb_uri", str(Path.home() / ".flyclaw" / "data" / "memory_lancedb")
+                )
+                store = LanceMemoryStore(
+                    config.memory.db_path,
+                    dimensions=dimensions,
+                    fts_tokenizer=config.memory.fts_tokenizer,
+                    lancedb_uri=lancedb_uri,
+                )
+            else:
+                from src.memory.store import MemoryStore
+
+                store = MemoryStore(
+                    config.memory.db_path,
+                    dimensions=dimensions,
+                    fts_tokenizer=config.memory.fts_tokenizer,
+                )
+            await store.initialize()
+
+            embeddings = None
+            if getattr(config.memory, "api_key", "") or config.model.api_key:
+                try:
+                    from src.memory.embeddings import EmbeddingProvider
+
+                    embeddings = EmbeddingProvider(config.memory, config.model)
+                except Exception as e:
+                    logger.warning("Embedding provider init failed, using FTS5-only: %s", e)
+
+            app.memory_searcher = MemorySearcher(store, embeddings, config.memory)
+            store = None  # 所有权已转移给 MemorySearcher，不再需要清理
+            logger.info("Memory system reloaded")
+        except Exception as e:
+            # 清理已初始化但未移交的 store
+            if store is not None:
+                try:
+                    await store.close()
+                except Exception:
+                    pass
+            logger.error("Memory reload failed: %s", e, exc_info=True)
+            raise
+
+    async def _do_reload_security(self):
+        config = self._app.config.security
+        logger.info(
+            "Security config reloaded: enabled=%s, audit_on_startup=%s, allow_private_urls=%s",
+            config.enabled,
+            config.audit_on_startup,
+            config.allow_private_urls,
+        )

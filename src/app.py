@@ -783,5 +783,26 @@ class ServiceContainer:
             logger.error("关闭过程中出错: %s", e, exc_info=True)
 
     async def on_config_reload(self, old_config, new_config, plan):
+        # Phase 1: 原子更新所有 config 引用
         self.config = new_config
-        await self._reload_executor.execute(plan)
+
+        # 传播到 AgentLoop（最关键 — Bug #1 修复）
+        if self.agent_loop:
+            self.agent_loop._config = new_config
+            if hasattr(self.agent_loop, "_compressor") and self.agent_loop._compressor:
+                self.agent_loop._compressor.config = new_config.compression
+
+        # 传播到 CommandDispatcher
+        if self.dispatcher:
+            self.dispatcher._config = new_config
+
+        # QQ Channel 动态读取 self.config，直接替换即可
+        if self.qq:
+            self.qq.config = new_config.channels.qq
+
+        # Phase 2: 执行子系统级重载
+        result = await self._reload_executor.execute(plan)
+
+        # 如果有关键 handler 失败，抛异常让 ConfigWatcher 不提交状态
+        if result and result.get("failed"):
+            raise RuntimeError(f"Reload actions failed: {result['failed']}")

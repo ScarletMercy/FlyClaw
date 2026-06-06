@@ -34,30 +34,50 @@ class ReloadPlan:
     requires_restart: bool = False
 
     HOT_RELOAD_MAP: ClassVar[dict[str, str]] = {
+        # ── 模型 ──
         "model.": "reload_model",
+        "compression.": "reload_model",
+        # ── 代理 ──
         "agents.system_prompt": "reload_skills",
         "agents.max_tool_rounds": "reload_skills",
         "agents.timezone": "reload_skills",
         "agents.bootstrap_files": "reload_skills",
-        "cron.": "reload_cron",
+        "agents.workspace": "reload_tools",
+        "agents.language": "reload_skills",
+        "agents.busy_input_mode": "reload_tools",
+        "agents.subagents": "reload_tools",
+        "agents.tool_progress_notifications": "reload_tools",
+        "agents.tool_output_cache_chars": "reload_tools",
+        # ── 工具 / 技能 ──
         "tools.": "reload_tools",
         "skills.": "reload_skills",
-        "memory.": "reload_memory",
         "link_understanding.": "reload_skills",
+        "delegation.": "reload_tools",
+        "hooks.": "reload_skills",
+        # ── 子系统 ──
+        "cron.": "reload_cron",
+        "memory.": "reload_memory",
         "auth.": "reload_auth",
         "security.": "reload_security",
-        "compression.": "reload_model",
     }
 
     RESTART_PREFIXES: ClassVar[tuple[str, ...]] = (
+        # ── 网关 ──
         "gateway.host",
         "gateway.port",
         "gateway.auth_token",
-        "channels.qq.enabled",
-        "channels.qq.app_id",
-        "channels.qq.client_secret",
+        # ── 频道（需重连） ──
+        "channels.qq.",
+        "channels.weixin.",
+        # ── 一次性初始化的子系统 ──
         "checkpointer.",
         "session.",
+        "plugins.",
+        "canvas.",
+        "voice.",
+        "memory_store.",
+        "task.",
+        "session_search.",
     )
 
     @classmethod
@@ -178,11 +198,15 @@ class ConfigWatcher:
         plan = ReloadPlan.build(changes)
         old_config = self._current
 
-        result = self._on_reload(old_config, new_config, plan)
-        if asyncio.iscoroutine(result):
-            await result
+        try:
+            result = self._on_reload(old_config, new_config, plan)
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            _log.error("Config reload failed, will retry on next change", exc_info=True)
+            return  # 不更新 _hash 和 _current，下次可重试
 
-        # 仅在 reload 成功后才提交状态，确保异常时下次能重试
+        # 仅在 reload 成功后才提交状态
         self._hash = new_hash
         self._current = new_config
 

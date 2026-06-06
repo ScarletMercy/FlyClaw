@@ -124,7 +124,6 @@ class AgentLoop:
         self._cache_prompt_sections(tools, skills_prompt)
 
         self._memory_summary_cache: str = ""
-        self._memory_summary_ts: float = 0
 
         gr_cfg = None
         if config and hasattr(config, "tools"):
@@ -212,7 +211,7 @@ class AgentLoop:
             await self._client.close()
 
     def invalidate_memory_cache(self) -> None:
-        self._memory_summary_ts = 0
+        self._memory_summary_cache = ""
 
     def is_thread_busy(self, thread_id: str) -> bool:
         lock = self._store._locks.get(thread_id)
@@ -481,6 +480,8 @@ class AgentLoop:
                         import logging as _log
 
                         _log.getLogger("flyclaw.loop").warning("memory delete resume failed: %s", exc)
+                    if deleted:
+                        self._memory_summary_cache = ""
                     result_content = json.dumps(
                         {"ok": True, "deleted": deleted, "count": len(deleted)},
                         ensure_ascii=False,
@@ -889,10 +890,7 @@ class AgentLoop:
         )
 
     async def _fetch_memory_summary(self) -> str:
-        import time
-
-        now = time.monotonic()
-        if self._memory_summary_cache and now - self._memory_summary_ts < 300:
+        if self._memory_summary_cache:
             return self._memory_summary_cache
         try:
             from src.tools.memory_tools import get_memory_store
@@ -900,7 +898,6 @@ class AgentLoop:
             store = await get_memory_store()
             items = await store.list_all(limit=20)
             if not items:
-                self._memory_summary_ts = now
                 return ""
             lines = [f"## 已知记忆（{len(items)} 条）"]
             for item in items:
@@ -912,7 +909,6 @@ class AgentLoop:
             )
             result = "\n".join(lines)
             self._memory_summary_cache = result
-            self._memory_summary_ts = now
             return result
         except Exception:
             return self._memory_summary_cache or ""
@@ -1179,6 +1175,8 @@ class AgentLoop:
         )
         if tool_name in _SKILL_TOOL_NAMES and self._skill_nudge_interval > 0:
             self._iters_since_skill = 0
+        if tool_name == "memory":
+            self._memory_summary_cache = ""
         await emit_async(
             "tool.exec_completed",
             thread_id=thread_id,

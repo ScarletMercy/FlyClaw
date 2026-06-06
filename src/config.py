@@ -92,7 +92,20 @@ class AgentConfig(BaseModel):
             ),
             "reviewer": AgentSubconfig(
                 system_prompt="You are a critical reviewer. Analyze content, code, or proposals.",
-                tools=["*"],
+                tools=[
+                    "read_file",
+                    "write_file",
+                    "edit_file",
+                    "grep",
+                    "glob",
+                    "list_dir",
+                    "exec_command",
+                    "web_search",
+                    "web_fetch",
+                    "session_search",
+                    "task_manage",
+                    "skill_view",
+                ],
                 description="Critical reviewer - analyzes and provides feedback",
             ),
         }

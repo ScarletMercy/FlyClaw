@@ -767,6 +767,8 @@ class MessageHandler:
                     if extracted:
                         content, category = extracted
                         await save_memory(content, category=category)
+                        if self._container.agent_loop:
+                            self._container.agent_loop.invalidate_memory_cache()
                         await reply_fn(f"\U0001f4be update memory: {content[:50]}")
                     else:
                         task = asyncio.create_task(
@@ -1106,6 +1108,8 @@ class MessageHandler:
             if result:
                 content, category = result
                 await save_memory(content, category=category)
+                if self._container.agent_loop:
+                    self._container.agent_loop.invalidate_memory_cache()
                 await reply_fn(f"\U0001f4be update memory: {content[:50]}")
         except Exception:
             logger.debug("Memory LLM judge failed", exc_info=True)
