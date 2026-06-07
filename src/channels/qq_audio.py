@@ -20,7 +20,7 @@ logger = logging.getLogger("flyclaw.channels.qq_audio")
 
 
 def guess_audio_ext(data: bytes) -> str:
-    if data[:9] == b"#!SILK_V3" or data[:5] == b"#!SILK":
+    if data[:9] == b"#!SILK_V3" or data[:6] == b"#!SILK":
         return ".silk"
     if data[:2] == b"\x02!":
         return ".silk"
@@ -38,7 +38,7 @@ def guess_audio_ext(data: bytes) -> str:
 
 
 def looks_like_silk(data: bytes) -> bool:
-    return data[:4] == b"#!SILK" or data[:2] == b"\x02!" or data[:9] == b"#!SILK_V3"
+    return data[:6] == b"#!SILK" or data[:2] == b"\x02!" or data[:9] == b"#!SILK_V3"
 
 
 async def convert_to_wav(audio_data: bytes, ext: str = "") -> Optional[bytes]:

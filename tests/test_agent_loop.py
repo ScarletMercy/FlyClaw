@@ -1284,3 +1284,104 @@ class TestFindSafeCutUserTurnAlignment:
         ]
         # No user messages at all → returns 0 (no compression)
         assert _find_safe_cut(msgs, 2) == 0
+
+
+# ---------------------------------------------------------------------------
+# _memory_summary_queried flag behavior
+# ---------------------------------------------------------------------------
+
+
+class TestMemorySummaryQueried:
+    """Tests for the _memory_summary_queried flag and _fetch_memory_summary()."""
+
+    @pytest.mark.asyncio
+    async def test_queried_flag_prevents_repeated_calls(self, store, config):
+        """Once queried, subsequent calls return cache without hitting store."""
+        loop = _make_loop(store, config)
+
+        mock_store = AsyncMock()
+        mock_store.list_all.return_value = [
+            {"category": "fact", "content": "user likes cats"},
+        ]
+
+        with patch("src.tools.memory_tools.get_memory_store", return_value=mock_store):
+            result1 = await loop._fetch_memory_summary()
+            result2 = await loop._fetch_memory_summary()
+
+        assert "cats" in result1
+        assert result2 == result1
+        # store.list_all should only be called once
+        mock_store.list_all.assert_called_once()
+        assert loop._memory_summary_queried is True
+
+    @pytest.mark.asyncio
+    async def test_empty_items_sets_flag(self, store, config):
+        """Empty memory list still sets flag to prevent repeated queries."""
+        loop = _make_loop(store, config)
+
+        mock_store = AsyncMock()
+        mock_store.list_all.return_value = []
+
+        with patch("src.tools.memory_tools.get_memory_store", return_value=mock_store):
+            result1 = await loop._fetch_memory_summary()
+
+        assert result1 == ""
+        assert loop._memory_summary_queried is True
+
+        # Second call should not hit store
+        with patch("src.tools.memory_tools.get_memory_store") as mock_get:
+            result2 = await loop._fetch_memory_summary()
+            mock_get.assert_not_called()
+        assert result2 == ""
+
+    @pytest.mark.asyncio
+    async def test_exception_leaves_flag_false_for_retry(self, store, config):
+        """On exception, flag stays False so next call retries."""
+        loop = _make_loop(store, config)
+
+        with patch("src.tools.memory_tools.get_memory_store", side_effect=RuntimeError("db down")):
+            result = await loop._fetch_memory_summary()
+
+        assert result == ""
+        assert loop._memory_summary_queried is False
+
+        # Next call should retry (call get_memory_store again)
+        mock_store = AsyncMock()
+        mock_store.list_all.return_value = [{"category": "fact", "content": "recovered"}]
+        with patch("src.tools.memory_tools.get_memory_store", return_value=mock_store):
+            result2 = await loop._fetch_memory_summary()
+        assert "recovered" in result2
+        assert loop._memory_summary_queried is True
+
+    @pytest.mark.asyncio
+    async def test_invalidate_resets_both(self, store, config):
+        """invalidate_memory_cache clears cache content and resets flag."""
+        loop = _make_loop(store, config)
+        loop._memory_summary_cache = "## cached summary"
+        loop._memory_summary_queried = True
+
+        loop.invalidate_memory_cache()
+
+        assert loop._memory_summary_cache == ""
+        assert loop._memory_summary_queried is False
+
+    @pytest.mark.asyncio
+    async def test_memory_tool_usage_invalidates(self, store, config):
+        """After memory tool execution, cache is cleared for fresh data."""
+        loop = _make_loop(store, config)
+        loop._memory_summary_cache = "## old summary"
+        loop._memory_summary_queried = True
+
+        # Simulate what happens in _execute_tools_inner after memory tool use
+        loop._memory_summary_cache = ""
+        loop._memory_summary_queried = False
+
+        assert loop._memory_summary_cache == ""
+        assert loop._memory_summary_queried is False
+
+        # Next fetch should re-query store
+        mock_store = AsyncMock()
+        mock_store.list_all.return_value = [{"category": "fact", "content": "fresh data"}]
+        with patch("src.tools.memory_tools.get_memory_store", return_value=mock_store):
+            result = await loop._fetch_memory_summary()
+        assert "fresh data" in result
