@@ -1,8 +1,24 @@
 """Tests for exec timeout validation boundaries."""
 
+from unittest.mock import patch, MagicMock
+
 import pytest
 
 from src.tools.exec import ToolExecutionError, exec_command
+
+
+def _mock_config():
+    """Return a minimal config mock that disables sandbox."""
+    cfg = MagicMock()
+    cfg.tools.exec.deny_patterns = []
+    cfg.tools.exec.max_output_bytes = 102400
+    cfg.tools.exec.approval_mode = "off"
+    cfg.tools.exec.no_output_timeout_seconds = 0
+    cfg.tools.exec.sandbox_enabled = False
+    cfg.tools.exec.sandbox_allowed_dirs = []
+    cfg.tools.exec.sandbox_env_whitelist = ["PATH"]
+    cfg.agents.workspace = "."
+    return cfg
 
 
 class TestExecTimeoutLimit:
@@ -15,8 +31,9 @@ class TestExecTimeoutLimit:
     @pytest.mark.asyncio
     async def test_timeout_exactly_3600_passes(self):
         """timeout == 3600 passes the upper-limit check and executes."""
-        result = await exec_command("echo hi", timeout=3600)
-        assert "hi" in result
+        with patch("src.tools.exec._get_config", return_value=_mock_config()):
+            result = await exec_command("echo hi", timeout=3600)
+            assert "hi" in result
 
     @pytest.mark.asyncio
     async def test_timeout_zero_raises(self):
@@ -33,5 +50,6 @@ class TestExecTimeoutLimit:
     @pytest.mark.asyncio
     async def test_normal_timeout_executes(self):
         """A reasonable timeout like 100 should work normally."""
-        result = await exec_command("echo ok", timeout=100)
-        assert "ok" in result
+        with patch("src.tools.exec._get_config", return_value=_mock_config()):
+            result = await exec_command("echo ok", timeout=100)
+            assert "ok" in result
