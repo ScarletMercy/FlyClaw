@@ -74,10 +74,6 @@ async def load_skill(skill_dir: Path, source: str) -> Optional[Skill]:
     name = frontmatter.get("name", skill_dir.name)
     description = frontmatter.get("description", "")
 
-    extra_parts = await _collect_extra_md(skill_dir, resolved)
-    if extra_parts:
-        body = body.rstrip() + "\n\n" + "\n\n".join(extra_parts)
-
     metadata = SkillMetadata(
         name=name,
         description=description,
@@ -97,30 +93,6 @@ async def load_skill(skill_dir: Path, source: str) -> Optional[Skill]:
         metadata=metadata,
         body=body.strip(),
     )
-
-
-async def _collect_extra_md(skill_dir: Path, main_md: Path) -> list[str]:
-    paths = await asyncio.to_thread(lambda: sorted(skill_dir.rglob("*.md")))
-    parts: list[str] = []
-    for p in paths:
-        resolved = await asyncio.to_thread(p.resolve)
-        if resolved == main_md:
-            continue
-        if p.name.startswith("."):
-            continue
-        try:
-            rel = p.relative_to(skill_dir)
-        except ValueError:
-            continue
-        if any(seg.startswith(".") for seg in rel.parts):
-            continue
-        try:
-            async with aiofiles.open(p, encoding="utf-8") as f:
-                text = (await f.read()).replace("\r\n", "\n").strip()
-        except Exception:
-            continue
-        parts.append(f"--- {rel.as_posix()} ---\n\n{text}")
-    return parts
 
 
 async def discover_skills(

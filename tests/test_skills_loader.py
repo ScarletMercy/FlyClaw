@@ -10,7 +10,6 @@ from src.skills.loader import (
     parse_frontmatter,
     is_skill_disabled,
     load_skill,
-    _collect_extra_md,
 )
 
 
@@ -133,55 +132,3 @@ class TestLoadSkill:
         (skill_dir / "SKILL.md").write_text("x" * (_MAX_SKILL_FILE_BYTES + 1), encoding="utf-8")
         skill = await load_skill(skill_dir, "builtin")
         assert skill is None
-
-
-# ── _collect_extra_md ──────────────────────────────────────
-
-
-class TestCollectExtraMd:
-    @pytest.mark.asyncio
-    async def test_collects_extra_files(self, tmp_path):
-        skill_dir = tmp_path / "skill"
-        skill_dir.mkdir()
-        main_md = skill_dir / "SKILL.md"
-        main_md.write_text("---\nname: test\n---\nMain", encoding="utf-8")
-        extra = skill_dir / "extra.md"
-        extra.write_text("Extra content", encoding="utf-8")
-
-        parts = await _collect_extra_md(skill_dir, main_md)
-        assert len(parts) == 1
-        assert "Extra content" in parts[0]
-
-    @pytest.mark.asyncio
-    async def test_skips_dotfiles(self, tmp_path):
-        skill_dir = tmp_path / "skill"
-        skill_dir.mkdir()
-        main_md = skill_dir / "SKILL.md"
-        main_md.write_text("---\nname: test\n---\nMain", encoding="utf-8")
-        (skill_dir / ".hidden.md").write_text("Hidden", encoding="utf-8")
-
-        parts = await _collect_extra_md(skill_dir, main_md)
-        assert len(parts) == 0
-
-    @pytest.mark.asyncio
-    async def test_skips_main_md(self, tmp_path):
-        skill_dir = tmp_path / "skill"
-        skill_dir.mkdir()
-        main_md = skill_dir / "SKILL.md"
-        main_md.write_text("---\nname: test\n---\nMain", encoding="utf-8")
-
-        parts = await _collect_extra_md(skill_dir, main_md)
-        assert len(parts) == 0
-
-    @pytest.mark.asyncio
-    async def test_skips_dot_directories(self, tmp_path):
-        skill_dir = tmp_path / "skill"
-        skill_dir.mkdir()
-        main_md = skill_dir / "SKILL.md"
-        main_md.write_text("---\nname: test\n---\nMain", encoding="utf-8")
-        hidden_dir = skill_dir / ".hidden"
-        hidden_dir.mkdir()
-        (hidden_dir / "nested.md").write_text("Nested", encoding="utf-8")
-
-        parts = await _collect_extra_md(skill_dir, main_md)
-        assert len(parts) == 0

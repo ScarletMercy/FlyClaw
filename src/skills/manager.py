@@ -421,6 +421,73 @@ class SkillManager:
 _SKILL_TOOL_NAMES = frozenset({"skill_view", "skill_manage", "skill_hub"})
 
 
+def _normalize_skill_name(name: str) -> str:
+    """Strip markdown bold markers and whitespace from a skill name.
+
+    Models seeing ``**my-skill**`` in the system prompt may copy the
+    asterisks verbatim into the tool call.  This helper removes leading /
+    trailing ``*`` characters and whitespace so the lookup still succeeds.
+    """
+    cleaned = name.strip()
+    # Remove leading/trailing asterisks (markdown bold: **name** or *name*)
+    while cleaned.startswith("*"):
+        cleaned = cleaned[1:]
+    while cleaned.endswith("*"):
+        cleaned = cleaned[:-1]
+    cleaned = cleaned.strip()
+    return cleaned
+
+
+def _find_skill(skills: list["Skill"], raw_name: str) -> "Skill | None":
+    """Look up a skill by name with tolerant matching.
+
+    Strategy:
+    1. Exact match on normalized name (stripped, de-asterisked).
+    2. Case-insensitive fallback on normalized name.
+    """
+    norm = _normalize_skill_name(raw_name)
+    if not norm:
+        return None
+
+    # 1. Exact match
+    for s in skills:
+        if s.name == norm:
+            return s
+
+    # 2. Case-insensitive fallback
+    norm_lower = norm.casefold()
+    for s in skills:
+        if s.name.casefold() == norm_lower:
+            return s
+
+    return None
+
+
+def _format_skill_result(
+    skill: "Skill",
+    **_extra: object,
+) -> str:
+    """Format a skill as plain text for the model.
+
+    The body is the top-level content so the model treats it as direct
+    instruction text rather than having to parse a JSON envelope.
+    A lightweight metadata footer is appended.
+    """
+    parts: list[str] = []
+    if skill.body:
+        parts.append(skill.body)
+    parts.append("")
+    parts.append("---")
+    parts.append(f"*Skill: {skill.name}*")
+    if skill.description:
+        parts.append(f"*{skill.description}*")
+    parts.append(f"*Source: {skill.source} · Path: {skill.base_dir}*")
+    if _extra.get("view_count") or _extra.get("use_count"):
+        parts.append(f"*Views: {_extra.get('view_count', 0)} · Uses: {_extra.get('use_count', 0)}*")
+    parts.append("---")
+    return "\n".join(parts)
+
+
 def get_tools() -> list:
     """返回技能管理工具集（3 个独立工具）。"""
     from src.agent.tooldef import ToolDef
@@ -443,26 +510,11 @@ def get_tools() -> list:
 
         container = get_container()
         skills = container.skills_cache or []
-        for s in skills:
-            if s.name == name:
-                await manager.bump_view(name)
-                usage = await manager.get_usage(name) or {}
-                body_with_paths = s.body + f"\n\n## Skill Path Info\n- **Skill Directory**: {s.base_dir}"
-                return json.dumps(
-                    {
-                        "name": s.name,
-                        "description": s.description,
-                        "source": s.source,
-                        "file_path": str(s.file_path),
-                        "body": body_with_paths,
-                        "view_count": usage.get("view_count", 0),
-                        "use_count": usage.get("use_count", 0),
-                        "last_viewed_at": usage.get("last_viewed_at"),
-                        "last_used_at": usage.get("last_used_at"),
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                )
+        s = _find_skill(skills, name)
+        if s is not None:
+            await manager.bump_view(s.name)
+            usage = await manager.get_usage(s.name) or {}
+            return _format_skill_result(s, **usage)
         return json.dumps({"error": f"Skill not found: {name}"})
 
     async def skill_manage(

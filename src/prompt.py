@@ -220,7 +220,7 @@ def _build_skills_section(skills_prompt: str, hub_enabled: bool = True) -> list[
     if hub_enabled:
         lines += [
             "## 远程技能库",
-            "当需要安装新技能或本地技能不适用时，**必须使用 skill_hub 工具**（不要用 web_fetch/web_search 替代）：",
+            "当需要安装新技能或本地技能不适用时，可以使用 skill_hub 工具（不要用 web_fetch/web_search 替代）：",
             '1. **搜索**：skill_hub(action="search_hub", query="关键词")',
             '2. **查看详情**：skill_hub(action="inspect_hub", identifier="标识符")',
             '3. **安装**：skill_hub(action="install_hub", identifier="标识符")',

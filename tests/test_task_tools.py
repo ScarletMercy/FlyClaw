@@ -11,6 +11,9 @@ from src.tools.task_tools import (
     _parse_relative_time,
     set_task_context,
 )
+from src.utils.tz import get_tz
+
+_SHANGHAI = get_tz("Asia/Shanghai")
 
 
 # ── _parse_plan_json ───────────────────────────────────────
@@ -72,9 +75,9 @@ class TestParseRelativeTime:
     def test_minutes_chinese(self):
         result = _parse_relative_time("30分钟")
         assert result is not None
-        # Should be ~30 min from now
+        # Should be ~30 min from now (Asia/Shanghai)
         dt = datetime.fromisoformat(result)
-        now = datetime.now()
+        now = datetime.now(_SHANGHAI).replace(tzinfo=None)
         delta = dt - now
         assert 29 * 60 <= delta.total_seconds() <= 31 * 60
 
@@ -82,7 +85,7 @@ class TestParseRelativeTime:
         result = _parse_relative_time("2小时")
         assert result is not None
         dt = datetime.fromisoformat(result)
-        now = datetime.now()
+        now = datetime.now(_SHANGHAI).replace(tzinfo=None)
         delta = dt - now
         assert 1.9 * 3600 <= delta.total_seconds() <= 2.1 * 3600
 
@@ -90,7 +93,7 @@ class TestParseRelativeTime:
         result = _parse_relative_time("3天")
         assert result is not None
         dt = datetime.fromisoformat(result)
-        now = datetime.now()
+        now = datetime.now(_SHANGHAI).replace(tzinfo=None)
         delta = dt - now
         assert 2.9 * 86400 <= delta.total_seconds() <= 3.1 * 86400
 
@@ -106,7 +109,7 @@ class TestParseRelativeTime:
         result = _parse_relative_time("5")
         assert result is not None
         dt = datetime.fromisoformat(result)
-        now = datetime.now()
+        now = datetime.now(_SHANGHAI).replace(tzinfo=None)
         delta = dt - now
         assert 4 * 60 <= delta.total_seconds() <= 6 * 60
 
