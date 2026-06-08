@@ -31,6 +31,7 @@ class ToolDef:
     description: str
     parameters: dict[str, Any]
     fn: Callable
+    timeout: int = 120
     _valid_params: frozenset = field(default_factory=frozenset)
 
     def __post_init__(self):
@@ -56,11 +57,11 @@ class ToolDef:
         return str(result) if result is not None else ""
 
     @classmethod
-    def from_function(cls, fn: Callable, name: str | None = None) -> ToolDef:
+    def from_function(cls, fn: Callable, name: str | None = None, timeout: int = 120) -> ToolDef:
         tool_name = name or fn.__name__
         description = _extract_description(fn)
         parameters = _extract_parameters(fn)
-        return cls(name=tool_name, description=description, parameters=parameters, fn=fn)
+        return cls(name=tool_name, description=description, parameters=parameters, fn=fn, timeout=timeout)
 
 
 def _extract_description(fn: Callable) -> str:

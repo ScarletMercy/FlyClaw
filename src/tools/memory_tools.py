@@ -100,6 +100,7 @@ class MemoryStore:
         self._conn.row_factory = aiosqlite.Row
         await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.execute("PRAGMA synchronous=NORMAL")
+        await self._conn.execute("PRAGMA busy_timeout=5000")
         await self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS memories (
                 key TEXT PRIMARY KEY,

@@ -607,6 +607,9 @@ class AgentLoop:
                 last_exc = e
                 if attempt >= max_retries:
                     break
+                # All models in cooldown — retrying is pointless
+                if isinstance(e, RuntimeError) and "No models available" in str(e):
+                    raise
                 err_str = str(e).lower()
                 status = getattr(getattr(e, "status_code", None), "value", getattr(e, "status_code", None))
                 if status in (401, 403) or "auth" in err_str:
@@ -1051,7 +1054,7 @@ class AgentLoop:
             }
         )
         try:
-            result = await tool_def.execute(args)
+            result = await asyncio.wait_for(tool_def.execute(args), timeout=tool_def.timeout)
             duration_ms = (_time.monotonic() - start) * 1000
             return await self._record_tool_success(
                 tool_name=tool_name,

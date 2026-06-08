@@ -800,6 +800,6 @@ def get_tools() -> list:
     )
 
     return [
-        ToolDef.from_function(exec_command),
+        ToolDef.from_function(exec_command, timeout=3600),
         ToolDef.from_function(process_status),
     ]
