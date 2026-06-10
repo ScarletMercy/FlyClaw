@@ -37,6 +37,18 @@ tailwind.config = {
   .fade-up{animation:fadeUp .2s ease}
   @keyframes pulse-dot{0%,100%{opacity:1}50%{opacity:.3}}
   .pulse-dot{animation:pulse-dot 2s ease-in-out infinite}
+  /* ── Agent Flow Ring ── */
+  @keyframes flowDashFlow{to{stroke-dashoffset:-24}}
+  @keyframes flowCenterPulse{0%,100%{opacity:.92}50%{opacity:1}}
+  .flow-node-group{transform-box:fill-box;transform-origin:center}
+  /* node pop-in when idle→active (缩弹) — opacity removed: Alpine x-html re-renders restart CSS anims */
+  @keyframes flowAppear{0%{transform:scale(.65)}60%{transform:scale(1.08)}100%{transform:scale(1)}}
+  .flow-appear{animation:flowAppear .35s cubic-bezier(.34,1.56,.64,1)}
+  /* done arc gentle pulse (灭→亮 呼吸) */
+  @keyframes flowRingPulse{0%,100%{opacity:.5}50%{opacity:.9}}
+  .flow-ring-pulse{animation:flowRingPulse 2.5s ease-in-out infinite}
+  .flow-dash-active{stroke-dasharray:8 6;animation:flowDashFlow .6s linear infinite}
+  .flow-center-pulse{animation:flowCenterPulse 2s ease-in-out infinite}
 </style>
 </head>
 <body class="bg-bg text-zinc-100 font-sans min-h-screen flex" x-data="app()" x-init="init()">
@@ -159,6 +171,41 @@ tailwind.config = {
             </tr>
           </tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- ═══ Agent Flow ═══ -->
+    <div x-show="activeTab==='flow'" class="fade-up space-y-4">
+      <!-- Header -->
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-semibold">智能体流程</h2>
+        <div class="flex items-center gap-3">
+          <span class="flex items-center gap-1.5 text-xs" :class="flowConnected ? 'text-ok' : 'text-err'">
+            <span class="w-2 h-2 rounded-full" :class="flowConnected ? 'bg-ok pulse-dot shadow shadow-ok/50' : 'bg-err'"></span>
+            <span x-text="flowConnected ? '已连接' : '已断开'"></span>
+          </span>
+          <span x-show="flowRound > 0" class="text-xs text-zinc-500 font-mono">第 <span x-text="flowRound"></span> 轮</span>
+          <button x-show="!flowConnected" @click="flowConnect()"
+                  class="px-3 py-1.5 rounded-lg bg-surface border border-bdr text-xs text-zinc-400 hover:text-zinc-200 transition">重新连接</button>
+        </div>
+      </div>
+
+      <!-- SVG Ring -->
+      <div class="bg-surface border border-bdr rounded-xl p-4 flex justify-center overflow-hidden">
+        <div x-html="flowRenderSVG()"></div>
+      </div>
+
+      <!-- Event history strip -->
+      <div class="flex gap-2 overflow-x-auto pb-1 px-1">
+        <template x-for="h in flowHistory" :key="h.id">
+          <div class="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg border text-[11px]"
+               :class="h.icon==='❌' || h.icon==='💥' ? 'bg-err/5 border-err/20 text-err' : h.icon==='✅' || h.icon==='🏁' ? 'bg-ok/5 border-ok/20 text-ok' : 'bg-surface border-bdr'">
+            <span x-text="h.icon" class="text-sm"></span>
+            <span class="text-zinc-200 font-medium" x-text="h.label"></span>
+            <span x-show="h.detail" class="text-zinc-500 font-mono max-w-[140px] truncate" x-text="h.detail"></span>
+          </div>
+        </template>
+        <div x-show="flowHistory.length === 0" class="text-xs text-zinc-600 px-3 py-2">等待智能体事件...</div>
       </div>
     </div>
 
@@ -538,6 +585,7 @@ function app() {
   return {
     tabs: [
       {id:'sessions', icon:'\u25A1', label:'\u4F1A\u8BDD'},
+      {id:'flow', icon:'\uD83D\uDD04', label:'\u667A\u80FD\u4F53\u6D41\u7A0B'},
       {id:'cron', icon:'\u23F0', label:'\u5B9A\u65F6\u4EFB\u52A1'},
       {id:'users', icon:'\uD83D\uDC64', label:'\u7528\u6237'},
       {id:'audit', icon:'\uD83D\uDCDC', label:'\u5BA1\u8BA1'},
@@ -593,9 +641,30 @@ function app() {
     msgModal: null,
     msgSearch: '',
 
+    // ── Agent Flow ──
+    FLOW_PARTICLE_COUNT: 14,
+    flowConnected: false,
+    flowRingNodes: [],
+    flowArcs: [],
+    flowCenter: { icon: '📡', label: '等待事件...', detail: '' },
+    flowRound: 0,
+    flowStats: { messages: 0, tools: 0, errors: 0 },
+    flowHistory: [],
+    _flowEventSource: null,
+    _flowReconnectTimer: null,
+    _flowResetTimer: null,
+    _flowParticleFrame: null,
+    _flowParticleAngles: [],
+    _flowActiveNodeIdx: -1,
+    _flowPrevStates: [],
+    _flowActiveToolCount: 0,
+
     async init() {
       this._uptimeTick();
       setInterval(() => this._uptimeTick(), 1000);
+      this._flowInitRing();
+      this.flowConnect();
+      window.addEventListener('beforeunload', () => this.flowDisconnect());
       await Promise.all([
         this.loadModels(),
         this.loadSessions(),
@@ -829,6 +898,408 @@ function app() {
       this.analyticsStats = stats.error ? {} : stats;
       const errs = await this.api('/api/dashboard/audit?limit=10&status=error');
       this.analyticsErrors = errs.entries || [];
+    },
+
+    // ── Agent Flow ──────────────────────────────────────────────
+    _flowInitRing() {
+      const cx = 300, cy = 300, r = 195;
+      const stages = [
+        { icon: '📨', label: '消息输入',  color: '#60a5fa', angle: 270 },
+        { icon: '🤖', label: 'Agent',     color: '#a78bfa', angle: 330 },
+        { icon: '🧠', label: '模型调用',  color: '#818cf8', angle: 30  },
+        { icon: '🔧', label: '工具执行',  color: '#fbbf24', angle: 90  },
+        { icon: '📊', label: '结果汇聚',  color: '#34d399', angle: 150 },
+        { icon: '📤', label: '回复输出',  color: '#22d3ee', angle: 210 },
+      ];
+      this.flowRingNodes = stages.map((s, i) => {
+        const rad = s.angle * Math.PI / 180;
+        return { ...s, x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad), idx: i, state: 'idle' };
+      });
+      this._flowBuildArcs();
+      this._flowStartParticles();
+    },
+
+    _flowBuildArcs() {
+      const cx = 300, cy = 300, r = 195;
+      const nodes = this.flowRingNodes;
+      this.flowArcs = nodes.map((n, i) => {
+        const next = nodes[(i + 1) % nodes.length];
+        const diff = ((next.angle - n.angle) + 360) % 360;
+        const a1 = n.angle * Math.PI / 180;
+        const a2 = next.angle * Math.PI / 180;
+        const x1 = cx + r * Math.cos(a1), y1 = cy + r * Math.sin(a1);
+        const x2 = cx + r * Math.cos(a2), y2 = cy + r * Math.sin(a2);
+        const large = diff > 180 ? 1 : 0;
+        const d = `M ${x1.toFixed(1)} ${y1.toFixed(1)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(1)} ${y2.toFixed(1)}`;
+        return { d, state: n.state, from: i, to: (i + 1) % nodes.length };
+      });
+    },
+
+    _flowStartParticles() {
+      this._flowParticleAngles = [];
+      for (let i = 0; i < this.FLOW_PARTICLE_COUNT; i++) {
+        this._flowParticleAngles.push((i / this.FLOW_PARTICLE_COUNT) * 360);
+      }
+      if (this._flowParticleFrame) cancelAnimationFrame(this._flowParticleFrame);
+      const self = this;
+      let last = 0;
+      function tick(ts) {
+        if (ts - last >= 35) {
+          last = ts;
+          const cx = 300, cy = 300, r = 195;
+          for (let i = 0; i < self._flowParticleAngles.length; i++) {
+            self._flowParticleAngles[i] = (self._flowParticleAngles[i] + 1.0) % 360;
+          }
+          const svg = document.getElementById('flow-ring-svg');
+          if (!svg) { self._flowParticleFrame = requestAnimationFrame(tick); return; }
+          const nodes = self.flowRingNodes;
+          const activeSegs = new Set(), doneSegs = new Set();
+          nodes.forEach((n, i) => {
+            if (n.state === 'active') activeSegs.add(i);
+            if (n.state === 'done') doneSegs.add(i);
+          });
+          const hasActive = activeSegs.size > 0;
+
+          // Particles
+          for (let i = 0; i < self._flowParticleAngles.length; i++) {
+            const el = svg.querySelector(`[data-particle="${i}"]`);
+            if (!el) continue;
+            const deg = self._flowParticleAngles[i];
+            const rad = deg * Math.PI / 180;
+            el.setAttribute('cx', (cx + r * Math.cos(rad)).toFixed(1));
+            el.setAttribute('cy', (cy + r * Math.sin(rad)).toFixed(1));
+            let segIdx = -1;
+            for (let j = 0; j < nodes.length; j++) {
+              const sa = nodes[j].angle, ea = nodes[(j+1)%nodes.length].angle;
+              let nd = deg, ns = sa, ne = ea;
+              if (ne <= ns) ne += 360;
+              if (nd < ns) nd += 360;
+              if (nd >= ns && nd < ne) { segIdx = j; break; }
+            }
+            const isAct = segIdx >= 0 && activeSegs.has(segIdx);
+            const isDone = segIdx >= 0 && doneSegs.has(segIdx);
+            el.setAttribute('opacity', isAct ? '0.95' : isDone ? '0.35' : hasActive ? '0.08' : '0.03');
+            el.setAttribute('fill', isAct ? '#818cf8' : isDone ? '#34d399' : '#818cf8');
+            el.setAttribute('r', isAct ? '6' : isDone ? '4' : '3');
+          }
+
+          // Glow breathing + node border pulse (rAF-driven, survives SVG re-render)
+          const breath = 0.5 + 0.5 * Math.sin(ts / 400); // 0~1, ~2.5s slow glow
+          const blink = 0.5 + 0.5 * Math.sin(ts / 16);   // 0~1, ~0.1s = 10Hz
+          for (let i = 0; i < nodes.length; i++) {
+            const fillEl = svg.querySelector(`[data-glow-fill="${i}"]`);
+            const ringEl = svg.querySelector(`[data-glow-ring="${i}"]`);
+            if (fillEl) fillEl.setAttribute('opacity', (0.05 + 0.15 * breath).toFixed(2));
+            if (ringEl) {
+              ringEl.setAttribute('opacity', (0.3 + 0.7 * breath).toFixed(2));
+              ringEl.setAttribute('stroke-width', (2 + 3 * (1 - breath)).toFixed(1));
+            }
+            // Node border blink for active nodes — fast cycle, dramatic range
+            const bgEl = svg.querySelector(`[data-node-bg="${i}"]`);
+            if (bgEl && nodes[i].state === 'active') {
+              bgEl.setAttribute('stroke-width', (2 + 5 * blink).toFixed(1));       // 2↔7
+              bgEl.setAttribute('stroke-opacity', (0.45 + 0.55 * blink).toFixed(2)); // 0.45↔1
+            }
+          }
+        }
+        self._flowParticleFrame = requestAnimationFrame(tick);
+      }
+      self._flowParticleFrame = requestAnimationFrame(tick);
+    },
+
+    flowRenderSVG() {
+      const nodes = this.flowRingNodes;
+      const arcs = this.flowArcs;
+      const center = this.flowCenter;
+      const stats = this.flowStats;
+      if (!nodes.length) return '';
+      let s = `<svg id="flow-ring-svg" viewBox="0 0 600 600" xmlns="http://www.w3.org/2000/svg" class="w-full max-w-[600px]" style="min-height:480px">`;
+
+      // Defs: arrow markers
+      s += `<defs>`;
+      for (const [id, color] of [['arrIdle','#52525b'],['arrActive','#818cf8'],['arrDone','#34d399']]) {
+        s += `<marker id="${id}" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="${color}"/></marker>`;
+      }
+      s += `</defs>`;
+
+      // Background subtle ring
+      s += `<circle cx="300" cy="300" r="195" fill="none" stroke="#27272a" stroke-width="1" opacity="0.5"/>`;
+
+      // ── All flow lines at the BOTTOM layer ──
+      // Arcs with arrows
+      for (const seg of arcs) {
+        const isAct = seg.state === 'active';
+        const isDone = seg.state === 'done';
+        const color = isDone ? '#34d399' : isAct ? '#818cf8' : '#3f3f46';
+        const width = isAct ? 4 : isDone ? 3 : 2;
+        const cls = isAct ? ' class="flow-dash-active"' : isDone ? ' class="flow-ring-pulse"' : '';
+        const marker = isAct ? ' marker-end="url(#arrActive)"' : isDone ? ' marker-end="url(#arrDone)"' : ' marker-end="url(#arrIdle)"';
+        const opacity = isAct ? '1' : isDone ? '0.8' : '0.5';
+        s += `<path d="${seg.d}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round"${cls}${marker} opacity="${opacity}"/>`;
+      }
+      // Loop-back arrow (all lines together, below everything else)
+      if (this.flowRound > 0) {
+        s += `<path d="M 155 300 C 50 300, 50 235, 125 210" fill="none" stroke="#818cf8" stroke-width="2" stroke-dasharray="5 4" class="flow-dash-active" opacity="0.7" marker-end="url(#arrActive)"/>`;
+        s += `<rect x="36" y="256" width="72" height="20" rx="6" fill="#818cf820"/>`;
+        s += `<text x="72" y="270" font-size="10" font-weight="600" fill="#818cf8" text-anchor="middle">循环 ×${this.flowRound}</text>`;
+      }
+
+      // Particles — fixed count, rAF positions them; do NOT read _flowParticleAngles here
+      for (let i = 0; i < this.FLOW_PARTICLE_COUNT; i++) {
+        s += `<circle data-particle="${i}" r="5" cx="300" cy="105" fill="#818cf8" opacity="0.05"/>`;
+      }
+
+      // Nodes
+      for (let ni = 0; ni < nodes.length; ni++) {
+        const n = nodes[ni];
+        const isActive = n.state === 'active';
+        const isDone = n.state === 'done';
+        const isError = n.state === 'error';
+        // Bug #1: only add flow-appear on idle→active transition
+        const prev = this._flowPrevStates[ni] || 'idle';
+        const isNewlyActive = isActive && prev === 'idle';
+        const classes = ['flow-node-group'];
+        if (isNewlyActive) classes.push('flow-appear');
+        s += `<g class="${classes.join(' ')}">`;
+
+        // Outer glow ring (rAF-driven breathing, not CSS)
+        if (isActive) {
+          s += `<circle data-glow-fill="${ni}" cx="${n.x}" cy="${n.y}" r="50" fill="${n.color}" opacity="0.12"/>`;
+          s += `<circle data-glow-ring="${ni}" cx="${n.x}" cy="${n.y}" r="44" fill="none" stroke="${n.color}" stroke-width="2.5" opacity="0.8"/>`;
+        } else if (isDone) {
+          s += `<circle cx="${n.x}" cy="${n.y}" r="42" fill="none" stroke="${n.color}" stroke-width="1.5" opacity="0.4"/>`;
+        }
+
+        // Node background — active = solid bright fill, not transparent
+        const bgFill = isActive ? n.color : isDone ? n.color + '40' : isError ? '#fb718540' : '#18181b';
+        const bgStroke = isActive ? n.color : isDone ? n.color : isError ? '#fb7185' : '#3f3f46';
+        const bgSw = isActive ? 3 : isDone ? 2 : 1.5;
+        s += `<circle data-node-bg="${ni}" cx="${n.x}" cy="${n.y}" r="36" fill="${bgFill}" stroke="${bgStroke}" stroke-width="${bgSw}"/>`;
+
+        // Icon — active = white on colored bg
+        const iconColor = isActive ? '#fff' : '#e4e4e7';
+        s += `<text x="${n.x}" y="${n.y + 1}" text-anchor="middle" dominant-baseline="central" font-size="24" fill="${iconColor}" opacity="${n.state === 'idle' ? 0.35 : 1}">${n.icon}</text>`;
+
+        // Label below node
+        const labelColor = isActive ? '#fff' : isDone ? n.color : '#71717a';
+        s += `<text x="${n.x}" y="${n.y + 54}" text-anchor="middle" font-size="13" font-weight="${isActive ? 700 : 400}" fill="${labelColor}">${n.label}</text>`;
+
+        // Status badge
+        const badge = isActive ? '⏳' : isDone ? '✅' : isError ? '❌' : '';
+        if (badge) {
+          s += `<text x="${n.x + 30}" y="${n.y - 24}" font-size="13">${badge}</text>`;
+        }
+
+        // Bug #2: live data tag — match by node index, not emoji
+        if (isActive && ni === this._flowActiveNodeIdx && center.detail) {
+          const detail = center.detail.substring(0, 20).replace(/</g, '&lt;');
+          s += `<rect x="${n.x - 42}" y="${n.y + 62}" width="84" height="18" rx="4" fill="${n.color}" opacity="0.15"/>`;
+          s += `<text x="${n.x}" y="${n.y + 74}" text-anchor="middle" font-size="9" font-family="monospace" fill="${n.color}">${detail}</text>`;
+        }
+
+        s += `</g>`;
+      }
+
+      // Center panel
+      const anyActive = nodes.some(n => n.state === 'active');
+      s += `<rect x="195" y="228" width="210" height="144" rx="12" fill="#18181b" stroke="#27272a" stroke-width="1"${anyActive ? ' class="flow-center-pulse"' : ''}/>`;
+      s += `<rect x="195" y="228" width="210" height="144" rx="12" fill="none" stroke="${center.icon === '❌' || center.icon === '💥' ? '#fb718530' : '#818cf815'}" stroke-width="1"/>`;
+      s += `<foreignObject x="200" y="232" width="200" height="136">`;
+      s += `<div xmlns="http://www.w3.org/1999/xhtml" style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;height:100%;padding:8px 12px">`;
+      s += `<div style="font-size:28px;margin-bottom:6px;line-height:1">${center.icon || '📡'}</div>`;
+      s += `<div style="font-size:13px;font-weight:700;color:#e4e4e7;letter-spacing:0.3px">${center.label || '等待事件...'}</div>`;
+      if (center.detail) {
+        const esc = center.detail.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        s += `<div style="font-size:10px;font-family:'Cascadia Code',monospace;color:#a1a1aa;margin-top:6px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;background:#27272a;padding:2px 8px;border-radius:4px" title="${esc}">${esc}</div>`;
+      }
+      if (stats.messages > 0) {
+        s += `<div style="display:flex;gap:14px;margin-top:10px;font-size:10px;color:#71717a;font-family:monospace">`;
+        s += `<span style="color:#60a5fa">📨${stats.messages}</span>`;
+        s += `<span style="color:#fbbf24">🔧${stats.tools}</span>`;
+        if (stats.errors > 0) s += `<span style="color:#fb7185">❌${stats.errors}</span>`;
+        s += `<span style="color:#818cf8">🔄${this.flowRound}</span>`;
+        s += `</div>`;
+      }
+      s += `</div></foreignObject>`;
+
+      s += `</svg>`;
+      return s;
+    },
+
+    flowConnect() {
+      if (this._flowEventSource) this._flowEventSource.close();
+      const url = AUTH_TOKEN
+        ? '/api/dashboard/flow/events?token=' + encodeURIComponent(AUTH_TOKEN)
+        : '/api/dashboard/flow/events';
+      const es = new EventSource(url);
+      this._flowEventSource = es;
+      es.onopen = () => { this.flowConnected = true; };
+      es.onerror = () => {
+        this.flowConnected = false;
+        es.close();
+        this._flowEventSource = null;
+        clearTimeout(this._flowReconnectTimer);
+        this._flowReconnectTimer = setTimeout(() => this.flowConnect(), 3000);
+      };
+      es.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.type === 'connected') return;
+          this._flowProcessEvent(data);
+        } catch (err) {}
+      };
+    },
+
+    flowDisconnect() {
+      if (this._flowEventSource) { this._flowEventSource.close(); this._flowEventSource = null; }
+      clearTimeout(this._flowReconnectTimer);
+      clearTimeout(this._flowResetTimer);
+      if (this._flowParticleFrame) cancelAnimationFrame(this._flowParticleFrame);
+      this.flowConnected = false;
+    },
+
+    _flowSetNode(idx, state) {
+      if (idx < 0 || idx >= this.flowRingNodes.length) return;
+      this.flowRingNodes[idx].state = state;
+      this._flowBuildArcs();
+    },
+
+    _flowResetAll() {
+      for (let i = 0; i < this.flowRingNodes.length; i++) {
+        this.flowRingNodes[i].state = 'idle';
+      }
+      this._flowBuildArcs();
+      this._flowPrevStates = this.flowRingNodes.map(() => 'idle');
+    },
+
+    _flowProcessEvent(data) {
+      const evt = data.event;
+      const NODE_MSG = 0, NODE_AGENT = 1, NODE_MODEL = 2, NODE_TOOL = 3, NODE_RESULT = 4, NODE_REPLY = 5;
+
+      // Save previous states for appear animation tracking (Bug #1)
+      this._flowPrevStates = this.flowRingNodes.map(n => n.state);
+
+      let historyItem = {
+        id: Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+        icon: '', label: '', detail: '',
+      };
+
+      switch (evt) {
+        case 'message.received':
+          clearTimeout(this._flowResetTimer); // Bug #6: cancel stale reset
+          this._flowResetAll();
+          this.flowRound = 0;
+          this._flowActiveToolCount = 0;
+          this.flowStats = { messages: 0, tools: 0, errors: 0 };
+          this._flowSetNode(NODE_MSG, 'active');
+          this._flowActiveNodeIdx = NODE_MSG; // Bug #2: track active node
+          this.flowCenter = { icon: '📨', label: '收到消息', detail: (data.text || '').substring(0, 60) };
+          this.flowStats.messages++;
+          historyItem = { ...historyItem, icon: '📨', label: '收到消息', detail: (data.text || '').substring(0, 40) };
+          break;
+
+        case 'agent_loop.started':
+          this._flowSetNode(NODE_MSG, 'done');
+          this._flowSetNode(NODE_AGENT, 'active');
+          this._flowActiveNodeIdx = NODE_AGENT;
+          this.flowCenter = { icon: '🤖', label: 'Agent 启动', detail: (data.channel || '') + (data.sender_id ? ' → ' + data.sender_id : '') };
+          historyItem = { ...historyItem, icon: '🤖', label: 'Agent 启动', detail: data.channel || '' };
+          break;
+
+        case 'agent_loop.assistant_message':
+          if (this.flowRingNodes[NODE_AGENT].state === 'active') {
+            this._flowSetNode(NODE_AGENT, 'done');
+          }
+          this._flowSetNode(NODE_MODEL, 'active');
+          this._flowActiveNodeIdx = NODE_MODEL;
+          // Bug #3: count rounds by model responses with tool calls
+          if (data.has_tool_calls) this.flowRound++;
+          this.flowCenter = { icon: '🧠', label: '模型调用中', detail: data.has_tool_calls ? '含工具调用' : '直接回复' };
+          historyItem = { ...historyItem, icon: '🧠', label: '模型响应', detail: data.has_tool_calls ? '含工具调用' : '' };
+          break;
+
+        case 'tool.exec_started':
+          this._flowSetNode(NODE_MODEL, 'done');
+          // Bug #4: parallel tool counting
+          this._flowActiveToolCount++;
+          this._flowSetNode(NODE_TOOL, 'active');
+          this._flowActiveNodeIdx = NODE_TOOL;
+          this.flowCenter = { icon: '⏳', label: '工具执行中', detail: data.tool_name || '' };
+          this.flowStats.tools++;
+          historyItem = { ...historyItem, icon: '⏳', label: '工具执行', detail: data.tool_name || '' };
+          break;
+
+        case 'tool.exec_completed':
+          // Bug #4: decrement tool count, only advance if all done
+          this._flowActiveToolCount = Math.max(0, this._flowActiveToolCount - 1);
+          if (this._flowActiveToolCount === 0) {
+            this._flowSetNode(NODE_TOOL, 'done');
+            this._flowSetNode(NODE_RESULT, 'active');
+            this._flowActiveNodeIdx = NODE_RESULT;
+          }
+          this.flowCenter = { icon: '✅', label: '工具完成', detail: (data.tool_name || '') + ' (' + Math.round(data.duration_ms || 0) + 'ms)' };
+          historyItem = { ...historyItem, icon: '✅', label: '工具完成', detail: (data.tool_name || '') + ' ' + Math.round(data.duration_ms || 0) + 'ms' };
+          break;
+
+        case 'tool.exec_failed':
+          this._flowActiveToolCount = Math.max(0, this._flowActiveToolCount - 1);
+          if (this._flowActiveToolCount === 0) {
+            this._flowSetNode(NODE_TOOL, 'error');
+          }
+          this.flowCenter = { icon: '❌', label: '工具失败', detail: (data.tool_name || '') + ': ' + (data.error || '').substring(0, 60) };
+          this.flowStats.errors++;
+          historyItem = { ...historyItem, icon: '❌', label: '工具失败', detail: (data.tool_name || '') + ' ' + (data.error || '').substring(0, 30) };
+          break;
+
+        case 'tool.approval_pending':
+          this._flowSetNode(NODE_TOOL, 'active');
+          this._flowActiveNodeIdx = NODE_TOOL;
+          this.flowCenter = { icon: '🔒', label: '等待审批', detail: (data.tool_name || '') + ': ' + (data.command_preview || '').substring(0, 40) };
+          historyItem = { ...historyItem, icon: '🔒', label: '等待审批', detail: data.tool_name || '' };
+          break;
+
+        case 'message.replied':
+          this._flowSetNode(NODE_RESULT, 'done');
+          this._flowSetNode(NODE_REPLY, 'active');
+          this._flowActiveNodeIdx = NODE_REPLY;
+          this.flowCenter = { icon: '📤', label: '回复已发送', detail: (data.reply_length || 0) + ' 字符' };
+          historyItem = { ...historyItem, icon: '📤', label: '回复已发送', detail: (data.reply_length || 0) + ' 字符' };
+          break;
+
+        case 'agent_loop.completed':
+          this._flowActiveToolCount = 0;
+          for (let i = 0; i < this.flowRingNodes.length; i++) {
+            if (this.flowRingNodes[i].state !== 'idle') {
+              this.flowRingNodes[i].state = 'done';
+            }
+          }
+          this._flowBuildArcs();
+          this._flowActiveNodeIdx = -1;
+          const ms = Math.round(data.duration_ms || 0);
+          const rounds = data.total_rounds || 0;
+          const roundLabel = rounds > 0 ? rounds + ' 轮工具调用' : '直接回复';
+          this.flowCenter = { icon: '🏁', label: '流程完成', detail: ms + 'ms, ' + roundLabel };
+          historyItem = { ...historyItem, icon: '🏁', label: '流程完成', detail: ms + 'ms' };
+          // Bug #6: track timer, cancel on new message
+          clearTimeout(this._flowResetTimer);
+          this._flowResetTimer = setTimeout(() => {
+            this._flowResetAll();
+          }, 5000);
+          break;
+
+        case 'agent.error':
+          this._flowActiveNodeIdx = -1;
+          this.flowCenter = { icon: '💥', label: '智能体错误', detail: (data.error || '').substring(0, 60) };
+          this.flowStats.errors++;
+          historyItem = { ...historyItem, icon: '💥', label: '智能体错误', detail: (data.error || '').substring(0, 30) };
+          break;
+
+        default:
+          return;
+      }
+
+      this.flowHistory.push(historyItem);
+      if (this.flowHistory.length > 20) this.flowHistory = this.flowHistory.slice(-20);
     },
   };
 }

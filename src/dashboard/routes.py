@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
@@ -799,6 +800,75 @@ def register_dashboard(app: FastAPI, application):
             return {"ok": True, "message": "Configuration updated and saved"}
         except Exception as e:
             return {"ok": False, "error": str(e)}
+
+    # ── Agent Flow SSE ─────────────────────────────────────────
+
+    @router.get("/api/dashboard/flow/events")
+    async def flow_events(request: Request):
+        """SSE endpoint: stream agent/tool/message events in real-time."""
+        _check_auth(request)
+
+        from src.events import get_event_bus
+
+        bus = get_event_bus()
+        queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+
+        FLOW_EVENTS = {
+            "message.received",
+            "message.replied",
+            "agent_loop.started",
+            "agent_loop.completed",
+            "agent_loop.assistant_message",
+            "agent.error",
+            "tool.exec_started",
+            "tool.exec_completed",
+            "tool.exec_failed",
+            "tool.approval_pending",
+        }
+
+        async def _on_event(**ctx):
+            """Async handler: push event into per-client queue (thread-safe)."""
+            try:
+                queue.put_nowait(ctx)
+            except asyncio.QueueFull:
+                try:
+                    queue.get_nowait()
+                    queue.put_nowait(ctx)
+                except Exception:
+                    pass
+
+        subscriptions = []
+        for ev_name in FLOW_EVENTS:
+            sub = bus.subscribe(ev_name, _on_event)
+            subscriptions.append(sub)
+
+        async def event_generator():
+            try:
+                yield f"data: {json.dumps({'type': 'connected'})}\n\n"
+                while True:
+                    try:
+                        item = await asyncio.wait_for(queue.get(), timeout=30.0)
+                        payload = json.dumps(item, ensure_ascii=False, default=str)
+                        yield f"data: {payload}\n\n"
+                    except asyncio.TimeoutError:
+                        yield ": keepalive\n\n"
+            except asyncio.CancelledError:
+                pass
+            finally:
+                for sub in subscriptions:
+                    bus.unsubscribe(sub.event, sub.handler)
+
+        from starlette.responses import StreamingResponse
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     app.include_router(router)
     logger.info("Dashboard registered at /dashboard")

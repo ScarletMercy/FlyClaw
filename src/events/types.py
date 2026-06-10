@@ -38,18 +38,6 @@ WILDCARD_PATTERNS: dict[str, list[str]] = {
         "learning.skill_created",
     ],
     "config.*": ["config.reloaded"],
-    "kanban.*": [
-        "kanban.task.created",
-        "kanban.task.claimed",
-        "kanban.task.completed",
-        "kanban.task.blocked",
-        "kanban.task.unblocked",
-        "kanban.task.crashed",
-        "kanban.task.timed_out",
-        "kanban.task.promoted",
-        "kanban.task.reclaimed",
-        "kanban.task.heartbeat",
-    ],
 }
 
 

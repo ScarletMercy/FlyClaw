@@ -214,7 +214,6 @@ class TestAdjustPathsForInstance:
         p_ms = self._p(cfg.memory_store.db_path)
         p_task = self._p(cfg.task.db_path)
         p_ss = self._p(cfg.session_search.index_path)
-        p_kan = self._p(cfg.kanban.db_dir)
         for label, val in [
             ("checkpointer", p_cp),
             ("memory", p_mem),
@@ -223,7 +222,6 @@ class TestAdjustPathsForInstance:
             ("memory_store", p_ms),
             ("task", p_task),
             ("session_search", p_ss),
-            ("kanban", p_kan),
         ]:
             assert ".flyclaw2" in val, f"{label} path not adjusted: {val}"
 

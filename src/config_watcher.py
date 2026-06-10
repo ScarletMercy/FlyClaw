@@ -74,7 +74,6 @@ class ReloadPlan:
         "session.",
         "plugins.",
         "canvas.",
-        "kanban.",
         "voice.",
         "memory_store.",
         "task.",

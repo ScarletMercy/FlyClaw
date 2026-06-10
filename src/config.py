@@ -408,18 +408,6 @@ class CanvasConfig(BaseModel):
     live_reload: bool = True
 
 
-class KanbanConfig(BaseModel):
-    """Kanban multi-instance task orchestration configuration."""
-
-    enabled: bool = False
-    db_dir: str = "~/.flyclaw/data/kanban"
-    claim_ttl_seconds: int = 900  # 15 minutes
-    dispatch_interval_seconds: int = Field(default=60, ge=5)
-    failure_limit: int = Field(default=2, ge=1)  # auto-block after N consecutive failures
-    max_concurrent_workers: int = Field(default=3, ge=1, le=20)
-    notify_on_terminal: bool = True  # send channel notification on completed/blocked
-
-
 class HookConfig(BaseModel):
     """User-defined event hook configuration."""
 
@@ -457,7 +445,6 @@ class AppConfig(BaseModel):
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     delegation: DelegationConfig = Field(default_factory=DelegationConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
-    kanban: KanbanConfig = Field(default_factory=KanbanConfig)
 
 
 def _expand_paths(config: AppConfig) -> AppConfig:
@@ -486,9 +473,6 @@ def _expand_paths(config: AppConfig) -> AppConfig:
     # Session search
     config.session_search.index_path = str(Path(config.session_search.index_path).expanduser().resolve())
 
-    # Kanban
-    config.kanban.db_dir = str(Path(config.kanban.db_dir).expanduser().resolve())
-
     return config
 
 
@@ -501,7 +485,6 @@ _INSTANCE_PATH_FIELDS: list[tuple[str, str]] = [
     ("task.db_path", "task_runs.db"),
     ("auth.db_path", "auth.db"),
     ("session_search.index_path", "session_index.db"),
-    ("kanban.db_dir", "kanban"),
 ]
 
 
