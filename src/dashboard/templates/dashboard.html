@@ -1212,15 +1212,25 @@ function app() {
           }
           this._flowSetNode(NODE_MODEL, 'active');
           this._flowActiveNodeIdx = NODE_MODEL;
-          // Bug #3: count rounds by model responses with tool calls
-          if (data.has_tool_calls) this.flowRound++;
           this.flowCenter = { icon: '🧠', label: '模型调用中', detail: data.has_tool_calls ? '含工具调用' : '直接回复' };
           historyItem = { ...historyItem, icon: '🧠', label: '模型响应', detail: data.has_tool_calls ? '含工具调用' : '' };
           break;
 
         case 'tool.exec_started':
+          // 轮次计数：每个工具批次的首个工具触发
+          if (this._flowActiveToolCount === 0) {
+            this.flowRound++;
+          }
+          // 兜底：若 assistant_message 未触发（纯工具调用），手动完成 Agent→Model 过渡
+          if (this.flowRingNodes[NODE_AGENT].state === 'active') {
+            this._flowSetNode(NODE_AGENT, 'done');
+            this._flowSetNode(NODE_MODEL, 'active');
+          }
           this._flowSetNode(NODE_MODEL, 'done');
-          // Bug #4: parallel tool counting
+          // 清除上一轮残留状态
+          this._flowSetNode(NODE_RESULT, 'idle');
+          this._flowSetNode(NODE_REPLY, 'idle');
+          // 并行工具计数
           this._flowActiveToolCount++;
           this._flowSetNode(NODE_TOOL, 'active');
           this._flowActiveNodeIdx = NODE_TOOL;
@@ -1288,6 +1298,7 @@ function app() {
           break;
 
         case 'agent.error':
+          this._flowActiveToolCount = 0;
           this._flowActiveNodeIdx = -1;
           this.flowCenter = { icon: '💥', label: '智能体错误', detail: (data.error || '').substring(0, 60) };
           this.flowStats.errors++;

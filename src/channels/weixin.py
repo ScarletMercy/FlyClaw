@@ -191,9 +191,9 @@ def _headers(token: Optional[str], body: str) -> dict[str, str]:
 
 
 def _account_dir() -> Path:
-    from src.instance import instance_label, data_dir
+    from src.instance import data_dir
 
-    path = data_dir().parent / f"weixin{instance_label()}" / "accounts"
+    path = data_dir().parent / "weixin" / "accounts"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
