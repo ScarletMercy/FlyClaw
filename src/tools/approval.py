@@ -42,7 +42,11 @@ class _PendingApproval:
 
 
 class ApprovalManager:
-    def __init__(self, data_dir: str = "~/.flyclaw/data"):
+    def __init__(self, data_dir: str | None = None):
+        if data_dir is None:
+            from src.instance import data_dir as _dd
+
+            data_dir = str(_dd())
         self._data_dir = Path(data_dir).expanduser().resolve()
         self._pending: dict[str, _PendingApproval] = {}
         self._durable: dict[str, list[str]] = {}

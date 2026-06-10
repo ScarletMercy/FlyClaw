@@ -12,11 +12,17 @@ from .types import TaskCheckpoint, TaskRun
 
 logger = logging.getLogger("flyclaw.task.store")
 
-_DEFAULT_DB = "~/.flyclaw/data/task_runs.db"
+
+def _default_db_path() -> str:
+    from src.instance import data_dir
+
+    return str(data_dir() / "task_runs.db")
 
 
 class TaskRunStore:
-    def __init__(self, db_path: str = _DEFAULT_DB):
+    def __init__(self, db_path: str | None = None):
+        if db_path is None:
+            db_path = _default_db_path()
         self.db_path = str(Path(db_path).expanduser().resolve())
         self._conn: Optional[aiosqlite.Connection] = None
 
@@ -105,7 +111,7 @@ class TaskRunStore:
 _store: Optional[TaskRunStore] = None
 
 
-def get_task_store(db_path: str = _DEFAULT_DB) -> TaskRunStore:
+def get_task_store(db_path: str | None = None) -> TaskRunStore:
     global _store
     if _store is None:
         _store = TaskRunStore(db_path)

@@ -23,18 +23,19 @@ from src.commands.dispatcher import CommandDispatcher
 
 logger = logging.getLogger("flyclaw")
 
-_FLYCLAW_DATA_DIR = Path.home() / ".flyclaw" / "data"
 
+def _get_flyclaw_data_dir() -> Path:
+    from src.instance import data_dir
 
-def _ensure_flyclaw_data_dir() -> Path:
-    _FLYCLAW_DATA_DIR.mkdir(parents=True, exist_ok=True)
-    return _FLYCLAW_DATA_DIR
+    d = data_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    return d
 
 
 class ServiceContainer:
     def __init__(self, config=None):
         self.config = config or load_config()
-        _ensure_flyclaw_data_dir()
+        _get_flyclaw_data_dir()
         self.skills_cache: list = []
         self.agent_loop: AgentLoop | None = None
         self.state_store: StateStore | None = None
@@ -58,10 +59,14 @@ class ServiceContainer:
         self.media_understanding_runner = None
         self.background_tasks: set = set()
         self._qq_mu_runner = None
-        self._config_path: str = str(Path.home() / ".flyclaw" / "config.yaml")
+        from src.instance import config_path as _cp
+
+        self._config_path: str = str(_cp())
         self._config_watcher = None
         self._reload_executor = None
         self._startup_sync_task = None
+        self.kanban_store = None
+        self._kanban_dispatch_task = None
 
     # ── Skill directories & loading ──────────────────────────────────
 
@@ -69,7 +74,9 @@ class ServiceContainer:
         dirs: list[tuple[str, Path]] = []
         workspace = Path(self.config.agents.workspace).expanduser().resolve()
 
-        user_skills = Path.home() / ".flyclaw" / "skills"
+        from src.instance import skills_dir
+
+        user_skills = skills_dir()
         user_skills.mkdir(parents=True, exist_ok=True)
         dirs.append(("user", user_skills))
 
@@ -133,6 +140,8 @@ class ServiceContainer:
             "src.tools.task_tools",
             "src.agents.delegate",
         ]
+        if getattr(self.config, "kanban", None) and self.config.kanban.enabled:
+            tool_modules.append("src.kanban.tools")
         if getattr(self.config.tools, "browser", None) and self.config.tools.browser.enabled:
             tool_modules.append("src.tools.browser.tools")
         if getattr(self.config, "canvas", None) and self.config.canvas.enabled:
@@ -208,7 +217,7 @@ class ServiceContainer:
                 from src.memory.lance_store import LanceMemoryStore
 
                 lancedb_uri = getattr(
-                    self.config.memory, "lancedb_uri", str(Path.home() / ".flyclaw" / "data" / "memory_lancedb")
+                    self.config.memory, "lancedb_uri", str(_get_flyclaw_data_dir() / "memory_lancedb")
                 )
                 store = LanceMemoryStore(
                     self.config.memory.db_path,
@@ -279,7 +288,7 @@ class ServiceContainer:
             idle_reset_minutes=self.config.session.idle_reset_minutes,
         )
         self.session_registry = SessionRegistry()
-        await self.session_registry.init(str(_FLYCLAW_DATA_DIR / "sessions.json"))
+        await self.session_registry.init(str(_get_flyclaw_data_dir() / "sessions.json"))
         self.dispatcher = CommandDispatcher(skills if skills else [], config=self.config)
 
     def _setup_registries(self):
@@ -287,7 +296,7 @@ class ServiceContainer:
         from src.tools.approval import ApprovalManager
 
         self.tool_registry = ToolRegistry()
-        self.approval_manager = ApprovalManager(data_dir=str(_FLYCLAW_DATA_DIR))
+        self.approval_manager = ApprovalManager(data_dir=str(_get_flyclaw_data_dir()))
 
     def _setup_media_understanding(self):
         if not self.config.tools.media_understanding.enabled:
@@ -677,6 +686,91 @@ class ServiceContainer:
             except Exception as e:
                 logger.warning("[warmup] Model API warmup failed (non-critical): %s", e)
 
+    # ── Startup: kanban multi-instance ───────────────────────────────
+
+    async def _setup_kanban(self):
+        if not (getattr(self.config, "kanban", None) and self.config.kanban.enabled):
+            return
+        # Idempotent guard: prevent duplicate dispatch loops
+        if self._kanban_dispatch_task is not None:
+            logger.warning("Kanban dispatch loop already running, skipping duplicate setup")
+            return
+        try:
+            from src.kanban.store import KanbanStore
+            from src.kanban.dispatcher import run_dispatch_loop
+
+            db_dir = Path(self.config.kanban.db_dir).expanduser() / "default"
+            db_dir.mkdir(parents=True, exist_ok=True)
+            db_path = db_dir / "kanban.db"
+
+            store = KanbanStore(str(db_path))
+            await store.initialize()
+            # Only assign to self after successful initialization
+            self.kanban_store = store
+            logger.info("Kanban 存储已初始化: %s", db_path)
+
+            # Guard: dispatch loop requires agent_registry with registered agents
+            from src.agents.registry import get_agent_registry
+
+            registry = get_agent_registry()
+            if registry is None or registry.count == 0:
+                logger.warning(
+                    "Kanban dispatch loop not started: no sub-agents registered. "
+                    "Define agents.subagents in config to enable worker dispatch. "
+                    "Kanban tools remain available for manual/orchestrator use."
+                )
+                return
+
+            # Start dispatch loop as background task
+            self._kanban_dispatch_task = asyncio.create_task(
+                run_dispatch_loop(
+                    self.kanban_store,
+                    interval_seconds=self.config.kanban.dispatch_interval_seconds,
+                    max_spawn=self.config.kanban.max_concurrent_workers,
+                    failure_limit=self.config.kanban.failure_limit,
+                    ttl_seconds=self.config.kanban.claim_ttl_seconds,
+                ),
+                name="kanban-dispatch-loop",
+            )
+            logger.info(
+                "Kanban 调度器已启动 (interval=%ds, max_workers=%d)",
+                self.config.kanban.dispatch_interval_seconds,
+                self.config.kanban.max_concurrent_workers,
+            )
+        except Exception as e:
+            # Ensure no partial state on failure
+            self.kanban_store = None
+            self._kanban_dispatch_task = None
+            logger.error("Kanban 初始化失败: %s", e, exc_info=True)
+
+    async def _stop_kanban(self):
+        # Early exit: nothing to stop if kanban was never enabled or already cleaned up
+        if self._kanban_dispatch_task is None and self.kanban_store is None:
+            return
+
+        # Phase 1: cancel dispatch loop
+        if self._kanban_dispatch_task:
+            self._kanban_dispatch_task.cancel()
+            try:
+                await self._kanban_dispatch_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._kanban_dispatch_task = None
+        # Cancel in-flight worker tasks
+        try:
+            from src.kanban.dispatcher import cancel_active_workers
+
+            await cancel_active_workers(timeout=5.0)
+        except Exception:
+            logger.debug("Failed to cancel kanban workers", exc_info=True)
+        # Phase 2: close store (after workers are done)
+        if self.kanban_store:
+            try:
+                await self.kanban_store.close()
+            except Exception:
+                logger.debug("Failed to close kanban store", exc_info=True)
+            self.kanban_store = None
+
     # ── Startup: main orchestrator ───────────────────────────────────
 
     async def on_startup(self):
@@ -685,6 +779,7 @@ class ServiceContainer:
         await self._maybe_run_curator()
         if self.cron_service:
             await self.cron_service.start()
+        await self._setup_kanban()
         await self._start_canvas()
         await self._start_session_maintenance()
         await self._start_memory_watcher()
@@ -751,6 +846,9 @@ class ServiceContainer:
                     await self.agent_loop.close()
                 except Exception as e:
                     logger.debug("Failed to close AI client: %s", e)
+            # Kanban: stop dispatch loop, cancel workers, close store
+            # Must be after agent_loop/channel shutdown so workers finish cleanly
+            await self._stop_kanban()
             # Clear all tool cache temp files on shutdown
             try:
                 from src.agent.tool_cache import clear_all_caches

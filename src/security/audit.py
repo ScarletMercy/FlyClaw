@@ -33,7 +33,9 @@ def run_security_audit(config) -> dict[str, Any]:
     else:
         _check("exec-approval", "PASS", "")
 
-    data_dir = Path.home() / ".flyclaw" / "data"
+    from src.instance import data_dir as _data_dir
+
+    data_dir = _data_dir()
     if data_dir.exists():
         _check("data-dir", "PASS", "")
     else:

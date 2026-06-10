@@ -89,7 +89,9 @@ _store_lock: asyncio.Lock = asyncio.Lock()
 
 
 class MemoryStore:
-    def __init__(self, db_path: str = "~/.flyclaw/data/memories.db"):
+    def __init__(self, db_path: str | None = None):
+        if db_path is None:
+            db_path = _default_memories_db()
         self.db_path = str(Path(db_path).expanduser().resolve())
         self._conn: aiosqlite.Connection | None = None
         self._fts_available: bool = False
@@ -252,7 +254,13 @@ class MemoryStore:
         return json.dumps({"ok": True, "key": key}, ensure_ascii=False)
 
 
-async def get_memory_store(db_path: str = "~/.flyclaw/data/memories.db") -> MemoryStore:
+def _default_memories_db() -> str:
+    from src.instance import data_dir
+
+    return str(data_dir() / "memories.db")
+
+
+async def get_memory_store(db_path: str | None = None) -> MemoryStore:
     global store, _store_initialized
     if _store_initialized:
         return store
@@ -260,7 +268,7 @@ async def get_memory_store(db_path: str = "~/.flyclaw/data/memories.db") -> Memo
         if _store_initialized:
             return store
         if store is None:
-            store = MemoryStore(db_path)
+            store = MemoryStore(db_path or _default_memories_db())
         await store.initialize()
         _store_initialized = True
     return store

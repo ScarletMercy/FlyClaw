@@ -51,7 +51,11 @@ CREATE INDEX IF NOT EXISTS idx_pairing_expires ON pairing_codes(expires_at);
 
 
 class AuthStore:
-    def __init__(self, db_path: str = "~/.flyclaw/data/auth.db"):
+    def __init__(self, db_path: str | None = None):
+        if db_path is None:
+            from src.instance import data_dir
+
+            db_path = str(data_dir() / "auth.db")
         self._path = Path(db_path).expanduser().resolve()
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = asyncio.Lock()

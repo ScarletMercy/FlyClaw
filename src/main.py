@@ -4,10 +4,6 @@ import asyncio
 import logging
 import sys
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 import uvicorn
 
 from src.app import ServiceContainer
@@ -59,6 +55,12 @@ class Application:
 
 
 def main():
+    from src.instance import get_instance, parse_instance_from_argv, set_instance
+
+    if get_instance() is None:
+        n = parse_instance_from_argv()
+        set_instance(n)
+
     import os
 
     if sys.platform == "win32":

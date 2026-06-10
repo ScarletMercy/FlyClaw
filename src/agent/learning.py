@@ -28,7 +28,9 @@ class LearningLoop:
         # Use configured skills directory if available, otherwise default
         from pathlib import Path
 
-        skills_dir = Path.home() / ".flyclaw" / "skills"
+        from src.instance import skills_dir as _skills_dir
+
+        skills_dir = _skills_dir()
         extra_dirs = getattr(config.skills, "extra_dirs", [])
         if extra_dirs:
             skills_dir = Path(extra_dirs[0]).expanduser().resolve()

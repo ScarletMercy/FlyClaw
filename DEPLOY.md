@@ -171,7 +171,7 @@ export QQ_CLIENT_SECRET="..."
 export TAVILY_API_KEY="tvly-..."
 ```
 
-或在项目根目录的 `.env` 文件中设置（`python-dotenv` 自动加载）。
+或直接在 shell 配置（`~/.bashrc` / `~/.zshrc`）中设置。
 
 ### 2.4 支持的模型
 

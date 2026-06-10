@@ -17,8 +17,9 @@ from pathlib import Path
 
 def _load_config():
     from src.config import load_config
+    from src.instance import config_path
 
-    return load_config()
+    return load_config(config_path())
 
 
 def cmd_doctor(args):
@@ -336,6 +337,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def cli_main():
+    from src.instance import parse_instance_from_argv, set_instance
+
+    n = parse_instance_from_argv()
+    set_instance(n)
+
     parser = build_parser()
     args = parser.parse_args()
 

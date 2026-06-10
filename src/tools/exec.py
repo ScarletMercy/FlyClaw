@@ -519,11 +519,13 @@ async def exec_command(
         else:
             wd = workspace
 
+        from src.instance import temp_dir
+
         allowed = (
             [workspace.resolve()]
             + [Path(d).expanduser().resolve() for d in sandbox_allowed_dirs]
             + _collect_skill_dirs()
-            + [(Path.home() / ".flyclaw" / "temp").resolve()]
+            + [temp_dir().resolve()]
         )
 
         def _is_under(child: Path, parent: Path) -> bool:

@@ -112,7 +112,11 @@ _WEIXIN_CDN_ALLOWLIST: frozenset[str] = frozenset(
 
 _weixin_channel: Optional[WeixinChannel] = None
 
-_FLYCLAW_DATA_DIR = Path.home() / ".flyclaw" / "data"
+
+def _get_data_dir() -> Path:
+    from src.instance import data_dir
+
+    return data_dir()
 
 
 def get_weixin_channel() -> Optional[WeixinChannel]:
@@ -187,7 +191,9 @@ def _headers(token: Optional[str], body: str) -> dict[str, str]:
 
 
 def _account_dir() -> Path:
-    path = Path.home() / ".flyclaw" / "weixin" / "accounts"
+    from src.instance import instance_label, data_dir
+
+    path = data_dir().parent / f"weixin{instance_label()}" / "accounts"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -308,7 +314,7 @@ def _mime_from_filename(filename: str) -> str:
 
 
 async def _cache_media(data: bytes, filename: str) -> str:
-    cache_dir = _FLYCLAW_DATA_DIR / "weixin_media"
+    cache_dir = _get_data_dir() / "weixin_media"
     cache_dir.mkdir(parents=True, exist_ok=True)
     prefix = hashlib.md5(data).hexdigest()[:12]
     path = cache_dir / f"{prefix}_{filename}"
@@ -954,7 +960,7 @@ class WeixinChannel(Channel):
         if self._send_session and not self._send_session.closed:
             await self._send_session.close()
         self._send_session = None
-        cache_dir = _FLYCLAW_DATA_DIR / "weixin_media"
+        cache_dir = _get_data_dir() / "weixin_media"
         if cache_dir.exists():
             now = time.time()
             for f in cache_dir.iterdir():

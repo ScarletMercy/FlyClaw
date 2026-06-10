@@ -193,9 +193,9 @@ class ReloadExecutor:
             if backend == "lancedb":
                 from src.memory.lance_store import LanceMemoryStore
 
-                lancedb_uri = getattr(
-                    config.memory, "lancedb_uri", str(Path.home() / ".flyclaw" / "data" / "memory_lancedb")
-                )
+                from src.instance import data_dir
+
+                lancedb_uri = getattr(config.memory, "lancedb_uri", str(data_dir() / "memory_lancedb"))
                 store = LanceMemoryStore(
                     config.memory.db_path,
                     dimensions=dimensions,

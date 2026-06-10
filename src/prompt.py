@@ -75,7 +75,9 @@ PLATFORM_HINTS: dict[str, str] = {
 
 
 def _load_soul_md() -> str:
-    soul_path = Path.home() / ".flyclaw" / "SOUL.md"
+    from src.instance import config_path
+
+    soul_path = config_path().parent / "SOUL.md"
     try:
         if soul_path.exists():
             content = soul_path.read_text(encoding="utf-8").strip()

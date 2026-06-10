@@ -27,12 +27,33 @@ from .types import ScanResult, SkillBundle, SkillMeta
 
 logger = logging.getLogger("flyclaw.skills.hub")
 
-SKILLS_DIR = Path.home() / ".flyclaw" / "skills"
-HUB_DIR = SKILLS_DIR / ".hub"
-QUARANTINE_DIR = HUB_DIR / "quarantine"
-LOCK_FILE = HUB_DIR / "lock.json"
-AUDIT_LOG = HUB_DIR / "audit.log"
-INDEX_CACHE_DIR = HUB_DIR / "index-cache"
+
+def _skills_dir() -> Path:
+    from src.instance import skills_dir
+
+    return skills_dir()
+
+
+def _hub_dir() -> Path:
+    return _skills_dir() / ".hub"
+
+
+def _quarantine_dir() -> Path:
+    return _hub_dir() / "quarantine"
+
+
+def _lock_file() -> Path:
+    return _hub_dir() / "lock.json"
+
+
+def _audit_log() -> Path:
+    return _hub_dir() / "audit.log"
+
+
+def _index_cache_dir() -> Path:
+    return _hub_dir() / "index-cache"
+
+
 INDEX_CACHE_TTL = 3600
 
 _MAX_REDIRECTS = 5
@@ -77,7 +98,7 @@ async def _guarded_http_get(url: str, *, timeout: int = 20) -> Optional[httpx.Re
 
 
 async def _read_index_cache(key: str) -> Optional[Any]:
-    cache_file = INDEX_CACHE_DIR / f"{key}.json"
+    cache_file = _index_cache_dir() / f"{key}.json"
     if not cache_file.exists():
         return None
     try:
@@ -90,8 +111,8 @@ async def _read_index_cache(key: str) -> Optional[Any]:
 
 
 async def _write_index_cache(key: str, data: Any) -> None:
-    INDEX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    cache_file = INDEX_CACHE_DIR / f"{key}.json"
+    _index_cache_dir().mkdir(parents=True, exist_ok=True)
+    cache_file = _index_cache_dir() / f"{key}.json"
     try:
         text = json.dumps(data, ensure_ascii=False)
         await asyncio.to_thread(cache_file.write_text, text, encoding="utf-8")
@@ -880,8 +901,8 @@ def _parse_frontmatter_quick(content: str) -> dict:
 
 
 class HubLockFile:
-    def __init__(self, path: Path = LOCK_FILE):
-        self.path = path
+    def __init__(self, path: Path | None = None):
+        self.path = path if path is not None else _lock_file()
 
     def load(self) -> dict:
         if not self.path.exists():
@@ -945,29 +966,29 @@ def append_audit_log(
     verdict: str,
     extra: str = "",
 ) -> None:
-    AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+    _audit_log().parent.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     parts = [timestamp, action, skill_name, f"{source}:{trust_level}", verdict]
     if extra:
         parts.append(extra)
     line = " ".join(parts) + "\n"
     try:
-        with open(AUDIT_LOG, "a", encoding="utf-8") as f:
+        with open(_audit_log(), "a", encoding="utf-8") as f:
             f.write(line)
     except OSError:
         pass
 
 
 def ensure_hub_dirs() -> None:
-    HUB_DIR.mkdir(parents=True, exist_ok=True)
-    QUARANTINE_DIR.mkdir(exist_ok=True)
-    INDEX_CACHE_DIR.mkdir(exist_ok=True)
-    if not LOCK_FILE.exists():
-        LOCK_FILE.write_text('{"version": 1, "installed": {}}\n', encoding="utf-8")
-    if not AUDIT_LOG.exists():
-        AUDIT_LOG.touch()
-    if not (HUB_DIR / "taps.json").exists():
-        (HUB_DIR / "taps.json").write_text('{"taps": []}\n', encoding="utf-8")
+    _hub_dir().mkdir(parents=True, exist_ok=True)
+    _quarantine_dir().mkdir(exist_ok=True)
+    _index_cache_dir().mkdir(exist_ok=True)
+    if not _lock_file().exists():
+        _lock_file().write_text('{"version": 1, "installed": {}}\n', encoding="utf-8")
+    if not _audit_log().exists():
+        _audit_log().touch()
+    if not (_hub_dir() / "taps.json").exists():
+        (_hub_dir() / "taps.json").write_text('{"taps": []}\n', encoding="utf-8")
 
 
 def quarantine_bundle(bundle: SkillBundle) -> Path:
@@ -978,7 +999,7 @@ def quarantine_bundle(bundle: SkillBundle) -> Path:
         safe_rel_path = _validate_bundle_rel_path(rel_path)
         validated_files.append((safe_rel_path, file_content))
 
-    dest = QUARANTINE_DIR / skill_name
+    dest = _quarantine_dir() / skill_name
     if dest.exists():
         shutil.rmtree(dest)
     dest.mkdir(parents=True)
@@ -1002,11 +1023,11 @@ def install_from_quarantine(
 ) -> Path:
     safe_skill_name = _validate_skill_name(skill_name)
     quarantine_resolved = quarantine_path.resolve()
-    quarantine_root = QUARANTINE_DIR.resolve()
+    quarantine_root = _quarantine_dir().resolve()
     if not quarantine_resolved.is_relative_to(quarantine_root):
         raise ValueError(f"Unsafe quarantine path: {quarantine_path}")
 
-    install_dir = SKILLS_DIR / safe_skill_name
+    install_dir = _skills_dir() / safe_skill_name
     install_dir.parent.mkdir(parents=True, exist_ok=True)
 
     skill_hash_val = content_hash(quarantine_path)
@@ -1024,7 +1045,7 @@ def install_from_quarantine(
         trust_level=bundle.trust_level,
         scan_verdict=scan_result.verdict,
         skill_hash=skill_hash_val,
-        install_path=str(install_dir.relative_to(SKILLS_DIR)),
+        install_path=str(install_dir.relative_to(_skills_dir())),
         files=list(bundle.files.keys()),
         metadata=bundle.metadata,
     )

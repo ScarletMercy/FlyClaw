@@ -55,7 +55,9 @@ class AuditEntry:
 class AuditStore:
     """SQLite-backed audit log store (async)."""
 
-    def __init__(self, db_path: str = "~/.flyclaw/data/audit.db"):
+    def __init__(self, db_path: str | None = None):
+        if db_path is None:
+            db_path = _default_db_path()
         self.db_path = Path(db_path).expanduser().resolve()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn: Optional[aiosqlite.Connection] = None
@@ -243,18 +245,24 @@ _store: Optional[AuditStore] = None
 _subscriptions: list = []
 
 
-def get_audit_store(db_path: str = "~/.flyclaw/data/audit.db") -> AuditStore:
+def _default_db_path() -> str:
+    from src.instance import data_dir
+
+    return str(data_dir() / "audit.db")
+
+
+def get_audit_store(db_path: str | None = None) -> AuditStore:
     """Get or create the audit store singleton."""
     global _store
     if _store is None:
-        _store = AuditStore(db_path)
+        _store = AuditStore(db_path or _default_db_path())
     return _store
 
 
-def reset_audit_store(db_path: str = "~/.flyclaw/data/audit.db") -> AuditStore:
+def reset_audit_store(db_path: str | None = None) -> AuditStore:
     """Reset the audit store singleton (for testing or multi-environment)."""
     global _store, _subscriptions
-    _store = AuditStore(db_path)
+    _store = AuditStore(db_path or _default_db_path())
     _subscriptions = []
     return _store
 

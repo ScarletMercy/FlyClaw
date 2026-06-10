@@ -15,7 +15,12 @@ from pathlib import Path
 
 import yaml
 
-CONFIG_PATH = Path.home() / ".flyclaw" / "config.yaml"
+
+def _get_config_path() -> Path:
+    from src.instance import config_path
+
+    return config_path()
+
 
 PRESETS = {
     "openai": {
@@ -145,20 +150,22 @@ def _ask_skip(section_label: str, d: dict, *essential_keys: str) -> bool:
 
 
 def _load_existing() -> dict | None:
-    if not CONFIG_PATH.exists():
+    cfg_path = _get_config_path()
+    if not cfg_path.exists():
         return None
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        with open(cfg_path, "r", encoding="utf-8") as f:
             return yaml.safe_load(f) or {}
     except Exception:
         return None
 
 
 def _save_config(config: dict) -> None:
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+    cfg_path = _get_config_path()
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(cfg_path, "w", encoding="utf-8") as f:
         yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    print(f"\n  配置已保存到 {CONFIG_PATH}")
+    print(f"\n  配置已保存到 {cfg_path}")
 
 
 def _section(config: dict, *keys: str) -> dict:
@@ -320,7 +327,10 @@ def _step_gateway(config: dict) -> None:
     if _ask_skip("网关", gw, "host", "port"):
         return
     gw["host"] = _ask("  监听地址", default=gw.get("host", "127.0.0.1"))
-    gw["port"] = int(_ask("  监听端口", default=str(gw.get("port", 18080))))
+    from src.instance import get_instance
+
+    default_port = 18080 + (get_instance() or 0)
+    gw["port"] = int(_ask("  监听端口", default=str(gw.get("port", default_port))))
     token = _ask("  认证令牌（留空则不启用认证）", default="")
     gw["auth_token"] = token
 
@@ -628,10 +638,18 @@ def _step_summary(config: dict) -> None:
 
 
 def run_wizard():
+    from src.instance import get_instance, instance_label
+
+    label = instance_label()
     print()
-    print("  ╔══════════════════════════════════════╗")
-    print("  ║        flyclaw 配置向导               ║")
-    print("  ╚══════════════════════════════════════╝")
+    if label:
+        print(f"  ╔══════════════════════════════════════╗")
+        print(f"  ║    flyclaw 配置向导 — 实例 {get_instance()}        ║")
+        print(f"  ╚══════════════════════════════════════╝")
+    else:
+        print("  ╔══════════════════════════════════════╗")
+        print("  ║        flyclaw 配置向导               ║")
+        print("  ╚══════════════════════════════════════╝")
     print()
     print("  按 Enter 保留当前/默认值，按 Ctrl+C 退出且不保存。")
     print()
@@ -661,6 +679,10 @@ def run_wizard():
 
 
 def main():
+    from src.instance import parse_instance_from_argv, set_instance
+
+    n = parse_instance_from_argv()
+    set_instance(n)
     run_wizard()
 
 

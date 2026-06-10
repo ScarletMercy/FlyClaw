@@ -408,6 +408,18 @@ class CanvasConfig(BaseModel):
     live_reload: bool = True
 
 
+class KanbanConfig(BaseModel):
+    """Kanban multi-instance task orchestration configuration."""
+
+    enabled: bool = False
+    db_dir: str = "~/.flyclaw/data/kanban"
+    claim_ttl_seconds: int = 900  # 15 minutes
+    dispatch_interval_seconds: int = Field(default=60, ge=5)
+    failure_limit: int = Field(default=2, ge=1)  # auto-block after N consecutive failures
+    max_concurrent_workers: int = Field(default=3, ge=1, le=20)
+    notify_on_terminal: bool = True  # send channel notification on completed/blocked
+
+
 class HookConfig(BaseModel):
     """User-defined event hook configuration."""
 
@@ -445,10 +457,14 @@ class AppConfig(BaseModel):
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     delegation: DelegationConfig = Field(default_factory=DelegationConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
+    kanban: KanbanConfig = Field(default_factory=KanbanConfig)
 
 
 def _expand_paths(config: AppConfig) -> AppConfig:
     """Expand ~ in all path fields to absolute paths."""
+    # Workspace
+    config.agents.workspace = str(Path(config.agents.workspace).expanduser().resolve())
+
     # Checkpointer
     config.checkpointer.path = str(Path(config.checkpointer.path).expanduser().resolve())
 
@@ -470,39 +486,97 @@ def _expand_paths(config: AppConfig) -> AppConfig:
     # Session search
     config.session_search.index_path = str(Path(config.session_search.index_path).expanduser().resolve())
 
+    # Kanban
+    config.kanban.db_dir = str(Path(config.kanban.db_dir).expanduser().resolve())
+
     return config
 
 
-_FLYCLAW_CONFIG_DIR = Path.home() / ".flyclaw"
-_DEFAULT_CONFIG_PATH = _FLYCLAW_CONFIG_DIR / "config.yaml"
+# 实例相关路径字段：(dotted_attr_path, filename_in_data_dir)
+_INSTANCE_PATH_FIELDS: list[tuple[str, str]] = [
+    ("checkpointer.path", "checkpoints.db"),
+    ("cron.store_path", "cron.db"),
+    ("memory.db_path", "memory.db"),
+    ("memory_store.db_path", "memories.db"),
+    ("task.db_path", "task_runs.db"),
+    ("auth.db_path", "auth.db"),
+    ("session_search.index_path", "session_index.db"),
+    ("kanban.db_dir", "kanban"),
+]
+
+
+def _adjust_paths_for_instance(config: AppConfig) -> AppConfig:
+    """对非默认实例，将仍为 Pydantic 默认值的路径重定向到对应 home 目录。"""
+    from src.instance import get_instance, data_dir, home_dir
+
+    n = get_instance()
+    if n is None:
+        return config
+
+    instance_data = data_dir()
+    defaults = AppConfig()
+
+    for attr_path, filename in _INSTANCE_PATH_FIELDS:
+        parts = attr_path.split(".")
+        obj = config
+        default_obj = defaults
+        for part in parts[:-1]:
+            obj = getattr(obj, part)
+            default_obj = getattr(default_obj, part)
+
+        current_val = getattr(obj, parts[-1])
+        default_val = getattr(default_obj, parts[-1])
+
+        # 只调整用户未显式覆盖的默认路径
+        if current_val == default_val:
+            new_path = str(instance_data / filename)
+            setattr(obj, parts[-1], new_path)
+
+    # 端口：非默认实例且用户未显式覆盖时，自动偏移避免冲突
+    if config.gateway.port == defaults.gateway.port:
+        config.gateway.port = defaults.gateway.port + n
+
+    # workspace 放在 home 根目录（~/.flyclawN/workspace），而非 data 子目录
+    if config.agents.workspace == defaults.agents.workspace:
+        config.agents.workspace = str(home_dir() / "workspace")
+
+    return config
 
 
 def load_config(path: str | Path = None) -> AppConfig:
     if path is None:
-        path = _DEFAULT_CONFIG_PATH
+        from src.instance import config_path as _instance_config_path
+
+        path = _instance_config_path()
     p = Path(path)
     if not p.exists():
-        return AppConfig()
+        config = AppConfig()
+        return _expand_paths(_adjust_paths_for_instance(config))
     try:
         with open(p, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f)
         if not raw:
-            return AppConfig()
+            config = AppConfig()
+            return _expand_paths(_adjust_paths_for_instance(config))
         substituted = _substitute_recursive(raw)
         config = AppConfig(**substituted)
-        return _expand_paths(config)
+        return _expand_paths(_adjust_paths_for_instance(config))
     except ValidationError as e:
         _log.warning("Config validation failed for %s, using defaults: %s", path, e)
-        return AppConfig()
+        config = AppConfig()
+        return _expand_paths(_adjust_paths_for_instance(config))
     except Exception as e:
         _log.warning("Failed to load config from %s, using defaults: %s", path, e)
-        return AppConfig()
+        config = AppConfig()
+        return _expand_paths(_adjust_paths_for_instance(config))
 
 
 def save_config(config: AppConfig, path: str | Path = None) -> None:
     """Persist config to YAML file."""
     if path is None:
-        path = _DEFAULT_CONFIG_PATH
+        from src.instance import config_path as _instance_config_path
+
+        path = _instance_config_path()
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     data = config.model_dump(exclude_unset=False)

@@ -25,7 +25,9 @@ _DEFAULT_PREVIEW = 8000
 
 
 def cache_root() -> Path:
-    return (Path.home() / ".flyclaw" / "temp").resolve()
+    from src.instance import temp_dir
+
+    return temp_dir().resolve()
 
 
 def _cache_dir_path(thread_id: str) -> Path:

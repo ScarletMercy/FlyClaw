@@ -340,9 +340,7 @@ class CronService:
                                 cp_id = parts[3]
                                 from src.task.store import get_task_store
 
-                                task_store = get_task_store(
-                                    getattr(self._config.task, "db_path", "~/.flyclaw/data/task_runs.db")
-                                )
+                                task_store = get_task_store(getattr(self._config.task, "db_path", None))
                                 run = await task_store.get(run_id)
                                 if run:
                                     for cp in run.checkpoints:

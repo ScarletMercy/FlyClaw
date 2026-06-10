@@ -641,7 +641,11 @@ def create_gateway(app_config, agent_loop, cron_service=None):
             raise HTTPException(503, "Config watcher not active")
         try:
             patch_data = await request.json()
-            config_path = Path(app._config_path or str(Path.home() / ".flyclaw" / "config.yaml"))
+            config_path = Path(app._config_path)
+            if not config_path.exists():
+                from src.instance import config_path as _cp
+
+                config_path = Path(_cp())
             if config_path.exists():
                 current = _yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
             else:

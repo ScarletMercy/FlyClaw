@@ -53,7 +53,11 @@ async def _safe_rmtree(directory: Path) -> None:
             await asyncio.sleep(_WIN_DELAY * (2 ** (i - 1)))
 
 
-_USER_SKILLS_DIR = Path.home() / ".flyclaw" / "skills"
+def _user_skills_dir() -> Path:
+    from src.instance import skills_dir
+
+    return skills_dir()
+
 
 # Validation limits
 _MAX_NAME_LENGTH = 64
@@ -105,7 +109,9 @@ SUPPORTING_DIRS = frozenset({"references", "templates", "scripts", "assets"})
 class SkillManager:
     """Manages skill CRUD operations."""
 
-    def __init__(self, skills_dir: Path = _USER_SKILLS_DIR):
+    def __init__(self, skills_dir: Path | None = None):
+        if skills_dir is None:
+            skills_dir = _user_skills_dir()
         self.skills_dir = skills_dir
         self.skills_dir.mkdir(parents=True, exist_ok=True)
 
@@ -993,7 +999,7 @@ def _hub_lookup_skill_dir(name, skills_cache):
         if s.name == name:
             return s.base_dir, getattr(s, "source", "community")
 
-    from src.skills.hub import HubLockFile, SKILLS_DIR
+    from src.skills.hub import HubLockFile, _skills_dir
 
     lock = HubLockFile()
     entry = lock.get_installed(name)
@@ -1002,8 +1008,8 @@ def _hub_lookup_skill_dir(name, skills_cache):
     install_path = entry.get("install_path")
     if not install_path:
         return None, None
-    candidate = (SKILLS_DIR / install_path).resolve()
-    if not candidate.is_relative_to(SKILLS_DIR.resolve()):
+    candidate = (_skills_dir() / install_path).resolve()
+    if not candidate.is_relative_to(_skills_dir().resolve()):
         return None, None
     return candidate, entry.get("trust_level", "community")
 
@@ -1072,7 +1078,7 @@ def _install_from_path(path: str) -> str:
         skill_md = p / "SKILL.md"
         if not skill_md.exists():
             return json.dumps({"error": f"Directory does not contain SKILL.md: {p}"})
-        dest = _USER_SKILLS_DIR / p.name
+        dest = _user_skills_dir() / p.name
         if dest.exists():
             return json.dumps({"error": f"Skill already exists: {dest}"})
         shutil.copytree(p, dest)
@@ -1096,7 +1102,7 @@ def _install_from_zip(zip_path: Path) -> str:
             return json.dumps({"error": "Zip file does not contain SKILL.md"})
         first_skill = skill_md_in_zip[0]
         skill_dir_name = first_skill.split("/")[0] if "/" in first_skill else Path(zip_path).stem
-        dest = _USER_SKILLS_DIR / skill_dir_name
+        dest = _user_skills_dir() / skill_dir_name
         if dest.exists():
             return json.dumps({"error": f"Skill already exists: {dest}"})
         for name in names:

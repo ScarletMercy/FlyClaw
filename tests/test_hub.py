@@ -251,7 +251,7 @@ class TestQuarantineBundle:
             trust_level="community",
             metadata={},
         )
-        with patch("src.skills.hub.QUARANTINE_DIR", tmp_path / "q"):
+        with patch("src.skills.hub._quarantine_dir", return_value=tmp_path / "q"):
             dest = quarantine_bundle(bundle)
             assert (dest / "SKILL.md").exists()
             assert (dest / "refs" / "a.md").exists()
@@ -298,8 +298,8 @@ class TestInstallFromQuarantine:
         )
 
         with (
-            patch("src.skills.hub.SKILLS_DIR", skills_dir),
-            patch("src.skills.hub.QUARANTINE_DIR", tmp_path / "quarantine"),
+            patch("src.skills.hub._skills_dir", return_value=skills_dir),
+            patch("src.skills.hub._quarantine_dir", return_value=tmp_path / "quarantine"),
             patch("src.skills.hub.append_audit_log"),
             patch("src.skills.hub.HubLockFile") as MockLock,
         ):
@@ -315,7 +315,7 @@ class TestInstallFromQuarantine:
 class TestAuditLog:
     def test_appends_line(self, tmp_path):
         log_file = tmp_path / "audit.log"
-        with patch("src.skills.hub.AUDIT_LOG", log_file):
+        with patch("src.skills.hub._audit_log", return_value=log_file):
             append_audit_log("INSTALL", "my-skill", "test", "community", "safe")
         content = log_file.read_text(encoding="utf-8")
         assert "INSTALL" in content
@@ -326,11 +326,11 @@ class TestEnsureHubDirs:
     def test_creates_structure(self, tmp_path):
         hub_dir = tmp_path / "hub"
         with (
-            patch("src.skills.hub.HUB_DIR", hub_dir),
-            patch("src.skills.hub.QUARANTINE_DIR", hub_dir / "quarantine"),
-            patch("src.skills.hub.INDEX_CACHE_DIR", hub_dir / "cache"),
-            patch("src.skills.hub.LOCK_FILE", hub_dir / "lock.json"),
-            patch("src.skills.hub.AUDIT_LOG", hub_dir / "audit.log"),
+            patch("src.skills.hub._hub_dir", return_value=hub_dir),
+            patch("src.skills.hub._quarantine_dir", return_value=hub_dir / "quarantine"),
+            patch("src.skills.hub._index_cache_dir", return_value=hub_dir / "cache"),
+            patch("src.skills.hub._lock_file", return_value=hub_dir / "lock.json"),
+            patch("src.skills.hub._audit_log", return_value=hub_dir / "audit.log"),
         ):
             from src.skills.hub import ensure_hub_dirs as _ensure
 

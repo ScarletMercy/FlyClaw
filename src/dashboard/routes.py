@@ -612,7 +612,9 @@ def register_dashboard(app: FastAPI, application):
             from src.skills.curator import SkillCurator
             from pathlib import Path
 
-            curator = SkillCurator(Path.home() / ".flyclaw" / "skills")
+            from src.instance import skills_dir
+
+            curator = SkillCurator(skills_dir())
             skills = _app_ref.skills_cache or []
             lifecycle_counts = {"active": 0, "stale": 0, "archived": 0}
             for s in skills:
@@ -639,7 +641,9 @@ def register_dashboard(app: FastAPI, application):
             from src.skills.curator import SkillCurator
             from pathlib import Path
 
-            curator = SkillCurator(Path.home() / ".flyclaw" / "skills")
+            from src.instance import skills_dir
+
+            curator = SkillCurator(skills_dir())
             result = await curator.review_skills(dry_run=dry_run)
             return result
         except Exception as e:
@@ -757,7 +761,11 @@ def register_dashboard(app: FastAPI, application):
             from pathlib import Path as _Path
             from src.config import save_config
 
-            config_path = getattr(_app_ref, "_config_path", None) or str(Path.home() / ".flyclaw" / "config.yaml")
+            config_path = getattr(_app_ref, "_config_path", None)
+            if not config_path:
+                from src.instance import config_path as _cp
+
+                config_path = str(_cp())
             # Ensure absolute path to avoid saving to wrong location
             config_path = str(_Path(config_path).resolve())
             save_config(cfg, config_path)

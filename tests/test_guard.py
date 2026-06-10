@@ -759,6 +759,11 @@ class TestCompiledPatternEquivalence:
             # persistence (agent config)
             "AGENTS.md",
             ".flyclaw/config.yaml",
+            ".flyclaw2/config.yaml",
+            ".flyclaw3/config.yaml",
+            "$HOME/.flyclaw/.env",
+            "$HOME/.flyclaw2/.env",
+            "~/.flyclaw2/.env",
             ".claude/settings",
             # ── 负向样本（常见无害代码） ──
             "",

@@ -66,11 +66,15 @@ class SkillCurator:
 
     def __init__(
         self,
-        skills_dir: Path = Path.home() / ".flyclaw" / "skills",
+        skills_dir: Path | None = None,
         review_interval_days: int = 7,
         stale_after_days: int = _STALE_THRESHOLD_DAYS,
         archive_after_days: int = _ARCHIVE_THRESHOLD_DAYS,
     ):
+        if skills_dir is None:
+            from src.instance import skills_dir as _sd
+
+            skills_dir = _sd()
         self.skills_dir = skills_dir
         self.review_interval_days = review_interval_days
         self.stale_after_days = stale_after_days

@@ -33,9 +33,13 @@ class LanceMemoryStore(BaseMemoryStore):
         db_path: str,
         dimensions: int = 1536,
         fts_tokenizer: str = "unicode61",
-        lancedb_uri: str = "~/.flyclaw/data/memory_lancedb",
+        lancedb_uri: str | None = None,
     ):
         super().__init__(db_path, dimensions, fts_tokenizer)
+        if lancedb_uri is None:
+            from src.instance import data_dir
+
+            lancedb_uri = str(data_dir() / "memory_lancedb")
         self.lancedb_uri = str(Path(lancedb_uri).expanduser().resolve())
         self._lance_db = None
         self._lance_table = None
