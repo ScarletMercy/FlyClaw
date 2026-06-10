@@ -47,6 +47,8 @@ class AgentState(BaseModel):
 
     pending_approval: dict[str, Any] | None = None
 
+    frozen_system_prompt: str = ""
+
     @field_validator("messages", mode="after")
     @classmethod
     def _validate_messages(cls, messages: list[dict]) -> list[dict]:
@@ -74,6 +76,7 @@ class AgentState(BaseModel):
             "user_role": self.user_role,
             "channel": self.channel,
             "pending_approval": self.pending_approval,
+            "frozen_system_prompt": self.frozen_system_prompt,
         }
 
     def append_message(self, msg: dict[str, Any]) -> None:

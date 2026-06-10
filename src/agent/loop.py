@@ -123,6 +123,10 @@ class AgentLoop:
 
         self._cache_prompt_sections(tools, skills_prompt)
 
+        # Frozen system prompt per session — built once, reused across rounds.
+        # Keyed by thread_id so each session gets its own frozen prompt.
+        self._system_prompt_cache: dict[str, str] = {}
+
         self._memory_summary_cache: str = ""
         self._memory_summary_queried: bool = False
 
@@ -183,6 +187,7 @@ class AgentLoop:
         finally:
             if not _approval_paused:
                 self._cleanup_guardrails(thread_id)
+                self._system_prompt_cache.pop(thread_id, None)
             lock.release()
 
     async def resume(self, thread_id: str, decision: str) -> AgentState:
@@ -201,6 +206,7 @@ class AgentLoop:
             return await self._resume_inner(thread_id, decision)
         finally:
             self._cleanup_guardrails(thread_id)
+            self._system_prompt_cache.pop(thread_id, None)
             lock.release()
 
     def get_store(self) -> StateStore:
@@ -318,12 +324,12 @@ class AgentLoop:
             assistant_msg = self._build_assistant_msg(response)
             state.append_message(assistant_msg)
 
-            # Emit event for intermediate assistant messages (has tool_calls + content)
-            if response.tool_calls and assistant_msg.get("content"):
+            # Emit event for intermediate assistant messages (tool_calls present)
+            if response.tool_calls:
                 await emit_async(
                     "agent_loop.assistant_message",
                     thread_id=thread_id,
-                    content=assistant_msg["content"],
+                    content=assistant_msg.get("content", ""),
                     has_tool_calls=True,
                     message_count=len(state.messages),
                 )
@@ -694,13 +700,24 @@ class AgentLoop:
             history = await self._compressor.compress(history, self._ctx_window_tokens)
         _compress_ms = (_time.monotonic() - _t_compress_start) * 1000
 
-        _t_mem_start = _time.monotonic()
-        memory_summary = await self._fetch_memory_summary()
-        _mem_ms = (_time.monotonic() - _t_mem_start) * 1000
+        # Frozen system prompt: memory → DB → build
+        if thread_id in self._system_prompt_cache:
+            system_text = self._system_prompt_cache[thread_id]
+            _mem_ms = _prompt_ms = 0.0
+        elif state.frozen_system_prompt:
+            system_text = state.frozen_system_prompt
+            self._system_prompt_cache[thread_id] = system_text
+            _mem_ms = _prompt_ms = 0.0
+        else:
+            _t_mem_start = _time.monotonic()
+            memory_summary = await self._fetch_memory_summary()
+            _mem_ms = (_time.monotonic() - _t_mem_start) * 1000
 
-        _t_prompt_start = _time.monotonic()
-        system_text = self._build_system_prompt(state, await self._get_active_tool_defs(state), memory_summary)
-        _prompt_ms = (_time.monotonic() - _t_prompt_start) * 1000
+            _t_prompt_start = _time.monotonic()
+            system_text = self._build_system_prompt(state, await self._get_active_tool_defs(state), memory_summary)
+            state.frozen_system_prompt = system_text
+            self._system_prompt_cache[thread_id] = system_text
+            _prompt_ms = (_time.monotonic() - _t_prompt_start) * 1000
 
         history = self._sanitize_surrogates(history)
         _total_ms = (_time.monotonic() - _t0) * 1000

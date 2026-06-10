@@ -1299,6 +1299,13 @@ function app() {
 
         case 'agent.error':
           this._flowActiveToolCount = 0;
+          // 所有活跃节点关闭，停止动画/发光
+          for (let i = 0; i < this.flowRingNodes.length; i++) {
+            if (this.flowRingNodes[i].state !== 'idle') {
+              this.flowRingNodes[i].state = 'done';
+            }
+          }
+          this._flowBuildArcs();
           this._flowActiveNodeIdx = -1;
           this.flowCenter = { icon: '💥', label: '智能体错误', detail: (data.error || '').substring(0, 60) };
           this.flowStats.errors++;

@@ -14,6 +14,21 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 logger = logging.getLogger("flyclaw.dashboard")
 
+# ── Log ring buffer ──
+
+_log_buffer: list[logging.LogRecord] = []
+_LOG_MAX = 1000
+
+
+class _LogBufferHandler(logging.Handler):
+    def emit(self, record: logging.LogRecord):
+        if len(_log_buffer) >= _LOG_MAX:
+            _log_buffer.pop(0)
+        _log_buffer.append(record)
+
+
+logging.getLogger("flyclaw").addHandler(_LogBufferHandler())
+
 # ── Auth helper ──
 
 
@@ -269,7 +284,9 @@ def register_dashboard(app: FastAPI, application):
     @router.get("/api/dashboard/logs")
     async def dashboard_logs(request: Request):
         _check_auth(request)
-        return []
+        return [
+            {"ts": r.created, "level": r.levelname, "logger": r.name, "message": r.getMessage()} for r in _log_buffer
+        ]
 
     # ── Model switching ─────────────────────────────────────
 
