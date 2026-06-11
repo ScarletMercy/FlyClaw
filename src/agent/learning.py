@@ -1,6 +1,10 @@
 """Learning loop orchestrator that ties together curated sync and skill curation.
 
-Memory extraction is handled per-turn in message.py (auto_extract_memory + _memory_llm_judge).
+Memory extraction and skill creation are handled by the daily consolidation
+service (src/services/daily_consolidation.py), which runs at a configurable
+time (default 3 AM) via the cron system. Per-turn regex extraction for obvious
+personal info (name, email) still runs in message.py.
+
 This module handles session-end housekeeping:
 1. Curated memory sync
 2. Skill curation trigger
@@ -41,9 +45,8 @@ class LearningLoop:
     async def on_session_end(self, messages: list[dict]) -> dict:
         """会话结束时的学习循环。
 
-        注意：记忆提取已在每轮对话中由 message.py 的 per-turn 路径完成
-        （auto_extract_memory + _memory_llm_judge），此处不再重复提取，
-        避免同一段对话被提取两次。
+        记忆和技能的批量提取已由每日整合服务（daily_consolidation）处理。
+        此处仅处理策展同步和技能审查。
 
         Args:
             messages: 完整的会话消息列表

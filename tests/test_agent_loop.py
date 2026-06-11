@@ -1385,3 +1385,67 @@ class TestMemorySummaryQueried:
         with patch("src.tools.memory_tools.get_memory_store", return_value=mock_store):
             result = await loop._fetch_memory_summary()
         assert "fresh data" in result
+
+
+class TestUsageAccumulation:
+    @pytest.mark.asyncio
+    async def test_usage_accumulated_across_turns(self, store, config):
+        client = AsyncMock()
+        call_count = 0
+
+        def _chat_response(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ChatResponse(
+                    content="",
+                    tool_calls=[_make_tc("echo", {"text": "hi"})],
+                    usage={"prompt_tokens": 100, "completion_tokens": 50, "cached_tokens": 80},
+                )
+            return ChatResponse(
+                content="Done",
+                tool_calls=[],
+                usage={"prompt_tokens": 200, "completion_tokens": 60, "cached_tokens": 150},
+            )
+
+        client.chat.side_effect = _chat_response
+
+        tools = [_make_tool("echo")]
+        loop = _make_loop(store, config, tools=tools, client=client)
+
+        state = AgentState(messages=[{"role": "user", "content": "hi"}])
+        result = await loop.run(state, "usage_test")
+
+        assert result.total_usage is not None
+        assert result.total_usage["prompt_tokens"] == 300
+        assert result.total_usage["completion_tokens"] == 110
+        assert result.total_usage["cached_tokens"] == 230
+
+    @pytest.mark.asyncio
+    async def test_usage_none_when_no_usage_data(self, store, config):
+        client = AsyncMock()
+        client.chat.return_value = ChatResponse(content="Hello!", tool_calls=[], usage=None)
+
+        loop = _make_loop(store, config, client=client)
+        state = AgentState(messages=[{"role": "user", "content": "hi"}])
+        result = await loop.run(state, "no_usage_test")
+
+        assert result.total_usage is None
+
+    @pytest.mark.asyncio
+    async def test_usage_initialized_on_first_response(self, store, config):
+        client = AsyncMock()
+        client.chat.return_value = ChatResponse(
+            content="Hello!",
+            tool_calls=[],
+            usage={"prompt_tokens": 50, "completion_tokens": 25, "cached_tokens": 0},
+        )
+
+        loop = _make_loop(store, config, client=client)
+        state = AgentState(messages=[{"role": "user", "content": "hi"}])
+        result = await loop.run(state, "init_usage_test")
+
+        assert result.total_usage is not None
+        assert result.total_usage["prompt_tokens"] == 50
+        assert result.total_usage["completion_tokens"] == 25
+        assert result.total_usage["cached_tokens"] == 0

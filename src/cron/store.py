@@ -63,6 +63,7 @@ class CronStore:
         if self._conn is None:
             self._conn = await aiosqlite.connect(str(self.db_path))
             await self._conn.execute("PRAGMA journal_mode=WAL")
+            await self._conn.execute("PRAGMA busy_timeout=5000")
             await self._conn.execute(_CREATE_TABLE_SQL)
             await self._conn.execute(_CREATE_RUN_LOG_SQL)
             await self._conn.execute(_CREATE_INDEX_JOB_ID_SQL)

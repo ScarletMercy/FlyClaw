@@ -27,10 +27,14 @@ CREATE TABLE IF NOT EXISTS sessions (
     thread_id TEXT PRIMARY KEY,
     messages TEXT NOT NULL,
     metadata TEXT NOT NULL,
+    frozen_system_prompt TEXT NOT NULL DEFAULT '',
     updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_updated ON sessions(updated_at);
 """
+
+# Migration: add frozen_system_prompt column to pre-existing databases
+_MIGRATION = "ALTER TABLE sessions ADD COLUMN frozen_system_prompt TEXT NOT NULL DEFAULT ''"
 
 
 class AgentState(BaseModel):
@@ -48,6 +52,7 @@ class AgentState(BaseModel):
     pending_approval: dict[str, Any] | None = None
 
     frozen_system_prompt: str = ""
+    total_usage: dict[str, Any] | None = None
 
     @field_validator("messages", mode="after")
     @classmethod
@@ -76,7 +81,6 @@ class AgentState(BaseModel):
             "user_role": self.user_role,
             "channel": self.channel,
             "pending_approval": self.pending_approval,
-            "frozen_system_prompt": self.frozen_system_prompt,
         }
 
     def append_message(self, msg: dict[str, Any]) -> None:
@@ -114,6 +118,11 @@ class StateStore:
             await conn.execute("PRAGMA journal_mode=WAL")
             await conn.execute("PRAGMA busy_timeout=5000")
             await conn.executescript(_SCHEMA)
+            # Migrate existing DBs that lack the new column
+            try:
+                await conn.execute(_MIGRATION)
+            except aiosqlite.OperationalError:
+                pass  # column already exists
             await conn.commit()
             self._conn = conn
             return conn
@@ -131,12 +140,13 @@ class StateStore:
     async def save(self, thread_id: str, state: AgentState) -> None:
         conn = await self._get_conn()
         await conn.execute(
-            """INSERT OR REPLACE INTO sessions (thread_id, messages, metadata, updated_at)
-               VALUES (?, ?, ?, ?)""",
+            """INSERT OR REPLACE INTO sessions (thread_id, messages, metadata, frozen_system_prompt, updated_at)
+               VALUES (?, ?, ?, ?, ?)""",
             (
                 thread_id,
                 json.dumps(state.messages, ensure_ascii=False),
                 json.dumps(state.meta_dict(), ensure_ascii=False),
+                state.frozen_system_prompt,
                 time.time(),
             ),
         )
@@ -145,7 +155,7 @@ class StateStore:
     async def load(self, thread_id: str) -> AgentState | None:
         conn = await self._get_conn()
         async with conn.execute(
-            "SELECT messages, metadata FROM sessions WHERE thread_id = ?",
+            "SELECT messages, metadata, frozen_system_prompt FROM sessions WHERE thread_id = ?",
             (thread_id,),
         ) as cursor:
             row = await cursor.fetchone()
@@ -154,6 +164,7 @@ class StateStore:
         messages = json.loads(row[0])
         meta = json.loads(row[1])
         meta["messages"] = messages
+        meta["frozen_system_prompt"] = row[2] if row[2] else meta.get("frozen_system_prompt", "")
         return AgentState.model_validate(meta)
 
     async def delete(self, thread_id: str) -> bool:

@@ -17,6 +17,7 @@ logger = logging.getLogger("flyclaw.agent.client")
 class ChatResponse:
     content: str
     tool_calls: list[Any] = field(default_factory=list)
+    usage: dict | None = None
 
 
 class ChatClient:
@@ -69,9 +70,20 @@ class ChatClient:
         choice = resp.choices[0].message
         if choice is None:
             raise ValueError(f"Model {self.model} returned empty message")
+        usage_data = None
+        if resp.usage:
+            details = getattr(resp.usage, "prompt_tokens_details", None)
+            cached = getattr(details, "cached_tokens", None) or 0 if details else 0
+            usage_data = {
+                "prompt_tokens": resp.usage.prompt_tokens or 0,
+                "completion_tokens": resp.usage.completion_tokens or 0,
+                "total_tokens": resp.usage.total_tokens or 0,
+                "cached_tokens": cached,
+            }
         return ChatResponse(
             content=choice.content or "",
             tool_calls=choice.tool_calls or [],
+            usage=usage_data,
         )
 
     async def chat_simple(self, messages: list[dict], **extra: Any) -> str:

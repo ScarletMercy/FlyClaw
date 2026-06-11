@@ -150,6 +150,60 @@ class TestStateStore:
 
         asyncio.run(_test())
 
+    def test_frozen_system_prompt_roundtrip(self, tmp_path):
+        async def _test():
+            store = StateStore(str(tmp_path / "test.db"))
+            state = AgentState(
+                messages=[{"role": "user", "content": "hello"}],
+                frozen_system_prompt="You are a helpful assistant with skills: ...",
+            )
+            await store.save("t1", state)
+            loaded = await store.load("t1")
+            assert loaded is not None
+            assert loaded.frozen_system_prompt == "You are a helpful assistant with skills: ..."
+            await store.close()
+
+        asyncio.run(_test())
+
+    def test_frozen_system_prompt_migration_from_old_metadata(self, tmp_path):
+        """Simulate loading a row written by the old schema (frozen in JSON, new column empty)."""
+
+        async def _test():
+            import json
+
+            store = StateStore(str(tmp_path / "test.db"))
+            conn = await store._get_conn()
+            # Old-style row: frozen_system_prompt inside metadata JSON, new column is ''
+            await conn.execute(
+                "INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?, ?)",
+                (
+                    "t1",
+                    json.dumps([{"role": "user", "content": "hi"}]),
+                    json.dumps(
+                        {
+                            "system_prompt": "",
+                            "sender_id": "u1",
+                            "chat_id": "",
+                            "chat_type": "p2p",
+                            "message_id": "",
+                            "user_role": "",
+                            "channel": "",
+                            "pending_approval": None,
+                            "frozen_system_prompt": "old frozen prompt from JSON",
+                        }
+                    ),
+                    "",  # new column empty
+                    0.0,
+                ),
+            )
+            await conn.commit()
+            loaded = await store.load("t1")
+            assert loaded is not None
+            assert loaded.frozen_system_prompt == "old frozen prompt from JSON"
+            await store.close()
+
+        asyncio.run(_test())
+
     def test_load_unknown_returns_none(self, tmp_path):
         async def _test():
             store = StateStore(str(tmp_path / "test.db"))
@@ -190,7 +244,7 @@ class TestStateStore:
             conn = await store._get_conn()
             # Manually insert metadata with an extra key
             await conn.execute(
-                "INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?, ?)",
                 (
                     "t1",
                     json.dumps([{"role": "user", "content": "hi"}]),
@@ -207,6 +261,7 @@ class TestStateStore:
                             "future_field": "should_be_ignored",
                         }
                     ),
+                    "",
                     0.0,
                 ),
             )

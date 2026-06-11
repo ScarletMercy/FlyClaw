@@ -165,7 +165,6 @@ async def _run_review_loop(
         config=config,
         skills_prompt="",
     )
-    agent_loop._skill_nudge_interval = 0
 
     state = AgentState(
         messages=list(messages_snapshot) + [{"role": "user", "content": prompt}],

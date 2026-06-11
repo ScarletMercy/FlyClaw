@@ -227,7 +227,15 @@ class MemoryStore:
                     )
                     rows = await cursor.fetchall()
                     if rows:
-                        return [{"key": r["key"], "content": r["content"], "category": r["category"]} for r in rows]
+                        return [
+                            {
+                                "key": r["key"],
+                                "content": r["content"],
+                                "category": r["category"],
+                                "updated_at": r["updated_at"],
+                            }
+                            for r in rows
+                        ]
                 except Exception:
                     pass
             cursor = await self._conn.execute(
@@ -241,7 +249,10 @@ class MemoryStore:
                 (limit,),
             )
         rows = await cursor.fetchall()
-        return [{"key": r["key"], "content": r["content"], "category": r["category"]} for r in rows]
+        return [
+            {"key": r["key"], "content": r["content"], "category": r["category"], "updated_at": r["updated_at"]}
+            for r in rows
+        ]
 
     async def forget(self, key: str) -> str:
         await self._conn.execute("DELETE FROM memories WHERE key = ?", (key,))
@@ -359,76 +370,6 @@ def _extract_matched_clause(text: str, match_start: int, match_end: int) -> str:
             prev -= 1
         clause = text[prev:end].strip().rstrip("，,")
     return clause
-
-
-_JUDGE_PROMPT = """\
-判断下面的对话是否包含用户主动提供的、明确的、值得永久记住的事实信息。
-
-只记住以下情况（必须同时满足"明确"和"永久有用"两个条件）：
-- 用户直接说了自己的偏好/习惯（如"我喜欢""我习惯""以后请"）
-- 用户直接说了自己的身份/联系方式（如名字、邮箱、电话）
-- 用户直接说了项目/工作相关的固定信息（如技术栈、服务器地址）
-
-以下情况一律不记：
-- 闲聊、寒暄、问答（"在吗""帮我XX""今天天气"）
-- 一次性指令（"打开XX""截图""运行XX"）
-- 通用知识、讨论、解释
-- 情绪表达（"太好了""烦死了"）
-- 模糊/不确定的信息
-- 对话中没有任何用户主动透露的个人事实
-
-对话:
-用户: {user}
-助手: {ai}
-
-严格判断。如果有疑问，就不记。
-
-只输出 JSON:
-值得记: {{"remember": true, "content": "具体事实内容(一句话)", "category": "preference|identity|contact|project|fact"}}
-不值得记: {{"remember": false}}"""
-
-
-async def judge_memory_with_llm(
-    user_input: str,
-    ai_response: str,
-    model_name: str,
-    base_url: str,
-    api_key: str,
-) -> Optional[tuple[str, str]]:
-    from src.agent.client import ChatClient
-
-    model = ChatClient(
-        base_url=base_url,
-        api_key=api_key,
-        model=model_name,
-        temperature=0.0,
-    )
-    prompt = _JUDGE_PROMPT.format(
-        user=user_input[:200],
-        ai=ai_response[:200],
-    )
-    try:
-        resp = await model.chat(
-            [
-                {"role": "user", "content": prompt},
-            ]
-        )
-        text = resp.content.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-        data = json.loads(text)
-        if not data.get("remember"):
-            return None
-        content = data.get("content", "").strip()
-        category = data.get("category", "fact")
-        if content:
-            return content, category
-        return None
-    except Exception as e:
-        logger.debug("Memory judge error: %s", e)
-        return None
-    finally:
-        await model.close()
 
 
 # ---------------------------------------------------------------------------

@@ -1313,6 +1313,7 @@ function app() {
           break;
 
         default:
+          console.warn('[flow] unknown event type:', type, data);
           return;
       }
 

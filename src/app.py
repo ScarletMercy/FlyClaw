@@ -65,6 +65,7 @@ class ServiceContainer:
         self._config_watcher = None
         self._reload_executor = None
         self._startup_sync_task = None
+        self._consolidation_scheduler = None
 
     # ── Skill directories & loading ──────────────────────────────────
 
@@ -708,10 +709,19 @@ class ServiceContainer:
         # ── Pre-warm subsystems to eliminate first-message cold latency ──
         await self._warmup_first_message()
 
+        # ── Start built-in consolidation scheduler (03:00 daily) ──
+        if getattr(self.config, "consolidation", None) and self.config.consolidation.enabled:
+            from src.services.consolidation_scheduler import ConsolidationScheduler
+
+            self._consolidation_scheduler = ConsolidationScheduler()
+            await self._consolidation_scheduler.start(self)
+
     # ── Shutdown ─────────────────────────────────────────────────────
 
     async def on_shutdown(self):
         try:
+            if self._consolidation_scheduler:
+                await self._consolidation_scheduler.stop()
             if self._config_watcher:
                 await self._config_watcher.stop()
             if self.memory_searcher:

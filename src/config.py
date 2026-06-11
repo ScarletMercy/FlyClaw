@@ -331,7 +331,6 @@ class SkillsConfig(BaseModel):
     disabled: list[str] = Field(default_factory=list)
     channel_disabled: dict[str, list[str]] = Field(default_factory=dict)
     hub: HubConfig = HubConfig()
-    creation_nudge_interval: int = 10
     curator: CuratorConfig = CuratorConfig()
 
 
@@ -363,6 +362,13 @@ class MemoryStoreConfig(BaseModel):
     memory_judge_model: str = ""
     memory_judge_base_url: str = ""
     memory_judge_api_key: str = ""
+
+
+class ConsolidationConfig(BaseModel):
+    """Daily memory & skill consolidation configuration."""
+
+    enabled: bool = True
+    min_messages: int = 10
 
 
 class TaskConfig(BaseModel):
@@ -445,6 +451,7 @@ class AppConfig(BaseModel):
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     delegation: DelegationConfig = Field(default_factory=DelegationConfig)
     voice: VoiceConfig = Field(default_factory=VoiceConfig)
+    consolidation: ConsolidationConfig = Field(default_factory=ConsolidationConfig)
 
 
 def _expand_paths(config: AppConfig) -> AppConfig:
@@ -488,6 +495,27 @@ _INSTANCE_PATH_FIELDS: list[tuple[str, str]] = [
 ]
 
 
+def _field_was_set(config: AppConfig, attr_path: str) -> bool:
+    """检查嵌套字段是否由用户在 YAML 中显式设置（而非使用 Pydantic 默认值）。
+
+    通过 model_fields_set 追踪：只有用户实际写过的字段才返回 True。
+    对于嵌套字段如 "memory.db_path"，会逐层检查每一级父对象是否被父模型显式设置。
+    """
+    parts = attr_path.split(".")
+    obj = config
+    for i, part in enumerate(parts):
+        # 检查当前层级中 part 是否被显式设置
+        if part not in obj.model_fields_set:
+            return False
+        # 如果不是最后一个 part，需要向下深入
+        if i < len(parts) - 1:
+            obj = getattr(obj, part)
+            if not hasattr(obj, "model_fields_set"):
+                # 非 Pydantic 模型，无法追踪，回退到 True（保守处理）
+                return True
+    return True
+
+
 def _adjust_paths_for_instance(config: AppConfig) -> AppConfig:
     """对非默认实例，将仍为 Pydantic 默认值的路径重定向到对应 home 目录。"""
     from src.instance import get_instance, data_dir, home_dir
@@ -497,30 +525,23 @@ def _adjust_paths_for_instance(config: AppConfig) -> AppConfig:
         return config
 
     instance_data = data_dir()
-    defaults = AppConfig()
 
     for attr_path, filename in _INSTANCE_PATH_FIELDS:
-        parts = attr_path.split(".")
-        obj = config
-        default_obj = defaults
-        for part in parts[:-1]:
-            obj = getattr(obj, part)
-            default_obj = getattr(default_obj, part)
-
-        current_val = getattr(obj, parts[-1])
-        default_val = getattr(default_obj, parts[-1])
-
         # 只调整用户未显式覆盖的默认路径
-        if current_val == default_val:
+        if not _field_was_set(config, attr_path):
+            parts = attr_path.split(".")
+            obj = config
+            for part in parts[:-1]:
+                obj = getattr(obj, part)
             new_path = str(instance_data / filename)
             setattr(obj, parts[-1], new_path)
 
     # 端口：非默认实例且用户未显式覆盖时，自动偏移避免冲突
-    if config.gateway.port == defaults.gateway.port:
-        config.gateway.port = defaults.gateway.port + n
+    if "port" not in config.gateway.model_fields_set:
+        config.gateway.port = config.gateway.port + n
 
     # workspace 放在 home 根目录（~/.flyclawN/workspace），而非 data 子目录
-    if config.agents.workspace == defaults.agents.workspace:
+    if "workspace" not in config.agents.model_fields_set:
         config.agents.workspace = str(home_dir() / "workspace")
 
     return config

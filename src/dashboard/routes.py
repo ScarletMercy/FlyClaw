@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import hmac
 import json
 import logging
@@ -16,18 +17,16 @@ logger = logging.getLogger("flyclaw.dashboard")
 
 # ── Log ring buffer ──
 
-_log_buffer: list[logging.LogRecord] = []
 _LOG_MAX = 1000
+_log_buffer: collections.deque[logging.LogRecord] = collections.deque(maxlen=_LOG_MAX)
 
 
 class _LogBufferHandler(logging.Handler):
     def emit(self, record: logging.LogRecord):
-        if len(_log_buffer) >= _LOG_MAX:
-            _log_buffer.pop(0)
         _log_buffer.append(record)
 
 
-logging.getLogger("flyclaw").addHandler(_LogBufferHandler())
+_log_handler: _LogBufferHandler | None = None
 
 # ── Auth helper ──
 
@@ -56,8 +55,13 @@ _app_ref = None
 
 
 def register_dashboard(app: FastAPI, application):
-    global _app_ref
+    global _app_ref, _log_handler
     _app_ref = application
+
+    # Lazy-register log handler only when dashboard is actually mounted
+    if _log_handler is None:
+        _log_handler = _LogBufferHandler()
+        logging.getLogger("flyclaw").addHandler(_log_handler)
 
     _template_path = Path(__file__).parent / "templates" / "dashboard.html"
     _html_template = _template_path.read_text(encoding="utf-8")
@@ -820,72 +824,88 @@ def register_dashboard(app: FastAPI, application):
 
     # ── Agent Flow SSE ─────────────────────────────────────────
 
+    _sse_semaphore = asyncio.Semaphore(10)  # max concurrent SSE connections
+
     @router.get("/api/dashboard/flow/events")
     async def flow_events(request: Request):
         """SSE endpoint: stream agent/tool/message events in real-time."""
         _check_auth(request)
 
-        from src.events import get_event_bus
+        # Reject new connections when at capacity
+        if _sse_semaphore.locked():
+            return JSONResponse(
+                {"error": "Too many SSE connections"},
+                status_code=429,
+            )
 
-        bus = get_event_bus()
-        queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+        await _sse_semaphore.acquire()
 
-        FLOW_EVENTS = {
-            "message.received",
-            "message.replied",
-            "agent_loop.started",
-            "agent_loop.completed",
-            "agent_loop.assistant_message",
-            "agent.error",
-            "tool.exec_started",
-            "tool.exec_completed",
-            "tool.exec_failed",
-            "tool.approval_pending",
-        }
+        try:
+            from src.events import get_event_bus
 
-        async def _on_event(**ctx):
-            """Async handler: push event into per-client queue (thread-safe)."""
-            try:
-                queue.put_nowait(ctx)
-            except asyncio.QueueFull:
+            bus = get_event_bus()
+            queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+
+            FLOW_EVENTS = {
+                "message.received",
+                "message.replied",
+                "agent_loop.started",
+                "agent_loop.completed",
+                "agent_loop.assistant_message",
+                "agent.error",
+                "tool.exec_started",
+                "tool.exec_completed",
+                "tool.exec_failed",
+                "tool.approval_pending",
+            }
+
+            async def _on_event(**ctx):
+                """Async handler: push event into per-client queue (thread-safe)."""
                 try:
-                    queue.get_nowait()
                     queue.put_nowait(ctx)
-                except Exception:
-                    pass
-
-        subscriptions = []
-        for ev_name in FLOW_EVENTS:
-            sub = bus.subscribe(ev_name, _on_event)
-            subscriptions.append(sub)
-
-        async def event_generator():
-            try:
-                yield f"data: {json.dumps({'type': 'connected'})}\n\n"
-                while True:
+                except asyncio.QueueFull:
                     try:
-                        item = await asyncio.wait_for(queue.get(), timeout=30.0)
-                        payload = json.dumps(item, ensure_ascii=False, default=str)
-                        yield f"data: {payload}\n\n"
-                    except asyncio.TimeoutError:
-                        yield ": keepalive\n\n"
-            except asyncio.CancelledError:
-                pass
-            finally:
-                for sub in subscriptions:
-                    bus.unsubscribe(sub.event, sub.handler)
+                        queue.get_nowait()
+                        queue.put_nowait(ctx)
+                    except Exception:
+                        pass
 
-        from starlette.responses import StreamingResponse
+            subscriptions = []
+            for ev_name in FLOW_EVENTS:
+                sub = bus.subscribe(ev_name, _on_event)
+                subscriptions.append(sub)
 
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",
-            },
-        )
+            async def event_generator():
+                try:
+                    yield f"data: {json.dumps({'type': 'connected'})}\n\n"
+                    while True:
+                        try:
+                            item = await asyncio.wait_for(queue.get(), timeout=30.0)
+                            payload = json.dumps(item, ensure_ascii=False, default=str)
+                            yield f"data: {payload}\n\n"
+                        except asyncio.TimeoutError:
+                            yield ": keepalive\n\n"
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    for sub in subscriptions:
+                        bus.unsubscribe(sub.event, sub.handler)
+                    _sse_semaphore.release()
+
+            from starlette.responses import StreamingResponse
+
+            return StreamingResponse(
+                event_generator(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+        except Exception:
+            _sse_semaphore.release()
+            raise
 
     app.include_router(router)
     logger.info("Dashboard registered at /dashboard")

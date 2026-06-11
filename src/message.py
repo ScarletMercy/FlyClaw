@@ -770,16 +770,6 @@ class MessageHandler:
                         if self._container.agent_loop:
                             self._container.agent_loop.invalidate_memory_cache()
                         await reply_fn(f"\U0001f4be update memory: {content[:50]}")
-                    else:
-                        task = asyncio.create_task(
-                            self._memory_llm_judge(
-                                original_text,
-                                display_text,
-                                reply_fn,
-                            )
-                        )
-                        self._container.background_tasks.add(task)
-                        task.add_done_callback(self._container.background_tasks.discard)
                 except Exception:
                     pass
 
@@ -1086,30 +1076,4 @@ class MessageHandler:
             else:
                 logger.warning("_resume_and_reply failed: %s", e)
         except Exception:
-            logger.exception("_resume_and_reply failed for thread %s", thread_id)
-
-    async def _memory_llm_judge(self, user_input: str, ai_response: str, reply_fn):
-        try:
-            from src.tools.memory_tools import judge_memory_with_llm, save_memory
-
-            model_name = self._container.config.memory_store.memory_judge_model or self._container.config.model.name
-            base_url = (
-                self._container.config.memory_store.memory_judge_base_url or self._container.config.model.base_url
-            )
-            api_key = self._container.config.memory_store.memory_judge_api_key or self._container.config.model.api_key
-
-            result = await judge_memory_with_llm(
-                user_input,
-                ai_response,
-                model_name,
-                base_url,
-                api_key,
-            )
-            if result:
-                content, category = result
-                await save_memory(content, category=category)
-                if self._container.agent_loop:
-                    self._container.agent_loop.invalidate_memory_cache()
-                await reply_fn(f"\U0001f4be update memory: {content[:50]}")
-        except Exception:
-            logger.debug("Memory LLM judge failed", exc_info=True)
+            pass

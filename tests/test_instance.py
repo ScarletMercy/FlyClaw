@@ -294,3 +294,32 @@ model:
         set_instance(None)
         cfg = load_config(tmp_path / "nonexistent.yaml")
         assert cfg.gateway.port == 18080
+
+    def test_explicit_path_equal_to_default_not_adjusted(self, tmp_path):
+        """Bug #7: 用户显式写了与 Pydantic 默认值相同的路径，不应被重定向。"""
+        from src.config import load_config
+        from src.instance import set_instance
+
+        set_instance(2)
+        config_file = tmp_path / "config-2.yaml"
+        config_file.write_text(
+            """
+memory:
+  db_path: "~/.flyclaw/data/memory.db"
+"""
+        )
+        cfg = load_config(config_file)
+        # 用户显式写了，即使值等于默认值，也不应被重定向到 .flyclaw2
+        assert ".flyclaw2" not in self._p(cfg.memory.db_path)
+
+    def test_explicit_port_equal_to_default_not_adjusted(self, tmp_path):
+        """Bug #7: 用户显式写了与默认值相同的端口，不应被偏移。"""
+        from src.config import load_config
+        from src.instance import set_instance
+
+        set_instance(2)
+        config_file = tmp_path / "config-2.yaml"
+        config_file.write_text("gateway:\n  port: 18080\n")
+        cfg = load_config(config_file)
+        # 用户显式写了 port: 18080，即使等于默认值也不偏移
+        assert cfg.gateway.port == 18080

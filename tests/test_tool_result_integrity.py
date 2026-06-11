@@ -65,7 +65,7 @@ def _make_config(**overrides):
     config.tools.guardrails.enabled = False
     config.compression = CompressionConfig()
     config.skills = MagicMock()
-    config.skills.creation_nudge_interval = 0
+
     for k, v in overrides.items():
         setattr(config, k, v)
     return config
