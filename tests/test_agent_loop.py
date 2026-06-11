@@ -536,9 +536,9 @@ class TestInterruptInLoop:
         try:
             result = await loop.run(state, "steer_test")
 
-            # Check that steer text was injected into a tool message
-            tool_msgs = [m for m in result.messages if m.get("role") == "tool"]
-            assert any("User guidance" in m.get("content", "") for m in tool_msgs)
+            # Check that steer text was appended as a user message (preserves KV cache)
+            user_msgs = [m for m in result.messages if m.get("role") == "user"]
+            assert any("[User guidance]" in m.get("content", "") for m in user_msgs)
         finally:
             steer_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

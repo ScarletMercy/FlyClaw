@@ -122,6 +122,7 @@ class ReloadExecutor:
         if self._app.agent_loop:
             self._app.agent_loop._tools = tools
             self._app.agent_loop._tool_map = {t.name: t for t in tools}
+            self._app.agent_loop._cache_prompt_sections(tools, self._app.agent_loop._skills_prompt)
 
     async def _do_reload_skills(self):
         self._app.skills_cache = []

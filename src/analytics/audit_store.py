@@ -260,14 +260,6 @@ def get_audit_store(db_path: str | None = None) -> AuditStore:
     return _store
 
 
-def reset_audit_store(db_path: str | None = None) -> AuditStore:
-    """Reset the audit store singleton (for testing or multi-environment)."""
-    global _store, _subscriptions
-    _store = AuditStore(db_path or _default_db_path())
-    _subscriptions = []
-    return _store
-
-
 def subscribe_audit_to_events() -> None:
     """Subscribe the audit store to tool execution events.
 

@@ -191,9 +191,6 @@ class StateStore:
     def get_interrupt_flag(self, thread_id: str) -> InterruptFlag:
         return self._interrupt_flags.get_flag(thread_id)
 
-    def clear_interrupt_flag(self, thread_id: str) -> None:
-        self._interrupt_flags.clear_flag(thread_id)
-
 
 class MemoryStateStore(StateStore):
     def __init__(self):

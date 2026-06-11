@@ -378,14 +378,11 @@ class AgentLoop:
             if await self._check_interrupt(state, thread_id, start_ts, tool_round):
                 return state
 
-            # 7. Inject pending steer text into last tool result
+            # 7. Append pending steer text as a new user message (preserves KV cache)
             steer_text = self._store.get_interrupt_flag(thread_id).drain_steer()
             if steer_text:
-                for i in range(len(state.messages) - 1, -1, -1):
-                    if state.messages[i].get("role") == "tool":
-                        state.messages[i]["content"] += f"\n\nUser guidance: {steer_text}"
-                        logger.info("Steer injected after tool batch (%d chars): %s", len(steer_text), steer_text[:120])
-                        break
+                state.append_message({"role": "user", "content": f"[User guidance]: {steer_text}"})
+                logger.info("Steer appended as user message (%d chars): %s", len(steer_text), steer_text[:120])
                 await self._store.save(thread_id, state)
 
         duration_ms = (_time.monotonic() - start_ts) * 1000
@@ -405,7 +402,8 @@ class AgentLoop:
             }
         )
         try:
-            summary_resp = await interruptible(ie, self._call_model_with_retry(state.messages, tools=None))
+            summary_messages = await self._prepare_messages(state, thread_id)
+            summary_resp = await interruptible(ie, self._call_model_with_retry(summary_messages, tools=None))
             if summary_resp is not None:
                 state.append_message(
                     {
