@@ -285,3 +285,144 @@ async def test_full_pipeline_mixed(store):
     assert "fact_2" not in keys
     assert "id_0" in keys
     assert "pref_0" in keys
+
+
+# ---------------------------------------------------------------------------
+# Partial failure & edge-case tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_llm_returns_none_skips_category(store):
+    """When _ask_llm returns None (non-JSON response), the category should be skipped."""
+    await _seed(store, 6, category="fact")
+    container = _make_container()
+    with (
+        patch(_PATCH_STORE, return_value=store),
+        patch(_PATCH_LLM, return_value=None),
+        patch(_PATCH_CLIENT, _mock_chat_client()),
+    ):
+        from src.services.memory_consolidation import run_memory_consolidation
+
+        result = await run_memory_consolidation(container)
+    assert len(result["errors"]) == 0
+    assert result["merged"] == 0
+    assert result["deleted"] == 0
+
+
+@pytest.mark.asyncio
+async def test_malformed_plan_skips_invalid_ops(store):
+    """A plan with invalid data (empty from_keys, non-string delete) should not crash."""
+    await _seed(store, 6, category="fact")
+    plan = {
+        "merge": [{"from_keys": [], "to_content": ""}],
+        "delete": [123, "", None],
+        "keep": "not_a_list",
+    }
+
+    async def _return_plan(client, prompt):
+        return plan
+
+    container = _make_container()
+    with (
+        patch(_PATCH_STORE, return_value=store),
+        patch(_PATCH_LLM, side_effect=_return_plan),
+        patch(_PATCH_CLIENT, _mock_chat_client()),
+    ):
+        from src.services.memory_consolidation import run_memory_consolidation
+
+        result = await run_memory_consolidation(container)
+    # No crash; original data should still be intact
+    keys = {m["key"] for m in await store.list_all(limit=100)}
+    assert all(f"mem_{i}" in keys for i in range(6))
+
+
+@pytest.mark.asyncio
+async def test_merge_nonexistent_from_keys_safe(store):
+    """Merge with non-existent from_keys should create new entry; forget is a no-op."""
+    await _seed(store, 5, category="fact")
+    plan = {
+        "merge": [
+            {
+                "from_keys": ["nonexistent_1", "nonexistent_2"],
+                "to_content": "merged content",
+                "to_category": "fact",
+            }
+        ],
+        "delete": [],
+        "keep": [f"mem_{i}" for i in range(5)],
+    }
+
+    async def _return_plan(client, prompt):
+        return plan
+
+    container = _make_container()
+    with (
+        patch(_PATCH_STORE, return_value=store),
+        patch(_PATCH_LLM, side_effect=_return_plan),
+        patch(_PATCH_CLIENT, _mock_chat_client()),
+    ):
+        from src.services.memory_consolidation import run_memory_consolidation
+
+        result = await run_memory_consolidation(container)
+    # Merge should complete (new entry created, forget on missing keys is safe)
+    assert result["merged"] == 1
+
+
+@pytest.mark.asyncio
+async def test_delete_nonexistent_key_safe(store):
+    """Deleting a key that doesn't exist should not raise."""
+    await _seed(store, 5, category="fact")
+    plan = {
+        "merge": [],
+        "delete": ["ghost_key", "another_ghost"],
+        "keep": [f"mem_{i}" for i in range(5)],
+    }
+
+    async def _return_plan(client, prompt):
+        return plan
+
+    container = _make_container()
+    with (
+        patch(_PATCH_STORE, return_value=store),
+        patch(_PATCH_LLM, side_effect=_return_plan),
+        patch(_PATCH_CLIENT, _mock_chat_client()),
+    ):
+        from src.services.memory_consolidation import run_memory_consolidation
+
+        result = await run_memory_consolidation(container)
+    assert result["deleted"] == 2
+    keys = {m["key"] for m in await store.list_all(limit=100)}
+    assert all(f"mem_{i}" for i in range(5))
+
+
+@pytest.mark.asyncio
+async def test_partial_category_failure(store):
+    """If one category's LLM call fails, other categories should still be processed."""
+    for i in range(6):
+        await store.remember(f"fact {i}", key=f"fact_{i}", category="fact")
+    for i in range(4):
+        await store.remember(f"identity {i}", key=f"id_{i}", category="identity")
+
+    async def _fail_fact_then_succeed(client, prompt):
+        if "fact_0" in prompt:
+            raise RuntimeError("LLM timeout for fact")
+        return {"merge": [], "delete": [], "keep": [f"id_{i}" for i in range(4)]}
+
+    container = _make_container()
+    with (
+        patch(_PATCH_STORE, return_value=store),
+        patch(_PATCH_LLM, side_effect=_fail_fact_then_succeed),
+        patch(_PATCH_CLIENT, _mock_chat_client()),
+    ):
+        from src.services.memory_consolidation import run_memory_consolidation
+
+        result = await run_memory_consolidation(container)
+
+    assert len(result["errors"]) == 1
+    assert "fact" in result["errors"][0]
+    # Fact memories should be untouched (failed category)
+    keys = {m["key"] for m in await store.list_all(limit=100)}
+    assert "fact_0" in keys
+    # Identity was processed (keep)
+    assert "id_0" in keys

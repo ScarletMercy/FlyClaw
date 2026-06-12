@@ -5,17 +5,21 @@ For each active session:
   1. Send "dreaming" notification
   2. Read all messages from the session
   3. Extract memories + create/update skills via background review
-  4. Create a new session via SessionRegistry (old session preserved for /old)
-  5. Send "wake" notification with summary
+  4. Save a diary-style episodic summary of the session
+  5. Create a new session via SessionRegistry (old session preserved for /old)
+  6. Send "wake" notification with summary
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from collections import defaultdict
 from typing import Any
 
 logger = logging.getLogger("flyclaw.consolidation")
+
+_SUMMARY_PROMPT = "用100字以内概括这个会话的主要内容，包括讨论了什么、完成了什么。只输出摘要文本，不要其他内容。"
 
 
 async def run_daily_consolidation(container: Any) -> dict[str, Any]:
@@ -44,6 +48,9 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
     cutoff_ts = time.time() - 24 * 3600
 
     thread_ids = await state_store.list_threads()
+
+    # Day counter for diary-style keys: {days_ago: next_index}
+    day_counter: dict[int, int] = defaultdict(int)
 
     for thread_id in thread_ids:
         try:
@@ -89,6 +96,13 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
                         result["memories_saved"] += 1
                     if "skill" in summary.lower() or "patched" in summary.lower() or "created" in summary.lower():
                         result["skills_updated"] += 1
+
+                # Save episodic summary (diary-style)
+                try:
+                    await _save_session_summary(config, state.created_at, state.messages, day_counter)
+                except Exception as e:
+                    logger.warning("Session summary failed for %s: %s", thread_id, e)
+
                 wake_msg = (
                     f"\u2600\ufe0f wake up! {summary}" if summary else "\u2600\ufe0f wake up! nothing to consolidate"
                 )
@@ -151,6 +165,63 @@ async def _consolidate_session(
         review_memory=True,
     )
     return summary or ""
+
+
+async def _save_session_summary(
+    config: Any,
+    created_at: float,
+    messages: list[dict],
+    day_counter: dict[int, int],
+) -> None:
+    """Compress a session into a ~100-char episodic memory (diary-style)."""
+    from src.agent.client import ChatClient
+    from src.tools.memory_tools import save_memory
+
+    if not messages:
+        return
+
+    # Build conversation excerpt for the LLM
+    user_msgs = []
+    for m in messages:
+        role = m.get("role", "")
+        content = m.get("content", "")
+        if not isinstance(content, str):
+            continue
+        if role == "user":
+            user_msgs.append(f"用户: {content}")
+        elif role == "assistant" and content:
+            user_msgs.append(f"助手: {content}")
+    if not user_msgs:
+        return
+
+    excerpt = "\n".join(user_msgs)
+    prompt = _SUMMARY_PROMPT + "\n\n" + excerpt
+
+    client = ChatClient(
+        base_url=config.model.base_url,
+        api_key=config.model.api_key,
+        model=config.model.name,
+        temperature=0.0,
+    )
+    try:
+        resp = await client.chat([{"role": "user", "content": prompt}])
+        summary_text = resp.content.strip() if resp.content else ""
+    except Exception as e:
+        logger.warning("Session summary LLM call failed: %s", e)
+        return
+    finally:
+        await client.close()
+
+    if not summary_text:
+        return
+
+    # Diary-style key: "x天的日记1", "x天的日记2", ...
+    days_ago = max(1, int((time.time() - created_at) / 86400))
+    day_counter[days_ago] += 1
+    key = f"{days_ago}天的日记{day_counter[days_ago]}"
+
+    await save_memory(summary_text, key=key, category="episodic")
+    logger.info("Saved session summary: %s → %s", key, summary_text[:50])
 
 
 async def _send_notification(container: Any, channel_name: str, chat_id: str, text: str) -> None:

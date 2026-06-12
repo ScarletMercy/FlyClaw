@@ -416,7 +416,7 @@ async def memory(
     action: Literal["save", "get", "list", "delete"],
     content: str = "",
     key: str = "",
-    category: Literal["preference", "identity", "contact", "project", "fact"] = "fact",
+    category: Literal["preference", "identity", "contact", "project", "episodic", "fact"] = "fact",
     query: str = "",
     keys: list[str] | None = None,
     verbose: bool = False,

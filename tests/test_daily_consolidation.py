@@ -404,3 +404,91 @@ class TestAgeFiltering:
             result = await run_daily_consolidation(container)
 
         assert result["sessions_processed"] == 1
+
+
+# ─── _consolidate_session internals (patch spawn, not the function itself) ────
+
+
+class TestConsolidateSession:
+    """Test _consolidate_session by patching spawn_background_review,
+    letting the real _consolidate_session logic execute."""
+
+    @pytest.mark.asyncio
+    async def test_calls_spawn_with_correct_args(self):
+        agent_loop = MagicMock()
+        agent_loop._client = MagicMock()
+        agent_loop._tools = ["tool_a", "tool_b"]
+        config = MagicMock()
+        messages = [{"role": "user", "content": "hello"}]
+
+        async def _fake_spawn(*args, **kwargs):
+            return "saved memory"
+
+        with patch(_PATCH_REVIEW, side_effect=_fake_spawn) as mock_review:
+            from src.services.daily_consolidation import _consolidate_session
+
+            result = await _consolidate_session(agent_loop=agent_loop, config=config, messages=messages)
+
+        assert result == "saved memory"
+        mock_review.assert_called_once()
+        _, kwargs_called = mock_review.call_args
+        assert kwargs_called.get("review_skills") is True
+        assert kwargs_called.get("review_memory") is True
+        assert kwargs_called.get("messages_snapshot") == messages
+
+    @pytest.mark.asyncio
+    async def test_passes_client_and_tools_from_agent_loop(self):
+        mock_client = MagicMock()
+        mock_tools = ["t1"]
+        agent_loop = MagicMock()
+        agent_loop._client = mock_client
+        agent_loop._tools = mock_tools
+        config = MagicMock()
+        messages = [{"role": "user", "content": "hi"}]
+
+        async def _fake_spawn(*args, **kwargs):
+            return "ok"
+
+        with patch(_PATCH_REVIEW, side_effect=_fake_spawn) as mock_review:
+            from src.services.daily_consolidation import _consolidate_session
+
+            await _consolidate_session(agent_loop=agent_loop, config=config, messages=messages)
+
+        kwargs_called = mock_review.call_args[1]
+        assert kwargs_called["client"] is mock_client
+        assert kwargs_called["tools"] is mock_tools
+
+    @pytest.mark.asyncio
+    async def test_returns_summary_string(self):
+        agent_loop = MagicMock()
+        agent_loop._client = MagicMock()
+        agent_loop._tools = []
+        config = MagicMock()
+        messages = [{"role": "user", "content": "test"}]
+
+        async def _fake_spawn(*args, **kwargs):
+            return "2 memories saved, 1 skill updated"
+
+        with patch(_PATCH_REVIEW, side_effect=_fake_spawn):
+            from src.services.daily_consolidation import _consolidate_session
+
+            result = await _consolidate_session(agent_loop=agent_loop, config=config, messages=messages)
+
+        assert result == "2 memories saved, 1 skill updated"
+
+    @pytest.mark.asyncio
+    async def test_propagates_spawn_exception(self):
+        agent_loop = MagicMock()
+        agent_loop._client = MagicMock()
+        agent_loop._tools = []
+        config = MagicMock()
+        messages = []
+
+        async def _failing_spawn(*args, **kwargs):
+            raise RuntimeError("spawn failed")
+
+        with patch(_PATCH_REVIEW, side_effect=_failing_spawn):
+            from src.services.daily_consolidation import _consolidate_session
+
+            with pytest.raises(RuntimeError, match="spawn failed"):
+                await _consolidate_session(agent_loop=agent_loop, config=config, messages=messages)

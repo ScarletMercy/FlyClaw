@@ -343,7 +343,7 @@ class TestCase3_SignalToNoise:
 
         # The agent should either execute a tool or give a direct answer
         # It should NOT hallucinate based on memories
-        assert "memory" not in resp.lower() or "记忆" not in resp
+        assert "memory" not in resp.lower() and "记忆" not in resp
 
         await client.close()
         await store.close()
