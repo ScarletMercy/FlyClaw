@@ -70,18 +70,24 @@ SKILL_REVIEW_PROMPT = (
 )
 
 MEMORY_REVIEW_PROMPT = (
-    "审查以上对话，考虑是否需要保存到记忆。\n\n"
-    "关注：\n"
-    "1. 用户是否透露了关于自己的信息——个人画像、愿望、偏好或个人细节？\n"
-    "2. 用户是否表达了对你的行为方式的期望、工作风格或运作方式的期望？\n\n"
-    "如果有值得保存的内容，用 memory 工具保存。"
-    "如果没有值得保存的内容，说'没有可保存的内容。'并停止。"
+    "你是个人信息管理者，负责从对话中提取值得长期保存的用户事实。\n\n"
+    "第一步：memory list 查看已有记忆。\n"
+    "第二步：逐条审查对话，列出候选事实（用户身份、持久偏好、联系方式、"
+    "项目/团队信息）。每条候选必须满足：(a) 关于用户本人，非通用知识；"
+    "(b) 跨会话有价值，能改变你后续的行为；(c) 稳定事实，非瞬时状态。\n"
+    "第三步：逐条判断——已有语义重复则跳过，有新信息则更新，全新则新增。"
+    "用精炼一句话写入，指定 category（identity/preference/contact/project），"
+    "key 留空。\n\n"
+    "不要保存：任务进度、闲聊、一次性指令、通用知识、环境瞬态、对话摘要。\n\n"
+    "如果没有值得保存的候选，说'没有可保存的内容。'并停止。"
 )
 
 COMBINED_REVIEW_PROMPT = (
     "审查以上对话，更新两件事：\n\n"
-    "**记忆**：用户是谁。用户是否透露了个人画像、偏好、工作风格？"
-    "如果有值得记住的，用 memory 工具保存。\n\n"
+    "**记忆**：你是个人信息管理者。先 memory list 查已有，再列出候选事实"
+    "（身份/偏好/联系方式/项目），逐条判断新增还是更新。"
+    "每条候选须满足：关于用户本人、跨会话有价值、稳定事实。"
+    "精炼一句话写入，指定 category。不保存任务进度、闲聊、一次性指令、通用知识。\n\n"
     "**技能**：用 skill_manage 更新技能库。"
     "目标：类级技能，不是窄的每会话微技能。\n"
     "优先级：1) 修补已加载/使用的技能 → 2) 修补现有伞形 → "
@@ -206,7 +212,7 @@ def _summarize_actions(messages: list[dict], pre_count: int) -> list[str]:
             _extract_name(actions, content, "edited skill")
         elif '"action": "wrote_file"' in content and '"success": true' in content:
             _extract_name(actions, content, "wrote file in")
-        elif '"action": "saved"' in content and '"success": true' in content:
+        elif '"ok": true' in content and '"key"' in content and '"action"' not in content:
             actions.append("saved memory")
     return actions
 

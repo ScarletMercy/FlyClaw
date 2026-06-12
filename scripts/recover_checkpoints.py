@@ -205,6 +205,8 @@ def recover_checkpoints(index_path: str, checkpoints_path: str, dry_run: bool = 
             thread_id TEXT PRIMARY KEY,
             messages TEXT NOT NULL,
             metadata TEXT NOT NULL,
+            frozen_system_prompt TEXT NOT NULL DEFAULT '',
+            created_at REAL NOT NULL DEFAULT 0,
             updated_at REAL NOT NULL
         )
     """)
@@ -247,12 +249,14 @@ def recover_checkpoints(index_path: str, checkpoints_path: str, dry_run: bool = 
 
             # 写入 checkpoints.db
             cp_conn.execute(
-                """INSERT OR REPLACE INTO sessions (thread_id, messages, metadata, updated_at)
-                   VALUES (?, ?, ?, ?)""",
+                """INSERT OR REPLACE INTO sessions
+                   (thread_id, messages, metadata, frozen_system_prompt, created_at, updated_at)
+                   VALUES (?, ?, ?, '', ?, ?)""",
                 (
                     thread_id,
                     json.dumps(openai_messages, ensure_ascii=False),
                     json.dumps(metadata, ensure_ascii=False),
+                    first_at or last_at or time.time(),
                     last_at or time.time(),
                 ),
             )

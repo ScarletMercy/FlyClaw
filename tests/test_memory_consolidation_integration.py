@@ -56,7 +56,6 @@ async def _seed_backdated(store: MemoryStore, key: str, content: str, category: 
 _PATCH_STORE = "src.tools.memory_tools.get_memory_store"
 _PATCH_LLM = "src.services.memory_consolidation._ask_llm"
 _PATCH_CLIENT = "src.agent.client.ChatClient"
-_PATCH_SYNC = "src.memory.memory_sync.sync_memories_to_curated_files"
 
 
 # ─── Skip / guard tests ──────────────────────────────────────────────────────
@@ -114,7 +113,6 @@ async def test_merge_creates_before_deletes(store):
         patch(_PATCH_STORE, return_value=store),
         patch(_PATCH_LLM, side_effect=lambda c, p: plan),
         patch(_PATCH_CLIENT, _mock_chat_client()),
-        patch(_PATCH_SYNC, new_callable=AsyncMock),
     ):
         from src.services.memory_consolidation import run_memory_consolidation
 
@@ -148,7 +146,6 @@ async def test_merge_key_collision_safe(store):
         patch(_PATCH_STORE, return_value=store),
         patch(_PATCH_LLM, side_effect=lambda c, p: plan),
         patch(_PATCH_CLIENT, _mock_chat_client()),
-        patch(_PATCH_SYNC, new_callable=AsyncMock),
     ):
         from src.services.memory_consolidation import run_memory_consolidation
 
@@ -170,7 +167,6 @@ async def test_delete_old_facts(store):
         patch(_PATCH_STORE, return_value=store),
         patch(_PATCH_LLM, side_effect=lambda c, p: plan),
         patch(_PATCH_CLIENT, _mock_chat_client()),
-        patch(_PATCH_SYNC, new_callable=AsyncMock),
     ):
         from src.services.memory_consolidation import run_memory_consolidation
 
@@ -192,7 +188,6 @@ async def test_keep_identity_even_old(store):
         patch(_PATCH_STORE, return_value=store),
         patch(_PATCH_LLM, side_effect=lambda c, p: plan),
         patch(_PATCH_CLIENT, _mock_chat_client()),
-        patch(_PATCH_SYNC, new_callable=AsyncMock),
     ):
         from src.services.memory_consolidation import run_memory_consolidation
 
@@ -274,7 +269,6 @@ async def test_full_pipeline_mixed(store):
         patch(_PATCH_STORE, return_value=store),
         patch(_PATCH_LLM, side_effect=_plan_by_category),
         patch(_PATCH_CLIENT, _mock_chat_client()),
-        patch(_PATCH_SYNC, new_callable=AsyncMock),
     ):
         from src.services.memory_consolidation import run_memory_consolidation
 

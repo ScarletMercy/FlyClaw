@@ -28,13 +28,18 @@ CREATE TABLE IF NOT EXISTS sessions (
     messages TEXT NOT NULL,
     metadata TEXT NOT NULL,
     frozen_system_prompt TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL DEFAULT 0,
     updated_at REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_updated ON sessions(updated_at);
 """
 
-# Migration: add frozen_system_prompt column to pre-existing databases
-_MIGRATION = "ALTER TABLE sessions ADD COLUMN frozen_system_prompt TEXT NOT NULL DEFAULT ''"
+# Migrations for pre-existing databases
+_MIGRATIONS = [
+    "ALTER TABLE sessions ADD COLUMN frozen_system_prompt TEXT NOT NULL DEFAULT ''",
+    "ALTER TABLE sessions ADD COLUMN created_at REAL NOT NULL DEFAULT 0",
+    "UPDATE sessions SET created_at = updated_at WHERE created_at = 0",
+]
 
 
 class AgentState(BaseModel):
@@ -52,6 +57,7 @@ class AgentState(BaseModel):
     pending_approval: dict[str, Any] | None = None
 
     frozen_system_prompt: str = ""
+    created_at: float = 0
     total_usage: dict[str, Any] | None = None
 
     @field_validator("messages", mode="after")
@@ -81,6 +87,7 @@ class AgentState(BaseModel):
             "user_role": self.user_role,
             "channel": self.channel,
             "pending_approval": self.pending_approval,
+            "created_at": self.created_at,
         }
 
     def append_message(self, msg: dict[str, Any]) -> None:
@@ -118,11 +125,12 @@ class StateStore:
             await conn.execute("PRAGMA journal_mode=WAL")
             await conn.execute("PRAGMA busy_timeout=5000")
             await conn.executescript(_SCHEMA)
-            # Migrate existing DBs that lack the new column
-            try:
-                await conn.execute(_MIGRATION)
-            except aiosqlite.OperationalError:
-                pass  # column already exists
+            # Run migrations for pre-existing databases
+            for sql in _MIGRATIONS:
+                try:
+                    await conn.execute(sql)
+                except aiosqlite.OperationalError:
+                    pass  # column/index already exists
             await conn.commit()
             self._conn = conn
             return conn
@@ -139,15 +147,21 @@ class StateStore:
 
     async def save(self, thread_id: str, state: AgentState) -> None:
         conn = await self._get_conn()
+        now = time.time()
         await conn.execute(
-            """INSERT OR REPLACE INTO sessions (thread_id, messages, metadata, frozen_system_prompt, updated_at)
-               VALUES (?, ?, ?, ?, ?)""",
+            """INSERT OR REPLACE INTO sessions
+               (thread_id, messages, metadata, frozen_system_prompt, updated_at, created_at)
+               VALUES (?, ?, ?, ?, ?, COALESCE(
+                   (SELECT created_at FROM sessions WHERE thread_id = ?), ?
+               ))""",
             (
                 thread_id,
                 json.dumps(state.messages, ensure_ascii=False),
                 json.dumps(state.meta_dict(), ensure_ascii=False),
                 state.frozen_system_prompt,
-                time.time(),
+                now,
+                thread_id,
+                now,
             ),
         )
         await conn.commit()
@@ -155,7 +169,7 @@ class StateStore:
     async def load(self, thread_id: str) -> AgentState | None:
         conn = await self._get_conn()
         async with conn.execute(
-            "SELECT messages, metadata, frozen_system_prompt FROM sessions WHERE thread_id = ?",
+            "SELECT messages, metadata, frozen_system_prompt, created_at FROM sessions WHERE thread_id = ?",
             (thread_id,),
         ) as cursor:
             row = await cursor.fetchone()
@@ -165,6 +179,7 @@ class StateStore:
         meta = json.loads(row[1])
         meta["messages"] = messages
         meta["frozen_system_prompt"] = row[2] if row[2] else meta.get("frozen_system_prompt", "")
+        meta["created_at"] = row[3] if row[3] else 0
         return AgentState.model_validate(meta)
 
     async def delete(self, thread_id: str) -> bool:

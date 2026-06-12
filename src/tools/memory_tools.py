@@ -174,9 +174,30 @@ class MemoryStore:
         clean = re.sub(r"[^\w\u4e00-\u9fff]+", "_", content[:40]).strip("_")
         return clean or f"mem_{int(datetime.now(timezone.utc).timestamp())}"
 
+    async def _find_key_by_content(self, content: str) -> str | None:
+        cursor = await self._conn.execute(
+            "SELECT key FROM memories WHERE content = ? LIMIT 1",
+            (content,),
+        )
+        row = await cursor.fetchone()
+        return row["key"] if row else None
+
     async def remember(self, content: str, key: str = "", category: str = "fact") -> str:
+        if not isinstance(content, str):
+            return json.dumps({"error": "content too short or empty"}, ensure_ascii=False)
+        content = content.strip()
+        if len(content) < 2:
+            return json.dumps({"error": "content too short or empty"}, ensure_ascii=False)
+
+        is_dedup = False
         if not key:
-            key = self._auto_key(content)
+            existing_key = await self._find_key_by_content(content)
+            if existing_key:
+                key = existing_key
+                is_dedup = True
+            else:
+                key = self._auto_key(content)
+
         now = datetime.now(timezone.utc).isoformat()
         await self._conn.execute(
             "INSERT INTO memories (key, content, category, created_at, updated_at) "
@@ -185,7 +206,8 @@ class MemoryStore:
             "category=excluded.category, updated_at=excluded.updated_at",
             (key, content, category, now, now),
         )
-        if self._fts_available:
+        # FTS sync only needed when content actually changed (new insert, not dedup)
+        if not is_dedup and self._fts_available:
             try:
                 await self._conn.execute(
                     "INSERT OR REPLACE INTO memories_fts (key, content) VALUES (?, ?)",
@@ -194,7 +216,10 @@ class MemoryStore:
             except Exception:
                 pass
         await self._conn.commit()
-        return json.dumps({"ok": True, "key": key}, ensure_ascii=False)
+        result = {"ok": True, "key": key}
+        if is_dedup:
+            result["dedup"] = True
+        return json.dumps(result, ensure_ascii=False)
 
     async def recall(self, key: str) -> str:
         cursor = await self._conn.execute(

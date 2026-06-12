@@ -505,8 +505,8 @@ class ServiceContainer:
                 if state and state.messages:
                     try:
                         result = await learning_loop.on_session_end(state.messages)
-                        if result.get("curated"):
-                            logger.debug("学习循环: 会话 %s 策展完成", tid)
+                        if result.get("skills_reviewed"):
+                            logger.debug("学习循环: 会话 %s 技能审查完成", tid)
                     except Exception as e:
                         logger.debug("学习循环会话结束处理失败: %s", e)
 

@@ -12,6 +12,7 @@ For each active session:
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 logger = logging.getLogger("flyclaw.consolidation")
@@ -40,6 +41,8 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
     min_messages = getattr(config, "consolidation", None)
     min_messages = getattr(min_messages, "min_messages", 10) if min_messages else 10
 
+    cutoff_ts = time.time() - 24 * 3600
+
     thread_ids = await state_store.list_threads()
 
     for thread_id in thread_ids:
@@ -48,48 +51,56 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
         except Exception:
             continue
 
-        if state is None or len(state.messages) < min_messages:
-            result["sessions_skipped"] += 1
-            continue
-
-        user_messages = [m for m in state.messages if m.get("role") == "user"]
-        if len(user_messages) < 3:
-            result["sessions_skipped"] += 1
+        if state is None:
             continue
 
         chat_id = state.chat_id
         channel_name = state.channel
 
-        await _send_notification(container, channel_name, chat_id, "\U0001f4a4 dreaming...")
+        # Decide whether to run expensive consolidation
+        should_consolidate = True
+        if len(state.messages) < min_messages:
+            should_consolidate = False
+        elif state.created_at < cutoff_ts:
+            should_consolidate = False
+        elif len([m for m in state.messages if m.get("role") == "user"]) < 3:
+            should_consolidate = False
 
-        try:
-            summary = await _consolidate_session(
-                agent_loop=agent_loop,
-                config=config,
-                messages=state.messages,
-            )
-        except Exception as e:
-            logger.error("Consolidation failed for session %s: %s", thread_id, e, exc_info=True)
-            result["errors"].append(f"{thread_id}: {e}")
-            await _send_notification(
-                container, channel_name, chat_id, "\u2600\ufe0f consolidation failed, session preserved"
-            )
-            continue
+        summary = ""
+        if should_consolidate:
+            await _send_notification(container, channel_name, chat_id, "\U0001f4a4 dreaming...")
+            try:
+                summary = await _consolidate_session(
+                    agent_loop=agent_loop,
+                    config=config,
+                    messages=state.messages,
+                )
+            except Exception as e:
+                logger.error("Consolidation failed for session %s: %s", thread_id, e, exc_info=True)
+                result["errors"].append(f"{thread_id}: {e}")
+                await _send_notification(
+                    container, channel_name, chat_id, "\u2600\ufe0f consolidation failed, session preserved"
+                )
+                summary = ""
+            else:
+                result["sessions_processed"] += 1
+                if summary:
+                    if "memory" in summary.lower() or "saved" in summary.lower():
+                        result["memories_saved"] += 1
+                    if "skill" in summary.lower() or "patched" in summary.lower() or "created" in summary.lower():
+                        result["skills_updated"] += 1
+                wake_msg = (
+                    f"\u2600\ufe0f wake up! {summary}" if summary else "\u2600\ufe0f wake up! nothing to consolidate"
+                )
+                await _send_notification(container, channel_name, chat_id, wake_msg)
+        else:
+            result["sessions_skipped"] += 1
 
+        # Always rotate session \u2014 prevents sessions from getting stuck forever
         await _create_new_session(container, thread_id, channel_name)
 
         if agent_loop:
             agent_loop.invalidate_memory_cache()
-
-        result["sessions_processed"] += 1
-        if summary:
-            if "memory" in summary.lower() or "saved" in summary.lower():
-                result["memories_saved"] += 1
-            if "skill" in summary.lower() or "patched" in summary.lower() or "created" in summary.lower():
-                result["skills_updated"] += 1
-
-        wake_msg = f"\u2600\ufe0f wake up! {summary}" if summary else "\u2600\ufe0f wake up! nothing to consolidate"
-        await _send_notification(container, channel_name, chat_id, wake_msg)
 
     logger.info(
         "Consolidation complete: %d processed, %d skipped, %d errors",

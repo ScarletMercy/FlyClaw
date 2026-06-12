@@ -679,7 +679,6 @@ def register_dashboard(app: FastAPI, application):
         return {
             "memory_store_enabled": getattr(cfg.memory_store, "enabled", False),
             "memory_judge_model": getattr(cfg.memory_store, "memory_judge_model", ""),
-            "curated_memory_sync": True,
             "skill_curation": True,
             "session_end_extraction": getattr(cfg.memory_store, "enabled", False),
         }

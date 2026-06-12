@@ -175,7 +175,7 @@ class TestStateStore:
             conn = await store._get_conn()
             # Old-style row: frozen_system_prompt inside metadata JSON, new column is ''
             await conn.execute(
-                "INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     "t1",
                     json.dumps([{"role": "user", "content": "hi"}]),
@@ -192,8 +192,9 @@ class TestStateStore:
                             "frozen_system_prompt": "old frozen prompt from JSON",
                         }
                     ),
-                    "",  # new column empty
-                    0.0,
+                    "",  # frozen_system_prompt column empty
+                    0.0,  # created_at
+                    0.0,  # updated_at
                 ),
             )
             await conn.commit()
@@ -244,7 +245,7 @@ class TestStateStore:
             conn = await store._get_conn()
             # Manually insert metadata with an extra key
             await conn.execute(
-                "INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?, ?, ?)",
                 (
                     "t1",
                     json.dumps([{"role": "user", "content": "hi"}]),
@@ -262,7 +263,8 @@ class TestStateStore:
                         }
                     ),
                     "",
-                    0.0,
+                    0.0,  # created_at
+                    0.0,  # updated_at
                 ),
             )
             await conn.commit()

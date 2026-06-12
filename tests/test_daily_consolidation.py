@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,11 +28,12 @@ def _make_container(
     return container
 
 
-def _make_state(messages, chat_id="chat_123", channel="qq"):
+def _make_state(messages, chat_id="chat_123", channel="qq", created_at=None):
     return AgentState(
         messages=messages,
         chat_id=chat_id,
         channel=channel,
+        created_at=created_at if created_at is not None else time.time(),
     )
 
 
@@ -128,7 +130,8 @@ class TestSessionFiltering:
         from src.services.daily_consolidation import run_daily_consolidation
 
         result = await run_daily_consolidation(container)
-        assert result["sessions_skipped"] == 1
+        # None state → no session exists, not counted as "skipped"
+        assert result["sessions_skipped"] == 0
 
 
 # ─── Normal flow ─────────────────────────────────────────────────────────────
@@ -359,3 +362,45 @@ class TestSummaryCounting:
 
         assert result["skills_updated"] == 1
         assert result["memories_saved"] == 0
+
+
+# ─── Age filtering ────────────────────────────────────────────────────────────
+
+
+class TestAgeFiltering:
+    @pytest.mark.asyncio
+    async def test_skip_session_older_than_24h(self):
+        store = MagicMock()
+        state = _make_state(_make_messages(5, 10), created_at=time.time() - 48 * 3600)
+        store.list_threads = AsyncMock(return_value=["old_session"])
+        store.load = AsyncMock(return_value=state)
+
+        container = _make_container(state_store=store, agent_loop=MagicMock())
+        from src.services.daily_consolidation import run_daily_consolidation
+
+        result = await run_daily_consolidation(container)
+        assert result["sessions_skipped"] == 1
+        assert result["sessions_processed"] == 0
+
+    @pytest.mark.asyncio
+    async def test_process_session_within_24h(self):
+        store = MagicMock()
+        state = _make_state(_make_messages(5, 10), created_at=time.time() - 3600)
+        store.list_threads = AsyncMock(return_value=["qq:group:abc"])
+        store.load = AsyncMock(return_value=state)
+
+        agent_loop = MagicMock()
+        agent_loop.invalidate_memory_cache = MagicMock()
+
+        container = _make_container(state_store=store, agent_loop=agent_loop, session_registry=None)
+
+        with (
+            patch(_PATCH_CONSOLIDATE, return_value="saved 1 memory"),
+            patch(_PATCH_NOTIFY, new_callable=AsyncMock),
+            patch(_PATCH_NEW_SESSION, new_callable=AsyncMock),
+        ):
+            from src.services.daily_consolidation import run_daily_consolidation
+
+            result = await run_daily_consolidation(container)
+
+        assert result["sessions_processed"] == 1

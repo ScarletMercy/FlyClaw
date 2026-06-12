@@ -3,7 +3,7 @@
 Runs every Sunday at 03:00 (before daily consolidation) via the built-in
 ConsolidationScheduler. Loads all memories from the KV store, groups by
 category, and for each group asks the LLM to: merge duplicates, delete
-outdated/useless entries, keep valid ones. Then syncs MEMORY.md / USER.md.
+outdated/useless entries, keep valid ones.
 """
 
 from __future__ import annotations
@@ -171,7 +171,15 @@ async def run_memory_consolidation(container: Any) -> dict[str, Any]:
                     continue
                 try:
                     result_json = await store.remember(to_content, key="", category=to_category)
-                    new_key = json.loads(result_json).get("key", "")
+                    parsed = json.loads(result_json)
+                    if "error" in parsed:
+                        logger.warning(
+                            "Merge rejected for keys %s: remember returned %s",
+                            from_keys,
+                            parsed["error"],
+                        )
+                        continue
+                    new_key = parsed.get("key", "")
                     for fk in from_keys:
                         if fk == new_key:
                             logger.warning("Merge: auto-key '%s' collides with from_key, skipping forget", fk)
@@ -194,18 +202,6 @@ async def run_memory_consolidation(container: Any) -> dict[str, Any]:
             result["categories_processed"] += 1
     finally:
         await client.close()
-
-    if result["merged"] > 0 or result["deleted"] > 0:
-        try:
-            from pathlib import Path
-
-            workspace = Path(config.agents.workspace).expanduser().resolve()
-            from src.memory.memory_sync import sync_memories_to_curated_files
-
-            await sync_memories_to_curated_files(workspace)
-            logger.info("Memory consolidation: synced curated files")
-        except Exception as e:
-            logger.warning("Memory consolidation: curated sync failed: %s", e)
 
     logger.info(
         "Memory consolidation complete: %d memories, %d merged, %d deleted, %d kept",
