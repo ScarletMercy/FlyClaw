@@ -101,7 +101,6 @@ _RESTART_FIELDS = [
     "channels.weixin.token",
     "channels.weixin.dm_policy",
     "memory_store.enabled",
-    "memory_store.memory_judge_model",
     "checkpointer.path",
     "session.idle_reset_minutes",
     "plugins.enabled",

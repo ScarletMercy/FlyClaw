@@ -31,7 +31,6 @@ _SENSITIVE_KEYS = frozenset(
         "token",
         "password",
         "secret",
-        "memory_judge_api_key",
     }
 )
 

@@ -359,9 +359,6 @@ class MemoryStoreConfig(BaseModel):
 
     enabled: bool = False
     db_path: str = "~/.flyclaw/data/memories.db"
-    memory_judge_model: str = ""
-    memory_judge_base_url: str = ""
-    memory_judge_api_key: str = ""
 
 
 class ConsolidationConfig(BaseModel):

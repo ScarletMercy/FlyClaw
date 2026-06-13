@@ -143,6 +143,10 @@ class TestSchedulerLoop:
             patch("asyncio.sleep", side_effect=_sleep_then_cancel),
             patch("src.services.daily_consolidation.run_daily_consolidation", daily_mock),
             patch("src.services.memory_consolidation.run_memory_consolidation", memory_mock),
+            patch(
+                "src.services.consolidation_scheduler._next_occurrence",
+                return_value=datetime.datetime(2026, 6, 15, 3, 0, tzinfo=datetime.timezone.utc),
+            ),
         ):
             try:
                 await scheduler._loop(container)

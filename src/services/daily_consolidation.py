@@ -12,6 +12,7 @@ For each active session:
 
 from __future__ import annotations
 
+import datetime
 import logging
 import time
 from collections import defaultdict
@@ -215,10 +216,15 @@ async def _save_session_summary(
     if not summary_text:
         return
 
-    # Diary-style key: "x天的日记1", "x天的日记2", ...
+    # Diary-style key: "x天的日记{n}_{date}".
+    # The creation date makes each session's entry unique, so nightly runs
+    # accumulate instead of overwriting via ON CONFLICT(key) DO UPDATE —
+    # day_counter resets every run, so without the date every ~1-day-old
+    # session would reuse "1天的日记1" and clobber the previous night's diary.
     days_ago = max(1, int((time.time() - created_at) / 86400))
     day_counter[days_ago] += 1
-    key = f"{days_ago}天的日记{day_counter[days_ago]}"
+    date_str = datetime.datetime.fromtimestamp(created_at).strftime("%Y%m%d")
+    key = f"{days_ago}天的日记{day_counter[days_ago]}_{date_str}"
 
     await save_memory(summary_text, key=key, category="episodic")
     logger.info("Saved session summary: %s → %s", key, summary_text[:50])

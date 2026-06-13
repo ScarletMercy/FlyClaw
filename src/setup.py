@@ -572,23 +572,12 @@ def _step_memory_store(config: dict) -> None:
     print("  [7/8] 记忆存储（可选）")
     print("  ─────────────────────────")
     print("  启用后，AI 可以记住你的偏好、身份等信息。")
-    print("  记忆数据保存在本地。配置模型判断更精准，但有额外开销；不配置则使用规则匹配。")
+    print("  记忆数据保存在本地，启用后自动从对话中提取并保存要点。")
 
     ms = _section(config, "memory_store")
 
     enabled = _ask_yn("  启用记忆存储？", default=ms.get("enabled", True))
     ms["enabled"] = enabled
-
-    if enabled:
-        inherit = _ask_yn("  使用主模型进行记忆判断？", default=not bool(ms.get("memory_judge_model")))
-        if inherit:
-            ms["memory_judge_model"] = ""
-            ms["memory_judge_base_url"] = ""
-            ms["memory_judge_api_key"] = ""
-        else:
-            ms["memory_judge_model"] = _ask("  模型名称", default=ms.get("memory_judge_model", ""))
-            ms["memory_judge_base_url"] = _ask("  API 地址", default=ms.get("memory_judge_base_url", ""))
-            ms["memory_judge_api_key"] = _ask("  API 密钥", default=ms.get("memory_judge_api_key", ""))
 
 
 def _step_summary(config: dict) -> None:
@@ -626,12 +615,6 @@ def _step_summary(config: dict) -> None:
     if mu.get("enabled") and mu.get("name"):
         print(f"    模型:     {mu['name']}")
     print(f"  记忆存储:   {'已启用' if ms.get('enabled') else '未启用'}")
-    if ms.get("enabled"):
-        judge_model = ms.get("memory_judge_model", "")
-        if judge_model:
-            print(f"    判断模型: {judge_model}")
-        else:
-            print(f"    判断模型: 继承主模型")
 
 
 # ── Main ──

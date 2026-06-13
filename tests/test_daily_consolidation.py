@@ -492,3 +492,65 @@ class TestConsolidateSession:
 
             with pytest.raises(RuntimeError, match="spawn failed"):
                 await _consolidate_session(agent_loop=agent_loop, config=config, messages=messages)
+
+
+# ─── Diary key uniqueness (regression: nightly overwrite) ──────────────────────
+
+
+class TestDiaryKeyUniqueness:
+    """Regression: nightly runs must not overwrite prior diary entries.
+
+    day_counter resets every run; before the creation date was encoded in the
+    key, every ~1-day-old session reused "1天的日记1" and the ON CONFLICT(key)
+    DO UPDATE in save_memory clobbered the previous night's summary.
+    """
+
+    @pytest.mark.asyncio
+    async def test_two_nights_do_not_overwrite(self, tmp_path):
+        from collections import defaultdict
+
+        from src.services.daily_consolidation import _save_session_summary
+        from src.tools.memory_tools import MemoryStore
+
+        store = MemoryStore(db_path=str(tmp_path / "mem.db"))
+        await store.initialize()
+
+        messages = [
+            {"role": "user", "content": "帮我写一个排序算法"},
+            {"role": "assistant", "content": "好的，这是快速排序"},
+            {"role": "user", "content": "部署到生产环境"},
+            {"role": "assistant", "content": "已部署，监控正常"},
+        ]
+
+        fake_resp = MagicMock()
+        fake_resp.content = "用户讨论了排序和部署"
+        config = MagicMock()
+
+        now = time.time()
+        # Two sessions both days_ago == 1 (within 0–48h), but 24h apart so they
+        # land on different calendar dates — mimicking rotation creating a fresh
+        # session each night.
+        created_at_n1 = now - 36 * 3600  # 36h ago → int(1.5) == 1
+        created_at_n2 = now - 12 * 3600  # 12h ago → max(1, int(0.5)) == 1
+
+        with (
+            patch("src.tools.memory_tools.get_memory_store", return_value=store),
+            patch("src.agent.client.ChatClient") as mock_chat_cls,
+        ):
+            mock_client = MagicMock()
+            mock_client.chat = AsyncMock(return_value=fake_resp)
+            mock_client.close = AsyncMock()
+            mock_chat_cls.return_value = mock_client
+
+            # Each nightly run starts with a fresh day_counter.
+            await _save_session_summary(config, created_at_n1, messages, defaultdict(int))
+            await _save_session_summary(config, created_at_n2, messages, defaultdict(int))
+
+        memories = await store.list_all(limit=100)
+        episodic = [m for m in memories if m.get("category") == "episodic"]
+        keys = [m["key"] for m in episodic]
+
+        assert len(episodic) == 2, f"Night 2 overwrote night 1 (expected 2 entries, got {len(episodic)}): {keys}"
+        assert len(set(keys)) == 2, f"Diary keys collided: {keys}"
+
+        await store.close()

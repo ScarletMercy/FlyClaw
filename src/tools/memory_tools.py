@@ -327,7 +327,7 @@ async def reset_memory_store() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Auto-extract & LLM judge
+# Auto-extract memory from conversation
 # ---------------------------------------------------------------------------
 
 
