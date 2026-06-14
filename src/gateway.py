@@ -611,7 +611,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         return JSONResponse({"thread_id": thread_id, "messages": messages})
 
     @app.get("/api/config")
-    async def get_config(request: Request):
+    async def get_config(request: Request, _auth=Depends(require_auth)):
         app = _get_app(request)
         if not app:
             raise HTTPException(503, "Application not ready")
@@ -619,7 +619,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         return _redact_sensitive(raw)
 
     @app.post("/api/config/reload")
-    async def reload_config(request: Request):
+    async def reload_config(request: Request, _auth=Depends(require_auth)):
         app = _get_app(request)
         if not app or not app._config_watcher:
             raise HTTPException(503, "Config watcher not active")
@@ -630,7 +630,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
         return {"status": "ok"}
 
     @app.patch("/api/config")
-    async def patch_config(request: Request):
+    async def patch_config(request: Request, _auth=Depends(require_auth)):
         import yaml as _yaml
 
         app = _get_app(request)

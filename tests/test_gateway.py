@@ -85,3 +85,18 @@ async def test_pending_approvals(tmp_path):
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
     await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_config_endpoints_require_auth(tmp_path):
+    """C1: /api/config 三个端点必须鉴权。无 token → 401；带正确 token → 非 401。"""
+    client, config = _make_gateway(tmp_path)
+    config.gateway.auth_token = "secret-token"
+    # 无 Authorization 头 → 必须拒
+    assert (await client.get("/api/config")).status_code == 401
+    assert (await client.post("/api/config/reload")).status_code == 401
+    assert (await client.patch("/api/config", json={"x": 1})).status_code == 401
+    # 带正确 token → 不应被 401 挡（可能 503 因 mock app 未就绪，但不该是 401）
+    h = {"Authorization": "Bearer secret-token"}
+    assert (await client.get("/api/config", headers=h)).status_code != 401
+    await client.aclose()

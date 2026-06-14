@@ -579,7 +579,6 @@ tailwind.config = {
 </div>
 
 <script>
-const AUTH_TOKEN = "{{ auth_token }}";
 
 function app() {
   return {
@@ -681,8 +680,7 @@ function app() {
 
     async api(path, opts={}) {
       const headers = opts.headers || {};
-      if (AUTH_TOKEN) headers['Authorization'] = 'Bearer ' + AUTH_TOKEN;
-      const r = await fetch(path, {...opts, headers});
+      const r = await fetch(path, {...opts, headers, credentials: 'include'});
       return r.json();
     },
 
@@ -1128,10 +1126,8 @@ function app() {
 
     flowConnect() {
       if (this._flowEventSource) this._flowEventSource.close();
-      const url = AUTH_TOKEN
-        ? '/api/dashboard/flow/events?token=' + encodeURIComponent(AUTH_TOKEN)
-        : '/api/dashboard/flow/events';
-      const es = new EventSource(url);
+      const url = '/api/dashboard/flow/events';
+      const es = new EventSource(url, { withCredentials: true });
       this._flowEventSource = es;
       es.onopen = () => { this.flowConnected = true; };
       es.onerror = () => {

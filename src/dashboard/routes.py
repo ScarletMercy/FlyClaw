@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import hashlib
 import hmac
 import json
 import logging
 import time
+import urllib.parse
 from pathlib import Path
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 logger = logging.getLogger("flyclaw.dashboard")
 
@@ -28,20 +30,66 @@ class _LogBufferHandler(logging.Handler):
 
 _log_handler: _LogBufferHandler | None = None
 
+# ── Dashboard session cookie (HMAC-signed, stateless) ──
+# Cookie value = "<expiry_epoch>.<hmac_sha256(auth_token, expiry)>".
+# Stateless: no server-side session store; signing key reuses gateway.auth_token.
+
+_SESSION_TTL_SECONDS = 7 * 86400  # 7 天
+_SESSION_COOKIE = "fc_auth"
+
+
+def _sign_session(auth_token: str, now: int) -> str:
+    """生成 `<expiry>.<hmac>` 形式的无状态 session cookie 值。"""
+    expiry = now + _SESSION_TTL_SECONDS
+    payload = str(expiry)
+    sig = hmac.new(auth_token.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"{payload}.{sig}"
+
+
+def _verify_session(auth_token: str, cookie_val: str, now: int) -> bool:
+    """校验签名（HMAC 用 compare_digest 恒定时间比较）+ 过期检查。任一环节失败返回 False。
+
+    注：格式/类型的结构检查有早返回，并非全程恒定时间；但唯一秘密是 HMAC
+    密钥，签名比较本身恒定时间，不泄露 key。
+    """
+    if not auth_token or not cookie_val or "." not in cookie_val:
+        return False
+    payload, _, sig = cookie_val.rpartition(".")
+    if not payload or not sig:
+        return False
+    expected = hmac.new(auth_token.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        return False
+    try:
+        if int(payload) < now:
+            return False  # 过期
+    except ValueError:
+        return False
+    return True
+
+
 # ── Auth helper ──
 
 
 def _check_auth(request: Request):
     cfg = _app_ref.config
     if not cfg.gateway.auth_token:
-        return
-    auth = request.headers.get("Authorization", "")
-    token = auth.removeprefix("Bearer ").strip()
-    # Also accept token from query param for SSE
+        return  # auth 未启用，放行（与全项目空 token 语义一致）
+    # 1) Bearer header（API 客户端）
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
     if not token:
+        # 2) 查询参数（SSE / EventSource 无法设 header）
         token = request.query_params.get("token", "")
-    if not hmac.compare_digest(token, cfg.gateway.auth_token):
+    if token:
+        # 给了 token 就必须精确匹配，不静默回退到 cookie
+        if hmac.compare_digest(token, cfg.gateway.auth_token):
+            return
         raise HTTPException(status_code=401, detail="unauthorized")
+    # 3) 无 token —— 尝试签名 session cookie（浏览器登录流）
+    cookie = request.cookies.get(_SESSION_COOKIE, "")
+    if cookie and _verify_session(cfg.gateway.auth_token, cookie, int(time.time())):
+        return
+    raise HTTPException(status_code=401, detail="unauthorized")
 
 
 # ── Startup time tracking ──
@@ -68,11 +116,66 @@ def register_dashboard(app: FastAPI, application):
 
     router = APIRouter(tags=["dashboard"])
 
-    @router.get("/dashboard", response_class=HTMLResponse)
-    async def dashboard_page():
+    _LOGIN_HTML = """<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FlyClaw 登录</title>
+<style>body{font-family:system-ui,sans-serif;max-width:340px;margin:80px auto;padding:0 16px;color:#222}
+h2{margin-bottom:8px}input{width:100%;padding:10px;margin:8px 0;box-sizing:border-box;border:1px solid #ccc;border-radius:4px}
+button{width:100%;padding:11px;background:#2563eb;color:#fff;border:0;border-radius:4px;cursor:pointer;font-size:15px}
+.err{color:#b91c1c;margin:4px 0}</style></head>
+<body><h2>FlyClaw Dashboard</h2>
+<!--ERR-->
+<form method="post" action="/dashboard/login">
+<input type="password" name="token" placeholder="Gateway Auth Token" autofocus required>
+<button type="submit">登录</button>
+</form></body></html>"""
+
+    @router.get("/dashboard/login", response_class=HTMLResponse)
+    async def dashboard_login_page(request: Request):
         cfg = _app_ref.config
+        if not cfg.gateway.auth_token:
+            return RedirectResponse(url="/dashboard", status_code=303)
+        return HTMLResponse(_LOGIN_HTML)
+
+    @router.post("/dashboard/login")
+    async def dashboard_login_submit(request: Request):
+        cfg = _app_ref.config
+        if not cfg.gateway.auth_token:
+            return RedirectResponse(url="/dashboard", status_code=303)
+        # 手动解析 form-urlencoded body，避免引入 python-multipart 依赖。
+        raw = await request.body()
+        if len(raw) > 4096:  # 登录表单极小，超大 body 直接拒（防 DoS 探测）
+            return HTMLResponse(_LOGIN_HTML, status_code=401)
+        body = raw.decode("utf-8", errors="replace")
+        token = urllib.parse.parse_qs(body).get("token", [""])[0].strip()
+        if not hmac.compare_digest(token, cfg.gateway.auth_token):
+            return HTMLResponse(
+                _LOGIN_HTML.replace("<!--ERR-->", '<p class="err">无效的 token</p>'),
+                status_code=401,
+            )
+        cookie_val = _sign_session(cfg.gateway.auth_token, int(time.time()))
+        resp = RedirectResponse(url="/dashboard", status_code=303)
+        # httponly=True: JS 读不到 → XSS 偷不走。samesite=strict: CSRF 安全。
+        # secure=False: gateway 在内网可能纯 HTTP；上 TLS 反代后改 True。
+        resp.set_cookie(
+            _SESSION_COOKIE,
+            cookie_val,
+            max_age=_SESSION_TTL_SECONDS,
+            httponly=True,
+            samesite="strict",
+            secure=False,
+        )
+        return resp
+
+    @router.get("/dashboard", response_class=HTMLResponse)
+    async def dashboard_page(request: Request):
+        cfg = _app_ref.config
+        if cfg.gateway.auth_token:
+            cookie = request.cookies.get(_SESSION_COOKIE, "")
+            if not _verify_session(cfg.gateway.auth_token, cookie, int(time.time())):
+                return RedirectResponse(url="/dashboard/login", status_code=303)
         html = _html_template
-        html = html.replace('"{{ auth_token }}"', json.dumps(cfg.gateway.auth_token or ""))
+        # auth_token 故意不再嵌入 —— 鉴权改走 HttpOnly cookie
         html = html.replace('"{{ model_provider }}"', json.dumps(cfg.model.provider))
         html = html.replace('"{{ model_name }}"', json.dumps(cfg.model.name))
         return HTMLResponse(html)
