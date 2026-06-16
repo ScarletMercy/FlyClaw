@@ -628,13 +628,15 @@ class ServiceContainer:
             await self.qq.start()
         if self.weixin:
             await self.weixin.start()
+        from src.gateway import GATEWAY_HOST
+
         logger.info(
             "网关已就绪: http://%s:%d",
-            self.config.gateway.host,
+            GATEWAY_HOST,
             self.config.gateway.port,
         )
         logger.info("OpenAI 兼容接口: POST /v1/chat/completions")
-        logger.info("WebSocket:        ws://%s:%d/ws", self.config.gateway.host, self.config.gateway.port)
+        logger.info("WebSocket:        ws://%s:%d/ws", GATEWAY_HOST, self.config.gateway.port)
         logger.info("健康检查:          GET /healthz")
         if self.cron_service:
             logger.info("定时任务 API:     GET /api/cron/status")
@@ -814,6 +816,13 @@ class ServiceContainer:
         # QQ Channel 动态读取 self.config，直接替换即可
         if self.qq:
             self.qq.config = new_config.channels.qq
+
+        # 重新注入自动生成的 gateway token:new_config 是从磁盘重 load 的,
+        # 其 auth_token 为空(token 存在独立文件 gateway_token,不写 config.yaml)。
+        # 不补这一步,热重载后 token 丢失 → 认证突然失效。
+        from src.gateway import ensure_gateway_token
+
+        ensure_gateway_token(new_config)
 
         # Phase 2: 执行子系统级重载
         result = await self._reload_executor.execute(plan)

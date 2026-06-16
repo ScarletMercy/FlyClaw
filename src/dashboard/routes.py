@@ -105,6 +105,7 @@ _app_ref = None
 def register_dashboard(app: FastAPI, application):
     global _app_ref, _log_handler
     _app_ref = application
+    from src.gateway import GATEWAY_HOST
 
     # Lazy-register log handler only when dashboard is actually mounted
     if _log_handler is None:
@@ -122,13 +123,16 @@ def register_dashboard(app: FastAPI, application):
 <style>body{font-family:system-ui,sans-serif;max-width:340px;margin:80px auto;padding:0 16px;color:#222}
 h2{margin-bottom:8px}input{width:100%;padding:10px;margin:8px 0;box-sizing:border-box;border:1px solid #ccc;border-radius:4px}
 button{width:100%;padding:11px;background:#2563eb;color:#fff;border:0;border-radius:4px;cursor:pointer;font-size:15px}
-.err{color:#b91c1c;margin:4px 0}</style></head>
+.err{color:#b91c1c;margin:4px 0}.hint{color:#666;font-size:13px;margin:12px 0 0;line-height:1.5}
+code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:12px}</style></head>
 <body><h2>FlyClaw Dashboard</h2>
 <!--ERR-->
 <form method="post" action="/dashboard/login">
 <input type="password" name="token" placeholder="Gateway Auth Token" autofocus required>
 <button type="submit">登录</button>
-</form></body></html>"""
+</form>
+<p class="hint">首次启动会自动生成令牌,见启动日志或文件 <code>~/.flyclaw/data/gateway_token</code><br>(若你在 config.yaml 手动设置过 <code>gateway.auth_token</code>,则用那个)。</p>
+</body></html>"""
 
     @router.get("/dashboard/login", response_class=HTMLResponse)
     async def dashboard_login_page(request: Request):
@@ -199,7 +203,7 @@ button{width:100%;padding:11px;background:#2563eb;color:#fff;border:0;border-rad
                 "base_url": cfg.model.base_url or "default",
                 "has_fallbacks": bool(cfg.model.fallbacks),
             },
-            "gateway": f"{cfg.gateway.host}:{cfg.gateway.port}",
+            "gateway": f"{GATEWAY_HOST}:{cfg.gateway.port}",
             "sessions": _app_ref.session_tracker.active_count if _app_ref.session_tracker else 0,
             "tools": len(_app_ref.agent_loop._tools) if _app_ref.agent_loop else 0,
             "skills": len(skills),
@@ -342,7 +346,7 @@ button{width:100%;padding:11px;background:#2563eb;color:#fff;border:0;border-rad
                 "subagents": list(cfg.agents.subagents.keys()),
             },
             "gateway": {
-                "host": cfg.gateway.host,
+                "host": GATEWAY_HOST,
                 "port": cfg.gateway.port,
                 "has_auth": bool(cfg.gateway.auth_token),
             },

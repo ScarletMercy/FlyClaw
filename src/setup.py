@@ -324,15 +324,14 @@ def _step_gateway(config: dict) -> None:
 
     gw = _section(config, "gateway")
 
-    if _ask_skip("网关", gw, "host", "port"):
+    if _ask_skip("网关", gw, "port"):
         return
-    gw["host"] = _ask("  监听地址", default=gw.get("host", "127.0.0.1"))
+    # host 已固定为本地回环(代码常量),无需配置。
+    # auth_token 留空——首次启动时自动生成强令牌,无需在此配置。
     from src.instance import get_instance
 
     default_port = 18080 + (get_instance() or 0)
     gw["port"] = int(_ask("  监听端口", default=str(gw.get("port", default_port))))
-    token = _ask("  认证令牌（留空则不启用认证）", default="")
-    gw["auth_token"] = token
 
 
 def _step_channel(config: dict) -> None:

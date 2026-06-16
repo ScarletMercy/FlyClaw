@@ -14,6 +14,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+from src.gateway import GATEWAY_HOST
+
 
 def _load_config():
     from src.config import load_config
@@ -70,7 +72,7 @@ def cmd_doctor(args):
             errors.append(f"模型验证失败: {e}")
             print(f"[错误] 模型验证失败: {e}")
 
-    print(f"[通过] 网关: {config.gateway.host}:{config.gateway.port}")
+    print(f"[通过] 网关: {GATEWAY_HOST}:{config.gateway.port}")
     if not config.gateway.auth_token:
         warnings.append("网关认证令牌为空")
         print("[警告] 网关认证令牌为空 — 认证已禁用")
@@ -117,7 +119,7 @@ def cmd_status(args):
     config = _load_config()
     print("flyclaw 系统状态\n" + "=" * 40)
     print(f"模型:       {config.model.provider}/{config.model.name}")
-    print(f"网关:       {config.gateway.host}:{config.gateway.port}")
+    print(f"网关:       {GATEWAY_HOST}:{config.gateway.port}")
     print(f"QQ:         {'已启用' if config.channels.qq.enabled else '未启用'}")
     print(f"定时任务:   {'已启用' if config.cron.enabled else '未启用'}")
     print(f"记忆系统:   {'已启用' if config.memory.enabled else '未启用'}")
@@ -129,12 +131,12 @@ def cmd_status(args):
     import urllib.request
 
     try:
-        url = f"http://{config.gateway.host}:{config.gateway.port}/healthz"
+        url = f"http://{GATEWAY_HOST}:{config.gateway.port}/healthz"
         req = urllib.request.Request(url, headers={"Authorization": f"Bearer {config.gateway.auth_token}"})
         with urllib.request.urlopen(req, timeout=2) as resp:
             print(f"\n服务状态:   运行中 (healthz={resp.status})")
     except Exception:
-        print(f"\n服务状态:   未运行 (无法连接 {config.gateway.host}:{config.gateway.port})")
+        print(f"\n服务状态:   未运行 (无法连接 {GATEWAY_HOST}:{config.gateway.port})")
 
 
 async def _cmd_sessions_async(args):

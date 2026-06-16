@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import getpass
 import hashlib
 import hmac
 import json
 import logging
+import os
 import secrets
+import subprocess
+import sys
 import time
 import uuid
 from typing import Optional
@@ -21,6 +25,84 @@ from src.canvas.server import router as canvas_router
 logger = logging.getLogger("flyclaw.gateway")
 
 router = APIRouter()
+
+# The gateway only serves the local machine — it's a local management/debug
+# surface (Dashboard, OpenAI-compat API for local clients). The real entry
+# points are the QQ/WeChat channels, which make *outbound* connections and
+# need no open port. So the bind host is a code constant, not a config knob.
+GATEWAY_HOST = "127.0.0.1"
+
+
+def _restrict_token_file(path: Path) -> None:
+    """Restrict the token file to the current user only.
+
+    On POSIX, chmod 0600 does it directly. On Windows, os.chmod can't express
+    "owner-only" (NTFS has no Unix rwx model), so we fall back to ``icacls``:
+    remove inherited ACEs and grant only the current user read access. Failures
+    are logged but never raised — the token still works, just with looser perms.
+    """
+    try:
+        if sys.platform == "win32":
+            user = getpass.getuser()
+            # /inheritance:r — drop inherited ACEs; /grant:r — replace (not merge)
+            subprocess.run(
+                ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:R"],
+                check=False,
+                capture_output=True,
+                timeout=10,
+            )
+        else:
+            os.chmod(path, 0o600)
+    except Exception as e:  # noqa: BLE001 — 权限收紧是尽力而为,失败不影响 token 功能
+        logger.debug("[gateway] 限制 token 文件权限失败(非致命): %s", e)
+
+
+def _default_token_file() -> "Path":
+    from src.instance import data_dir
+
+    return data_dir() / "gateway_token"
+
+
+def ensure_gateway_token(config, token_file=None) -> str:
+    """Return the effective gateway auth token.
+
+    Priority: an explicit ``config.gateway.auth_token`` (manually set) wins;
+    otherwise a strong token is auto-generated and persisted to a STANDALONE
+    file — **not** config.yaml, because writing config.yaml would route through
+    the full-dump ``save_config`` and clobber any ``${ENV}`` placeholders the
+    user hand-wrote.
+
+    The generated token is injected back into ``config.gateway.auth_token`` in
+    memory, so every auth-check site that reads that field picks it up without
+    needing changes.
+
+    Idempotent: a persisted token file is reused, never regenerated — restarts
+    and re-running setup never invalidate tokens already in use.
+    """
+    if config.gateway.auth_token:
+        return config.gateway.auth_token
+
+    from pathlib import Path
+
+    token_file = Path(token_file) if token_file is not None else _default_token_file()
+    token = ""
+    if token_file.exists():
+        try:
+            token = token_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            token = ""
+
+    if not token:
+        token = secrets.token_urlsafe(32)
+        token_file.parent.mkdir(parents=True, exist_ok=True)
+        token_file.write_text(token, encoding="utf-8")
+        _restrict_token_file(token_file)
+        logger.info("[gateway] 自动生成访问令牌并持久化到 %s", token_file)
+
+    # 注入回内存:所有读 config.gateway.auth_token 的认证点自动拿到正确值
+    config.gateway.auth_token = token
+    return token
+
 
 _SENSITIVE_KEYS = frozenset(
     {

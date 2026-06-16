@@ -4,18 +4,23 @@ import asyncio
 import logging
 import sys
 
-import uvicorn
-
-from src.app import ServiceContainer
-from src.message import MessageHandler
-from src.commands.register import register_builtin_commands
-
+# ── 尽早配置日志，消灭重型依赖 import 期间的"漆黑期" ──
+# 下面 import uvicorn / src.app（→ openai SDK ~4s）等重型依赖要数秒；
+# 若 basicConfig 排在它们之后，敲下 flyclaw 会有数秒零输出（像卡死）。
+# 把日志配置 + 启动提示挪到重型 import 之前，立刻给用户反馈。
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%H:%M:%S",
 )
 logger = logging.getLogger("flyclaw")
+logger.info("flyclaw 启动中，正在加载依赖…")
+
+import uvicorn
+
+from src.app import ServiceContainer
+from src.message import MessageHandler
+from src.commands.register import register_builtin_commands
 
 
 class Application:
@@ -44,9 +49,11 @@ class Application:
         self.container.api.on_event("shutdown")(self.container.on_shutdown)
 
     async def run_async(self):
+        from src.gateway import GATEWAY_HOST
+
         config = uvicorn.Config(
             self.container.api,
-            host=self.container.config.gateway.host,
+            host=GATEWAY_HOST,
             port=self.container.config.gateway.port,
             log_level="warning",
         )
@@ -100,6 +107,12 @@ def main():
         print("  或")
         print("  flyclaw-setup\n")
         sys.exit(1)
+
+    # Mint a strong gateway token if none is configured, so the local API /
+    # Dashboard are never unauthenticated. Idempotent (won't overwrite).
+    from src.gateway import ensure_gateway_token
+
+    ensure_gateway_token(config)
 
     app = Application(config)
 

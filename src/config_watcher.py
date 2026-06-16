@@ -63,7 +63,7 @@ class ReloadPlan:
 
     RESTART_PREFIXES: ClassVar[tuple[str, ...]] = (
         # ── 网关 ──
-        "gateway.host",
+        # gateway.host 已固定为代码常量,不再可配置。
         "gateway.port",
         "gateway.auth_token",
         # ── 频道（需重连） ──

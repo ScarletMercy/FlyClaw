@@ -3,6 +3,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from src.gateway import GATEWAY_HOST
+
 logger = logging.getLogger("flyclaw.security")
 
 
@@ -21,7 +23,7 @@ def run_security_audit(config) -> dict[str, Any]:
             results["info"] += 1
             logger.info("[安全] 信息 %s", name)
 
-    host = config.gateway.host
+    host = GATEWAY_HOST
     token = config.gateway.auth_token
     if host in ("0.0.0.0", "", "::", "[::]", "0:0:0:0:0:0:0:0") and not token:
         _check("gateway-auth", "WARN", f"网关暴露在 {host} 但未设置认证令牌")

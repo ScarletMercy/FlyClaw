@@ -1015,7 +1015,7 @@ class AgentLoop:
             args_preview=args_preview,
         )
 
-        from src.tools.exec import _current_agent_context
+        from src.tools.exec import _current_agent_context, _current_thread_id
 
         _ctx_token = _current_agent_context.set(
             {
@@ -1025,6 +1025,11 @@ class AgentLoop:
                 "parent_thread_id": thread_id,
             }
         )
+        # Also publish thread_id via _current_thread_id so tools that resolve
+        # session-approval by thread (exec_command AND memory_delete) see the
+        # same value on every path — including gateway/OpenAI-API, where no
+        # inbound handler sets it. Without this the two tools disagreed.
+        _tid_token = _current_thread_id.set(thread_id)
         try:
             result = await asyncio.wait_for(tool_def.execute(args), timeout=tool_def.timeout)
             duration_ms = (_time.monotonic() - start) * 1000
@@ -1125,6 +1130,7 @@ class AgentLoop:
             return f"[error] 工具 {tool_name} 执行失败: {err_msg}"
         finally:
             _current_agent_context.reset(_ctx_token)
+            _current_thread_id.reset(_tid_token)
 
     async def _record_tool_success(
         self,

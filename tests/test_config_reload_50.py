@@ -86,7 +86,7 @@ _HOT_FIELDS = [
 ]
 
 _RESTART_FIELDS = [
-    "gateway.host",
+    # gateway.host 已固定为代码常量,不再可配置,故不再是 restart 字段。
     "gateway.port",
     "gateway.auth_token",
     "channels.qq.enabled",
@@ -486,7 +486,7 @@ class TestEdgeCases:
 
     def test_two_restart_fields(self):
         changes = [
-            ConfigChange("gateway.host", "127.0.0.1", "0.0.0.0"),
+            ConfigChange("gateway.port", 18080, 9090),
             ConfigChange("channels.qq.enabled", False, True),
         ]
         plan = ReloadPlan.build(changes)

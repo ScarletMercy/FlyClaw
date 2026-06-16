@@ -490,11 +490,11 @@ async def memory(
 
         # Check session/durable approval before raising (same pattern as exec_command)
         from src.tools.approval import get_approval_manager
-        from src.tools.exec import _current_agent_context
+        from src.tools.exec import _current_thread_id
 
         _mgr = get_approval_manager()
         _args_preview = "\n".join(previews)[:200]
-        _tid = _current_agent_context.get({}).get("parent_thread_id", "")
+        _tid = _current_thread_id.get("")
         if not _mgr.has_durable_approval("memory_delete", _args_preview):
             if not _mgr.has_session_approval(_tid, "memory_delete", _args_preview):
                 raise MemoryDeleteNeedsApproval(found_keys, previews)
