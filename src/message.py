@@ -388,6 +388,14 @@ class MessageHandler:
                     original_text=text,
                 )
             finally:
+                # Layer-2 invariant: the agent turn awaited above must not be
+                # hard-cancelled except on shutdown. _interrupted_threads[T] /
+                # _pending_queue[T] are drained only by _drain_pending at the
+                # end of a *completed* turn; a mid-flight CancelledError skips
+                # that, leaving the thread permanently busy-blocked. Guaranteed
+                # today by qq.py _cleanup(cancel_inflight=False) — any NEW
+                # task.cancel() on a running turn reopens it; pair with a
+                # self-healing guard in the busy-check (T resident but lock free).
                 self._claiming_threads.discard(thread_id)
 
         return on_message

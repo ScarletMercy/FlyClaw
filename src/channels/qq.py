@@ -63,9 +63,10 @@ INTENT_GROUP_AND_C2C = 1 << 25
 INTENT_INTERACTION = 1 << 26  # Required for INTERACTION_CREATE (button callbacks)
 FULL_INTENTS = INTENT_PUBLIC_GUILD_MESSAGES | INTENT_DIRECT_MESSAGE | INTENT_GROUP_AND_C2C | INTENT_INTERACTION
 
-# Reconnect config
+# Reconnect config — backoff caps at 60s; reconnect never gives up so the bot
+# self-heals from any-duration outage (a permanently-dead endpoint just retries
+# every 60s forever, which is preferable to silently going offline).
 _RECONNECT_DELAYS = [1, 2, 5, 10, 30, 60]
-_MAX_RECONNECT_ATTEMPTS = 100
 _MSG_SEQ_MAX = 65536
 
 # URL conversion for markdown mode
@@ -232,12 +233,10 @@ class _QQWebSocketClient:
                     )
                 except Exception as e2:
                     self._log.error("WebSocket connect failed (no-verify): %s", e2)
-                    await self._schedule_reconnect()
-                    return
+                    raise RuntimeError(f"WebSocket connect failed (no-verify): {e2}") from e2
             else:
                 self._log.error("WebSocket connect failed: %s", e)
-                await self._schedule_reconnect()
-                return
+                raise RuntimeError(f"WebSocket connect failed: {e}") from e
 
         try:
             raw = await asyncio.wait_for(self._ws.recv(), timeout=30)
@@ -245,14 +244,12 @@ class _QQWebSocketClient:
         except Exception as e:
             self._log.error("Failed to receive HELLO: %s", e)
             await self._cleanup()
-            await self._schedule_reconnect()
-            return
+            raise RuntimeError(f"Failed to receive HELLO: {e}") from e
 
         if hello.get("op") != OP_HELLO:
             self._log.error("Expected HELLO, got op=%s", hello.get("op"))
             await self._cleanup()
-            await self._schedule_reconnect()
-            return
+            raise RuntimeError(f"Expected HELLO, got op={hello.get('op')}")
 
         heartbeat_interval = hello.get("d", {}).get("heartbeat_interval", 41250)
 
@@ -384,7 +381,13 @@ class _QQWebSocketClient:
                     await self._schedule_reconnect(3)
 
         except websockets.ConnectionClosed as e:
-            self._log.warning("WebSocket closed: code=%s reason=%s", e.code, e.reason)
+            # e.code/e.reason are deprecated in websockets 13.1+; read the
+            # received Close frame directly (None on abnormal TCP drop —
+            # _apply_close_code treats None as "keep session → RESUME").
+            code = e.rcvd.code if e.rcvd else None
+            reason = e.rcvd.reason if e.rcvd else None
+            self._log.warning("WebSocket closed: code=%s reason=%s", code, reason)
+            self._apply_close_code(code)
             if self._running:
                 await self._cleanup()
                 await self._schedule_reconnect()
@@ -394,7 +397,23 @@ class _QQWebSocketClient:
                 await self._cleanup()
                 await self._schedule_reconnect()
 
-    async def _cleanup(self):
+    def _apply_close_code(self, code: int | None) -> None:
+        """Reset handshake state based on gateway close code.
+
+        4004 (auth failed)     → drop session + force token re-fetch
+        4007 (invalid seq)     → drop session, re-IDENTIFY next connect
+        4009 (session timeout) → drop session, re-IDENTIFY next connect
+        Anything else (1000/1001 graceful, network drops, ACK timeouts) keeps
+        the session so the next connect can RESUME.
+        """
+        if code in (4004, 4007, 4009):
+            self._session_id = None
+            self._last_seq = None
+            if code == 4004:
+                self._token_mgr.clear_cache()
+            self._log.info("Close code %s → cleared session (token_refresh=%s)", code, code == 4004)
+
+    async def _cleanup(self, cancel_inflight: bool = False):
         if self._heartbeat_task and not self._heartbeat_task.done():
             self._heartbeat_task.cancel()
             try:
@@ -403,14 +422,19 @@ class _QQWebSocketClient:
                 pass
         self._heartbeat_task = None
         self._heartbeat_acked = True
-        for task in list(self._inflight):
-            task.cancel()
-        for task in list(self._inflight):
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
-        self._inflight.clear()
+        # Inflight holds WS-dispatched coroutines (agent turns, interactions)
+        # whose downstream work is HTTP/LLM-client based and outlives any
+        # single WS connection — reconnect must NOT cancel them. Only stop()
+        # tears the whole process down. (Typing/voice live in other containers.)
+        if cancel_inflight:
+            for task in list(self._inflight):
+                task.cancel()
+            for task in list(self._inflight):
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            self._inflight.clear()
 
         if self._ws:
             try:
@@ -428,10 +452,6 @@ class _QQWebSocketClient:
         try:
             while self._running:
                 self._reconnect_attempts += 1
-                if self._reconnect_attempts > _MAX_RECONNECT_ATTEMPTS:
-                    self._log.error("Max reconnect attempts reached, giving up")
-                    return
-
                 idx = min(self._reconnect_attempts - 1, len(_RECONNECT_DELAYS) - 1)
                 delay = custom_delay if custom_delay is not None else _RECONNECT_DELAYS[idx]
                 custom_delay = None
@@ -448,7 +468,8 @@ class _QQWebSocketClient:
 
     async def stop(self):
         self._running = False
-        await self._cleanup()
+        # Shutdown: cancel in-flight agent turns too.
+        await self._cleanup(cancel_inflight=True)
         if self._recv_task and not self._recv_task.done():
             self._recv_task.cancel()
             try:
@@ -487,6 +508,7 @@ class QQChannel(Channel):
         self._on_message_callback: Optional[Callable] = None
         self._token_manager: Optional[_QQTokenManager] = None
         self._ws_client: Optional[_QQWebSocketClient] = None
+        self._ws_start_task: Optional[asyncio.Task] = None  # boot-time connect/reconnect task
         self._http_client: Optional[httpx.AsyncClient] = None
         self._seq_counter = 0
         self._typing_disabled = False  # Circuit breaker: disable typing after consecutive failures
@@ -541,9 +563,18 @@ class QQChannel(Channel):
             try:
                 await self._ws_client.connect()
             except Exception as e:
-                logger.error("QQ WebSocket connect failed: %s", e)
+                # connect() no longer self-reconnects on early failure (it
+                # raises so _schedule_reconnect's retry loop owns the backoff).
+                # The initial call from startup is outside that loop, so kick
+                # it off here — otherwise a boot-time network blip leaves the
+                # bot permanently disconnected.
+                logger.error("QQ WebSocket connect failed, scheduling reconnect: %s", e)
+                await self._ws_client._schedule_reconnect()
 
-        asyncio.create_task(_start_ws())
+        # Track the task so stop() can cancel it — otherwise a boot-time
+        # persistent failure parks this task inside _schedule_reconnect's
+        # asyncio.sleep and it lingers ~60s after shutdown.
+        self._ws_start_task = asyncio.create_task(_start_ws())
         logger.info("QQ Bot channel starting...")
 
     async def stop(self):
@@ -553,6 +584,15 @@ class QQChannel(Channel):
             if not task.done():
                 task.cancel()
         self._typing_tasks.clear()
+        # Cancel the boot-time connect/reconnect task (may be parked in
+        # _schedule_reconnect's asyncio.sleep on a persistent boot failure).
+        if self._ws_start_task and not self._ws_start_task.done():
+            self._ws_start_task.cancel()
+            try:
+                await self._ws_start_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._ws_start_task = None
         if self._ws_client:
             await self._ws_client.stop()
         if self._token_manager:
