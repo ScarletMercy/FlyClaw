@@ -589,6 +589,9 @@ def _step_summary(config: dict) -> None:
     mu = config.get("tools", {}).get("media_understanding", {})
     ms = config.get("memory_store", {})
 
+    # host 已固化为代码常量(不再写 config.yaml),这里直接取,避免显示成 "?"
+    from src.gateway import GATEWAY_HOST
+
     print()
     print("  [8/8] 配置总览")
     print("  ─────────────")
@@ -601,7 +604,7 @@ def _step_summary(config: dict) -> None:
         print(f"  回退模型:   {len(fallbacks)}")
         for fb in fallbacks:
             print(f"    - {fb.get('provider', '?')}/{fb.get('name', '?')}")
-    print(f"  网关:       {gw.get('host', '?')}:{gw.get('port', '?')}")
+    print(f"  网关:       {GATEWAY_HOST}:{gw.get('port', '?')}")
     if qq.get("enabled"):
         print(f"  渠道:       QQ (app_id: {qq.get('app_id', '')})")
     elif weixin.get("enabled"):
