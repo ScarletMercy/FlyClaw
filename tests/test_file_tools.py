@@ -98,3 +98,44 @@ class TestEditFile:
 
         content = await read_file("f.txt")
         assert "new content" in content
+
+
+class TestGrep:
+    @pytest.mark.asyncio
+    async def test_default_case_insensitive(self, workspace):
+        from src.tools.file_tools import grep, write_file
+
+        await write_file("test.txt", "Hello World\nhello again\nGOODBYE\n")
+        result = await grep("hello", path="test.txt")
+        assert "Hello World" in result
+        assert "hello again" in result
+
+    @pytest.mark.asyncio
+    async def test_explicit_case_sensitive(self, workspace):
+        from src.tools.file_tools import grep, write_file
+
+        await write_file("test.txt", "Hello World\nhello again\n")
+        result = await grep("hello", path="test.txt", case_insensitive=False)
+        assert "hello again" in result
+        assert "Hello" not in result
+
+    @pytest.mark.asyncio
+    async def test_files_with_matches_case_insensitive(self, workspace):
+        from src.tools.file_tools import grep, write_file
+
+        await write_file("a.txt", "Foo bar\n")
+        await write_file("b.txt", "baz qux\n")
+        result = await grep("foo", path=".", output_mode="files_with_matches")
+        assert "a.txt" in result
+        assert "b.txt" not in result
+
+    @pytest.mark.asyncio
+    async def test_inline_flag_override(self, workspace):
+        from src.tools.file_tools import grep, write_file
+
+        await write_file("test.txt", "ABC\nabc\nAbc\n")
+        result = await grep("(?-i:ABC)", path="test.txt", case_insensitive=True)
+        assert "1 of 1" in result
+        assert "ABC" in result
+        assert "abc" not in result
+        assert "Abc" not in result

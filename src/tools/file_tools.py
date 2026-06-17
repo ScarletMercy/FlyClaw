@@ -72,12 +72,13 @@ def _try_skill_ref_readonly(path: str) -> str | None:
     return None
 
 
-def _validate_regex(pattern: str):
+def _validate_regex(pattern: str, *, ignore_case: bool = False):
     """编译正则并检查安全性。返回 re.Pattern 或错误字符串。"""
     if len(pattern) > _MAX_REGEX_LENGTH:
         return f"Error: regex pattern too long (max {_MAX_REGEX_LENGTH} chars)"
+    flags = _re.IGNORECASE if ignore_case else 0
     try:
-        regex = _re.compile(pattern)
+        regex = _re.compile(pattern, flags)
     except _re.error as e:
         return f"Error: invalid regex pattern: {e}"
     return regex
@@ -429,6 +430,7 @@ async def grep(
     head_limit: int = 50,
     offset: int = 0,
     output_mode: Literal["content", "files_with_matches"] = "content",
+    case_insensitive: bool = True,
 ) -> str:
     """在文件内容中搜索匹配的文本行（正则表达式）。
 
@@ -439,8 +441,9 @@ async def grep(
         head_limit: 最大返回条数（默认 50）
         offset: 跳过前 N 条结果（默认 0）
         output_mode: "content" 显示匹配行，"files_with_matches" 仅列出匹配的文件路径
+        case_insensitive: 是否忽略大小写（默认 True）
     """
-    return await _grep_impl(pattern, path, glob_pattern, head_limit, offset, output_mode)
+    return await _grep_impl(pattern, path, glob_pattern, head_limit, offset, output_mode, case_insensitive)
 
 
 async def glob(pattern: str = "*", path: str = ".", head_limit: int = 50, offset: int = 0) -> str:
@@ -462,6 +465,7 @@ async def _grep_impl(
     head_limit: int = 50,
     offset: int = 0,
     output_mode: str = "content",
+    case_insensitive: bool = True,
 ) -> str:
     try:
         resolved = _resolve_path(path)
@@ -477,7 +481,7 @@ async def _grep_impl(
     if not await aiofiles.os.path.exists(resolved):
         return await _path_not_found_hint(path, resolved)
 
-    regex_or_err = _validate_regex(pattern)
+    regex_or_err = _validate_regex(pattern, ignore_case=case_insensitive)
     if isinstance(regex_or_err, str):
         return regex_or_err
     regex = regex_or_err

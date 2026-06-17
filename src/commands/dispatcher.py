@@ -158,14 +158,3 @@ from src._container import get_container
 
 def get_dispatcher() -> Optional[CommandDispatcher]:
     return get_container().dispatcher
-
-
-def build_builtin_help(commands: list[dict]) -> str:
-    lines = ["Available commands:"]
-    for cmd in commands:
-        if cmd.get("builtin"):
-            lines.append(f"  /{cmd['name']} — {cmd['description']}")
-        else:
-            tool_info = f" (→ {cmd['dispatch_tool']})" if cmd.get("dispatch_tool") else ""
-            lines.append(f"  /{cmd['name']} — {cmd['description']}{tool_info}")
-    return "\n".join(lines)
