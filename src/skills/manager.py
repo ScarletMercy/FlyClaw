@@ -540,16 +540,19 @@ def get_tools() -> list:
     ) -> str:
         """Create, edit, patch, delete, toggle, or manage supporting files for skills.
 
+        Required params per action: write_file needs name+file_path+file_content;
+        remove_file needs name+file_path.
+
         Args:
             action: Operation type (create, edit, patch, delete, toggle, write_file, remove_file)
             name: Skill name (required for all actions)
-            content: Full skill content for create/edit
+            content: Full skill content for create/edit action
             description: Skill description
             category: Skill category (for create)
             old_string: Text to find for patch
             new_string: Replacement text for patch
-            file_path: Supporting file path for patch/write_file/remove_file
-            file_content: File content for write_file
+            file_path: Supporting file path for patch/write_file/remove_file. For write_file, the first path segment must be one of: references, templates, scripts, assets
+            file_content: File content for write_file action
             replace_all: Replace all occurrences for patch
             enabled: Whether to enable for toggle
             channel: Channel name for toggle (e.g. qq)

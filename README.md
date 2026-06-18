@@ -1,6 +1,6 @@
 # FlyClaw
 
-轻量级多渠道 AI 助手框架。运行时仅 ~100MB 内存，40+ 内置工具，支持 QQ/微信渠道接入。事件驱动架构，全异步设计。
+轻量级多渠道 AI 助手框架。运行时仅 ~100MB 内存，39 个工具（含浏览器/画布/桌面控制等可选扩展），支持 QQ/微信渠道接入。事件驱动架构，全异步设计。
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![GitHub](https://img.shields.io/badge/GitHub-ScarletMercy%2FFlyClaw-blue?logo=github)](https://github.com/ScarletMercy/FlyClaw)
@@ -15,18 +15,18 @@ FlyClaw 是一个自包含的 AI 助手框架，直接运行在你的设备上�
 ## 功能特性
 
 - **多渠道接入** — QQ Bot（官方 API，C2C 私聊）、微信（iLink Bot API，私聊）
-- **40+ 内置工具** — 命令执行、文件操作、Web 搜索、浏览器自动化、媒体理解、TTS、记忆、定时任务、Windows 桌面控制等
+- **39 个工具**（核心 + 可选扩展）— 命令执行、文件操作、Web 搜索、浏览器自动化（可选）、媒体理解、TTS、记忆、定时任务、Windows 桌面控制（可选）等
 - **AgentLoop 引擎** — 工具并行执行、主动上下文压缩、中断/排队/steer 三种忙碌输入模式、工具参数自动修复、Guardrails 风暴检测
 - **子代理委派** — research、coder、reviewer 三个内置角色，支持批量并行任务
-- **记忆系统** — KV 记忆（SQLite + FTS5 全文搜索 + 可选向量嵌入），LLM 记忆评判，Markdown 感知分块
+- **记忆系统** — KV 记忆（SQLite + FTS5 全文搜索 + 可选向量嵌入），自动记忆提取，Markdown 感知分块
 - **Skill / Plugin 扩展** — SKILL.md 热加载 + plugin.json 插件系统 + 技能安全扫描 + 自动策展
 - **Gateway** — OpenAI 兼容 API（`/v1/chat/completions`）、WebSocket（ACP 协议）、REST 管理接口、Web Dashboard
 - **安全体系** — 命令审批、工具策略、RBAC 角色控制、SSRF 防护、凭证脱敏、注入检测、设备配对认证
 - **事件系统** — 异步事件总线 + 用户自定义钩子回调
-- **斜杠命令** — /reset、/rollback、/skills 等内置命令
+- **斜杠命令** — /reset、/skills 等内置命令
 - **配置热重载** — 运行时自动检测配置文件变更并智能重载
 - **会话管理** — per_sender / global 两种模式，空闲重置，自动修剪
-- **引导文件** — AGENTS.md / IDENTITY.md / USER.md 自动注入上下文
+- **引导文件** — AGENTS.md / IDENTITY.md / USER.md / HEARTBEAT.md 自动注入上下文
 - **链接理解** — 消息中 URL 自动抓取预览
 - **轻量** — 运行时 ~100MB 内存
 
@@ -52,41 +52,194 @@ flyclaw
 |------|------|
 | `flyclaw` | 启动主服务（Gateway + 渠道 + AgentLoop） |
 | `flyclaw-setup` | 交互式配置向导（模型、API Key、渠道） |
-| `flyclaw-daemon` | 守护进程管理（install / uninstall / restart / status） |
+| `flyclaw-daemon` | 守护进程管理（install / uninstall / status） |
 | `flyclaw-acp` | Agent Control Protocol 服务（JSON-RPC WebSocket，供外部程序控制代理） |
 
-### 最小配置示例
+### 运行验证
 
-首次运行 `flyclaw-setup` 会自动生成 `~/.flyclaw/config.yaml`，也可手动创建：
+```bash
+# 健康检查
+curl http://127.0.0.1:18080/healthz
+
+# OpenAI 兼容 API 测试
+curl -X POST http://127.0.0.1:18080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-secret-token" \
+  -d '{"messages":[{"role":"user","content":"hello"}]}'
+```
+
+启动后日志样例：
+
+```
+15:00:00 [flyclaw.security] Audit complete: 4 passed, 0 warnings
+15:00:00 [flyclaw] flyclaw starting...
+15:00:00 [flyclaw] AgentLoop 已创建: 30 个工具, 2 个技能
+15:00:01 [flyclaw] Gateway ready: http://127.0.0.1:18080
+15:00:01 [flyclaw] Dashboard:     GET /dashboard
+```
+
+> 网关默认绑定 `127.0.0.1:18080`（仅本地访问，host 已固化为代码常量）。访问 `http://localhost:18080/dashboard` 可进入 Web 面板，需用 gateway token 登录。
+
+## 配置
+
+首次运行 `flyclaw-setup` 会自动生成 `~/.flyclaw/config.yaml`，也可手动编辑。配置文件支持 `${ENV_VAR}` 语法引用环境变量（未设置的变量会被替换为空串并告警）。
+
+### 完整配置示例
+
+以下是各配置段的主要字段（对照 `src/config.py` 的真实 schema）：
 
 ```yaml
 model:
+  provider: "openai"
   name: "deepseek-chat"
   temperature: 0.0
   base_url: "https://api.deepseek.com/v1"
   api_key: "${DEEPSEEK_API_KEY}"
-  context_window: 64000   # 模型上下文窗口大小（token 数）
+  context_window: 64000
+
+gateway:
+  # host 已固化为代码常量 127.0.0.1，此处配置不生效，仅保留兼容
+  port: 18080
+  auth_token: "${GATEWAY_AUTH_TOKEN}"   # 留空则启动时自动生成并持久化
 
 channels:
   qq:
     enabled: true
-    app_id: "你的APPID"
-    client_secret: "你的密钥"
+    app_id: "${QQ_APP_ID}"
+    client_secret: "${QQ_CLIENT_SECRET}"
+    dm_policy: "open"            # open | allowlist
+    group_policy: "allowlist"    # open | allowlist | disabled
+    allow_from: []               # 私聊白名单（dm_policy=allowlist 生效）
+    group_allow_from: []         # 群白名单
+    require_mention: true        # 群内需 @ 机器人
+    markdown_support: false
+    approval_keyboard: true      # QQ 原生按钮审批（需 markdown_support=true）
+
+  weixin:
+    enabled: false
+    account_id: ""
+    token: ""
+    base_url: "https://ilinkai.weixin.qq.com"
+    cdn_base_url: "https://novac2c.cdn.weixin.qq.com/c2c"
+    dm_policy: "open"            # open | allowlist | disabled
+    allowed_users: []
+    split_multiline_messages: false
+    send_retry_count: 4
+    send_chunk_delay: 2.0
+
+session:
+  scope: "per_sender"            # per_sender | global
+  idle_reset_minutes: 120
+  auto_prune: false              # 会话自动修剪（可选）
+  retention_days: 90
+
+agents:
+  system_prompt: "You are a helpful AI assistant."
+  workspace: "~/.flyclaw/workspace"
+  max_tool_rounds: 100
+  timezone: "Asia/Shanghai"
+  language: "zh"                 # zh | en
+  busy_input_mode: "interrupt"   # interrupt | queue | steer
+
+tools:
+  exec:
+    enabled: true
+    approval_mode: "off"         # off | ask | on_denylist_miss | always
+    sandbox_enabled: true
+    audit_log: true
+    no_output_timeout_seconds: 60
+  web_search:
+    api_key: "${TAVILY_API_KEY}"
+  web_fetch:
+    enabled: true
+  browser:
+    enabled: true
+    headless: true
+    stealth: true
+    browser: "chromium"          # chromium | firefox | webkit
+  media_understanding:
+    enabled: false               # 图片描述/音频转录/视频理解，空字段继承主模型
+  windows_use:
+    enabled: true                # 仅 Windows 生效
+  guardrails:
+    enabled: true
+    repeat_fail_block: 5
+    storm_block: 8
+
+memory:
+  enabled: true
+  backend: "sqlite"              # sqlite | lancedb
+  db_path: "~/.flyclaw/data/memory.db"
+
+memory_store:
+  enabled: false                 # KV 记忆存储
+  db_path: "~/.flyclaw/data/memories.db"
+
+cron:
+  enabled: true
+  store_path: "~/.flyclaw/data/cron.db"
+
+skills:
+  enabled: true
+
+security:
+  enabled: true
+  audit_on_startup: true
+  allow_private_urls: false      # SSRF 防护
+
+compression:
+  enabled: true
+  threshold_percent: 0.6
+
+voice:
+  enabled: false
+  voice: "zh-CN-YunxiNeural"
+  threshold: 20
+
+delegation:
+  enabled: true
+  max_concurrent: 3
+  child_timeout_seconds: 600
+
+consolidation:
+  enabled: true
+  min_messages: 10
+
+task:
+  enabled: false
+  max_parallel: 3
+  default_timeout: 7200
+
+auth:
+  enabled: true
+  default_role: "owner"
+  pairing_enabled: true
+
+link_understanding:
+  enabled: true
+  max_previews: 3
+
+checkpointer:
+  type: "sqlite"
+  path: "~/.flyclaw/data/checkpoints.db"
+
+hooks:
+  hooks: []
+```
+
+### 环境变量
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."        # LLM API Key（必填）
+export GATEWAY_AUTH_TOKEN="your-secret"  # 留空则自动生成；公网部署务必显式设置
+export QQ_APP_ID="..."                   # QQ 渠道
+export QQ_CLIENT_SECRET="..."
+export TAVILY_API_KEY="tvly-..."         # 网页搜索（无 Key 自动回退 Bing）
 ```
 
 ## 支持的模型
 
-FlyClaw 兼容所有提供 OpenAI API 接口的模型服务，只需配置 `base_url`、`api_key`、`model` 即可接入：
-
-```yaml
-model:
-  name: "deepseek-chat"
-  temperature: 0.0
-  base_url: "https://api.deepseek.com/v1"
-  api_key: "${DEEPSEEK_API_KEY}"
-```
-
-常见兼容服务：
+FlyClaw 兼容所有提供 OpenAI API 接口的模型服务，只需配置 `base_url`、`api_key`、`model` 即可接入。常见兼容服务：
 
 - **DeepSeek** — `base_url: https://api.deepseek.com/v1`
 - **OpenAI** — `base_url: https://api.openai.com/v1`（默认，可省略）
@@ -106,7 +259,8 @@ model:
   base_url: "https://api.deepseek.com/v1"
   api_key: "${DEEPSEEK_API_KEY}"
   fallbacks:
-    - name: "qwen-plus"
+    - provider: "openai"
+      name: "qwen-plus"
       base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
       api_key: "${DASHSCOPE_API_KEY}"
 ```
@@ -115,23 +269,25 @@ model:
 
 ### QQ
 
-基于 QQ 官方 Bot API（WebSocket + HTTP），支持：
+基于 QQ 官方 Bot API（WebSocket + HTTP）：
 
-- C2C 私聊、私信
-- 文本/Markdown 消息、图片、文件、语音消息
-- 流式回复、自动 Token 刷新、WebSocket 断线重连（最多 100 次）
+1. 登录 [QQ 开放平台](https://q.qq.com/) 创建机器人应用，获取 `App ID` 和 `Client Secret`
+2. 配置 `channels.qq`（字段见上方完整示例）
+3. 支持 C2C 私聊/私信、文本/Markdown/图片/文件/语音、流式回复、自动 Token 刷新
+
+WebSocket 断线**永不放弃重连**（backoff 1→2→5→10→30→60s 封顶，无限重试，自动从任何时长故障自愈），并根据 close code（4004 鉴权失败清 token、4007/4009 会话失效清 session）智能选择 RESUME 或重新 IDENTIFY。
 
 ### 微信
 
-基于腾讯 iLink Bot API（长轮询 + HTTP），支持：
+基于腾讯 iLink Bot API（长轮询 + HTTP）：
 
-- 私聊
-- 文本、图片、视频、文件、语音收发
-- AES-128-ECB CDN 媒体传输
+1. 获取微信 iLink Bot 账号
+2. 配置 `channels.weixin`（字段见上方完整示例，含 `base_url`、`cdn_base_url`、`send_retry_count` 等）
+3. 支持私聊、文本/图片/视频/文件/语音，媒体走 AES-128-ECB 加密的 CDN
 
 ## 内置工具
 
-40+ 个工具，分核心（始终可用）和可选（按需启用）两类：
+39 个工具，分核心（始终可用）和可选（按需启用）两类：
 
 ### 核心工具
 
@@ -144,7 +300,6 @@ model:
 
 - `read_file` / `write_file` / `edit_file` — 文件读写编辑
 - `list_dir` / `grep` / `glob` — 目录列表、内容搜索、模式匹配
-- 快照机制：每次写操作前自动创建 shadow git 快照，支持 `/rollback` 回滚
 
 **Web**
 
@@ -179,7 +334,7 @@ model:
 
 **技能管理**
 
-- `skills_list` / `skill_view` / `skill_manage` / `skill_hub` — 技能浏览、查看、编辑、市场搜索/安装
+- `skill_view` / `skill_manage` / `skill_hub` — 技能查看、编辑、市场搜索/安装
 
 **AI**
 
@@ -210,7 +365,7 @@ model:
 skills/my-skill/SKILL.md
 ```
 
-支持 `skill_manage` 工具在线创建/编辑，`skill_hub` 从市场安装。安装前自动进行安全扫描（恶意代码检测、Unicode 混淆防护）。内置策展人自动审查和归档过期技能。
+支持 `skill_manage` 工具在线创建/编辑，`skill_hub` 从市场安装。安装前自动进行安全扫描（恶意代码检测、Unicode 混淆防护）。内置策展人自动审查和归档过期技能。Skill 目录优先级（高→低）：`extra_dirs` > `~/.flyclaw/skills` > `workspace/skills` > `.agents/skills`。
 
 ### Plugin
 
@@ -218,8 +373,8 @@ skills/my-skill/SKILL.md
 
 ```
 plugins/my-plugin/
-├── plugin.json
-└── tools.py
+├── plugin.json      # 插件清单
+└── tools.py         # 工具实现
 ```
 
 插件支持自定义事件钩子（hooks），可在工具执行前后注入逻辑。
@@ -230,7 +385,7 @@ plugins/my-plugin/
 
 - **FTS5 全文搜索** — 基于 SQLite FTS5（unicode61 分词），开箱即用
 - **向量语义搜索**（可选） — 支持 sqlite-vec 和 LanceDB 两种后端
-- **LLM 记忆评判** — 自动判断对话内容是否值得记忆，避免存入无用信息
+- **自动记忆提取** — 通过正则模式匹配识别对话中的记忆意图，自动提取并存储值得记忆的事实片段
 - **Markdown 感知分块** — 按 Markdown 结构智能分块，保留语义完整性
 - **自动索引** — 配置 `memory.extra_paths` 可自动索引外部文件
 
@@ -249,32 +404,161 @@ plugins/my-plugin/
 - **设备配对** — 新设备通过配对码认证接入
 - **技能安全扫描** — 安装前检测恶意代码、路径穿越、混淆攻击
 
-## 部署
+## 生产部署
 
-三种方式，详见 [DEPLOY.md](https://github.com/ScarletMercy/FlyClaw/blob/main/DEPLOY.md)：
-
-**直接运行**
+### 直接运行
 
 ```bash
 flyclaw
 ```
 
-**Docker**
+### Docker
+
+仓库自带多阶段 `Dockerfile`（非 root 用户 + HEALTHCHECK）：
 
 ```bash
 docker build -t flyclaw .
-docker run -d -p 18080:18080 \
-  -e API_KEY="your-api-key" \
+docker run -d \
+  --name flyclaw \
+  -p 18080:18080 \
+  -e DEEPSEEK_API_KEY="sk-..." \
   -e GATEWAY_AUTH_TOKEN="your-secret" \
-  -v flyclaw-data:/app/data \
+  -e QQ_APP_ID="..." \
+  -e QQ_CLIENT_SECRET="..." \
+  -v flyclaw-data:/root/.flyclaw/data \
   flyclaw
 ```
 
-**Daemon 服务**（systemd / launchd / schtasks）
+### 守护进程服务（systemd / launchd / schtasks）
+
+`flyclaw-daemon` 内置跨平台服务管理（实例见 `src/daemon.py`）：
 
 ```bash
-flyclaw-daemon install
+flyclaw-daemon install    # 安装为系统服务
+flyclaw-daemon status     # 查看状态
+flyclaw-daemon uninstall  # 卸载
 ```
+
+| 平台 | 安装方式 | 崩溃自动重启 |
+|------|----------|--------------|
+| **Linux (systemd)** | 生成 `.service`，提示手动 `systemctl enable` | ✅ `Restart=on-failure` |
+| **macOS (launchd)** | 生成 `.plist` 到 `~/Library/LaunchAgents/`，提示手动 `launchctl load` | ✅ `KeepAlive=true` |
+| **Windows (schtasks)** | 直接 `schtasks /create` 创建开机自启任务 | ❌ 仅开机启动一次，进程崩溃不会拉起 |
+
+> **Windows 注意**：schtasks 方案仅开机启动一次，无崩溃重启。如需崩溃自愈，建议改用 NSSM/WinSW 包装。
+
+### 反向代理要点
+
+若需公网暴露，用 Nginx 反代到 `127.0.0.1:18080`，关键配置：`proxy_http_version 1.1` + `Upgrade/Connection` 头（WebSocket）、`proxy_buffering off`（SSE 流式）、`proxy_read_timeout 300s`（LLM 响应慢）。务必配合 TLS。
+
+## API 接入
+
+部署完成后，任何支持 OpenAI API 的客户端都能接入：
+
+### Python
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://flyclaw.example.com/v1",
+    api_key="your-gateway-token",
+)
+
+response = client.chat.completions.create(
+    model="flyclaw",
+    messages=[{"role": "user", "content": "hello"}],
+)
+print(response.choices[0].message.content)
+```
+
+### cURL
+
+```bash
+curl -X POST https://flyclaw.example.com/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-gateway-token" \
+  -d '{"messages": [{"role": "user", "content": "你好"}], "stream": true}'
+```
+
+另有 ACP WebSocket（`/ws/acp`，JSON-RPC 协议）可供外部程序编程控制代理，详见 `src/acp/`。
+
+## 运维
+
+### 内置斜杠命令
+
+在聊天中发送：
+
+| 命令 | 说明 |
+|------|------|
+| `/help` | 列出所有可用命令 |
+| `/status` | 查看运行状态 |
+| `/reset` | 重置当前会话 |
+| `/skills` | 列出已加载的 Skill |
+| `/search` | FTS5 关键词搜索历史会话 |
+| `/new` | 新建会话 |
+| `/old` | 查看历史会话 |
+| `/re` | 重新生成最后回复 |
+| `/prune` | 修剪当前会话 |
+| `/sandbox` | 沙箱开关 |
+| `/model` | 查看/切换模型、设置温度 |
+| `/voice` | 语音模式开关与设置 |
+| `/pair` | 生成设备配对码 |
+| `/whoami` | 查看当前身份 |
+| `/role` | 修改用户角色 |
+| `/agents` | 查看子代理列表 |
+| `/ps` | 查看后台进程 |
+| `/auto` | 自动任务模式 |
+| `/compress` | 手动压缩上下文 |
+| `/rounds` | 查看当前轮次 |
+
+### 工具审计日志
+
+开启 `tools.exec.audit_log: true` 后，所有工具调用自动记录，敏感参数（api_key、secret、token）自动脱敏：
+
+```
+[flyclaw.audit] tool=exec_command sender=ou_xxx args="ls -la" ok dur=0.32s
+```
+
+### 数据目录
+
+```
+~/.flyclaw/
+├── config.yaml            # 主配置
+├── gateway_token          # 自动生成的网关令牌（auth_token 留空时）
+├── data/
+│   ├── checkpoints.db     # 会话持久化（SQLite）
+│   ├── cron.db            # 定时任务
+│   ├── memory.db          # 记忆系统（SQLite + FTS5）
+│   ├── memories.db        # KV 记忆存储
+│   ├── task_runs.db       # 自主任务运行记录
+│   ├── auth.db            # 认证数据
+│   ├── session_index.db   # 会话搜索索引（FTS5）
+│   └── approvals.json     # 持久化审批记录
+├── skills/                # 用户级 Skill
+├── workspace/             # 工作目录（exec_command 默认路径）
+└── plugins/               # 插件目录
+```
+
+备份：`cp -r ~/.flyclaw/data/ ~/.flyclaw/data-backup-$(date +%Y%m%d)/`
+
+## 常见问题
+
+**启动报 `ModuleNotFoundError`**：`pip install -e .`（或 `uv pip install -e .`）以可编辑模式安装。
+
+**启动报 `模型 API 密钥未配置`**：运行 `flyclaw-setup` 配置 API Key，或在 `~/.flyclaw/config.yaml` 设置 `model.api_key`。
+
+**QQ 收不到消息**：① 检查 `channels.qq.enabled: true`；② 确认 `app_id`/`client_secret` 正确；③ 确认机器人应用已上线；④ 查日志是否有 WebSocket 连接成功字样。
+
+## 安全检查清单
+
+- [ ] `GATEWAY_AUTH_TOKEN` 已设置（或接受自动生成）
+- [ ] QQ/微信白名单已配置（`allow_from` / `allowed_users`）
+- [ ] `tools.exec.deny_patterns` 已配置危险命令
+- [ ] `tools.exec.approval_mode` 非 `off`（生产环境建议）
+- [ ] `tools.exec.audit_log: true` 已开启
+- [ ] Gateway 不直接暴露公网（用 Nginx 反代 + TLS）
+- [ ] config.yaml 中无明文密钥（全部使用 `${ENV_VAR}`）
 
 ## 开发
 
