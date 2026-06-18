@@ -1,6 +1,6 @@
 [project]
 name = "flyclaw"
-version = "2026.6.18"
+version = "2026.6.18.1"
 description = "轻量级多渠道 AI 助手框架，40+ 内置工具，支持 QQ/微信接入"
 readme = "README.md"
 license = "MIT"
