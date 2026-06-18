@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from src.canvas.server import router as canvas_router
+from src.version import __version__
 
 logger = logging.getLogger("flyclaw.gateway")
 
@@ -283,7 +284,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
     rate = getattr(app_config.gateway, "rate_limit", 10.0) if hasattr(app_config, "gateway") else 10.0
     capacity = getattr(app_config.gateway, "rate_limit_burst", 20) if hasattr(app_config, "gateway") else 20
     _rate_limiter = TokenBucketRateLimiter(rate=rate, capacity=capacity)
-    app = FastAPI(title="flyclaw", version="0.1.0")
+    app = FastAPI(title="flyclaw", version=__version__)
     if getattr(app_config, "canvas", None) and app_config.canvas.enabled:
         app.include_router(canvas_router)
     app.include_router(router)
@@ -298,7 +299,7 @@ def create_gateway(app_config, agent_loop, cron_service=None):
 
     @app.get("/healthz")
     async def healthz():
-        return {"status": "ok", "version": "0.1.0", "ts": int(time.time())}
+        return {"status": "ok", "version": __version__, "ts": int(time.time())}
 
     @app.get("/readyz")
     async def readyz():

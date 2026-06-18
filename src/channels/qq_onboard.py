@@ -20,6 +20,8 @@ from urllib.parse import quote
 
 import httpx
 
+from src.version import __version__
+
 logger = logging.getLogger("flyclaw.qq_onboard")
 
 # ---------------------------------------------------------------------------
@@ -87,7 +89,7 @@ def _get_api_headers() -> dict[str, str]:
     return {
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "User-Agent": "flyclawQQBot/0.1.0",
+        "User-Agent": f"flyclawQQBot/{__version__}",
     }
 
 

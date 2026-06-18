@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from src.version import __version__
 from src.agent.client import create_client, create_chain
 from src.agent.loop import AgentLoop
 from src.agent.state import StateStore
@@ -377,7 +378,7 @@ class ServiceContainer:
 
         set_container(self)
 
-        logger.info("flyclaw 0.1.0 启动中...")
+        logger.info("flyclaw %s 启动中...", __version__)
         logger.info("模型: %s/%s", self.config.model.provider, self.config.model.name)
         if not self.config.gateway.auth_token:
             logger.warning("网关认证令牌为空 — 所有认证已禁用")

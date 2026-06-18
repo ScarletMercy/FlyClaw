@@ -29,7 +29,6 @@ class TestPluginManifest:
     def test_defaults(self):
         m = PluginManifest(id="test")
         assert m.name == ""
-        assert m.version == "0.1.0"
         assert m.tools == []
         assert m.hooks == {}
 

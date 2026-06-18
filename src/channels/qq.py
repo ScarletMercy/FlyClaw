@@ -18,6 +18,7 @@ from typing import Any, Callable, Optional
 
 import httpx
 
+from src.version import __version__
 from .base import Channel, api_request_with_retry
 
 logger = logging.getLogger("flyclaw.qq")
@@ -34,7 +35,7 @@ def get_qq_channel() -> Optional[QQChannel]:
 # --- QQ Bot API constants ---
 API_BASE = "https://api.sgroup.qq.com"
 TOKEN_URL = "https://bots.qq.com/app/getAppAccessToken"
-USER_AGENT = "flyclawQQBot/0.1.0"
+USER_AGENT = f"flyclawQQBot/{__version__}"
 
 # WebSocket opcodes
 OP_DISPATCH = 0

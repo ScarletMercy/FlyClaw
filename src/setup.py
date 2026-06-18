@@ -563,7 +563,21 @@ def _step_media_understanding(config: dict) -> None:
     if enabled:
         mu["provider"] = _ask("  模型提供商", default=mu.get("provider", "openai"))
         mu["name"] = _ask("  模型名称", default=mu.get("name", "gpt-4o-mini"))
+        mu["base_url"] = _ask("  接口地址（留空使用默认）", default=mu.get("base_url", ""))
         mu["api_key"] = _ask("  API 密钥", default=mu.get("api_key", "${OPENAI_API_KEY}"))
+
+        # 验证 API Key
+        if mu["api_key"]:
+            print("  验证 API Key 中...")
+            success, msg = _verify_api_key(
+                mu.get("provider", ""), mu.get("name", ""), mu.get("base_url", ""), mu["api_key"]
+            )
+            if success:
+                print("  [通过] API Key 验证成功")
+            else:
+                print(f"  [警告] API Key 验证失败: {msg}")
+                if not _ask_yn("  是否仍然使用此 API Key？", default=True):
+                    mu["api_key"] = _ask("  重新输入 API 密钥", default="")
 
 
 def _step_memory_store(config: dict) -> None:

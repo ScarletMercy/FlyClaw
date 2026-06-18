@@ -33,16 +33,16 @@ FlyClaw 是一个自包含的 AI 助手框架，直接运行在你的设备上�
 ## 快速开始
 
 ```bash
-# 推荐 uv
+# 从 PyPI 安装（稳定版）
 uv tool install flyclaw
-
-# 或 pip
 pip install flyclaw
 
-# 交互式配置向导
-flyclaw-setup
+# 从 GitHub 安装（最新版）
+uv tool install git+https://github.com/ScarletMercy/FlyClaw.git
+pip install git+https://github.com/ScarletMercy/FlyClaw.git
 
-# 启动
+# 交互式配置 + 启动
+flyclaw-setup
 flyclaw
 ```
 
@@ -55,50 +55,24 @@ flyclaw
 | `flyclaw-daemon` | 守护进程管理（install / uninstall / status） |
 | `flyclaw-acp` | Agent Control Protocol 服务（JSON-RPC WebSocket，供外部程序控制代理） |
 
-### 运行验证
-
-```bash
-# 健康检查
-curl http://127.0.0.1:18080/healthz
-
-# OpenAI 兼容 API 测试
-curl -X POST http://127.0.0.1:18080/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-secret-token" \
-  -d '{"messages":[{"role":"user","content":"hello"}]}'
-```
-
-启动后日志样例：
-
-```
-15:00:00 [flyclaw.security] Audit complete: 4 passed, 0 warnings
-15:00:00 [flyclaw] flyclaw starting...
-15:00:00 [flyclaw] AgentLoop 已创建: 30 个工具, 2 个技能
-15:00:01 [flyclaw] Gateway ready: http://127.0.0.1:18080
-15:00:01 [flyclaw] Dashboard:     GET /dashboard
-```
-
-> 网关默认绑定 `127.0.0.1:18080`（仅本地访问，host 已固化为代码常量）。访问 `http://localhost:18080/dashboard` 可进入 Web 面板，需用 gateway token 登录。
+> 网关默认绑定 `127.0.0.1:18080`（仅本地访问，host 已固化为代码常量）。主要端点：`GET /healthz`、`POST /v1/chat/completions`、`GET /dashboard`。
 
 ## 配置
 
 首次运行 `flyclaw-setup` 会自动生成 `~/.flyclaw/config.yaml`，也可手动编辑。配置文件支持 `${ENV_VAR}` 语法引用环境变量（未设置的变量会被替换为空串并告警）。
 
-### 完整配置示例
+### 配置示例
 
-以下是各配置段的主要字段（对照 `src/config.py` 的真实 schema）：
+核心配置段（完整字段见 `src/config.py`，另有 voice / delegation / consolidation / task / auth / hooks 等段）：
 
 ```yaml
 model:
   provider: "openai"
   name: "deepseek-chat"
-  temperature: 0.0
   base_url: "https://api.deepseek.com/v1"
   api_key: "${DEEPSEEK_API_KEY}"
-  context_window: 64000
 
 gateway:
-  # host 已固化为代码常量 127.0.0.1，此处配置不生效，仅保留兼容
   port: 18080
   auth_token: "${GATEWAY_AUTH_TOKEN}"   # 留空则启动时自动生成并持久化
 
@@ -109,37 +83,10 @@ channels:
     client_secret: "${QQ_CLIENT_SECRET}"
     dm_policy: "open"            # open | allowlist
     group_policy: "allowlist"    # open | allowlist | disabled
-    allow_from: []               # 私聊白名单（dm_policy=allowlist 生效）
-    group_allow_from: []         # 群白名单
-    require_mention: true        # 群内需 @ 机器人
-    markdown_support: false
-    approval_keyboard: true      # QQ 原生按钮审批（需 markdown_support=true）
-
-  weixin:
-    enabled: false
-    account_id: ""
-    token: ""
-    base_url: "https://ilinkai.weixin.qq.com"
-    cdn_base_url: "https://novac2c.cdn.weixin.qq.com/c2c"
-    dm_policy: "open"            # open | allowlist | disabled
-    allowed_users: []
-    split_multiline_messages: false
-    send_retry_count: 4
-    send_chunk_delay: 2.0
 
 session:
   scope: "per_sender"            # per_sender | global
   idle_reset_minutes: 120
-  auto_prune: false              # 会话自动修剪（可选）
-  retention_days: 90
-
-agents:
-  system_prompt: "You are a helpful AI assistant."
-  workspace: "~/.flyclaw/workspace"
-  max_tool_rounds: 100
-  timezone: "Asia/Shanghai"
-  language: "zh"                 # zh | en
-  busy_input_mode: "interrupt"   # interrupt | queue | steer
 
 tools:
   exec:
@@ -147,84 +94,10 @@ tools:
     approval_mode: "off"         # off | ask | on_denylist_miss | always
     sandbox_enabled: true
     audit_log: true
-    no_output_timeout_seconds: 60
-  web_search:
-    api_key: "${TAVILY_API_KEY}"
-  web_fetch:
-    enabled: true
-  browser:
-    enabled: true
-    headless: true
-    stealth: true
-    browser: "chromium"          # chromium | firefox | webkit
-  media_understanding:
-    enabled: false               # 图片描述/音频转录/视频理解，空字段继承主模型
-  windows_use:
-    enabled: true                # 仅 Windows 生效
-  guardrails:
-    enabled: true
-    repeat_fail_block: 5
-    storm_block: 8
 
 memory:
   enabled: true
   backend: "sqlite"              # sqlite | lancedb
-  db_path: "~/.flyclaw/data/memory.db"
-
-memory_store:
-  enabled: false                 # KV 记忆存储
-  db_path: "~/.flyclaw/data/memories.db"
-
-cron:
-  enabled: true
-  store_path: "~/.flyclaw/data/cron.db"
-
-skills:
-  enabled: true
-
-security:
-  enabled: true
-  audit_on_startup: true
-  allow_private_urls: false      # SSRF 防护
-
-compression:
-  enabled: true
-  threshold_percent: 0.6
-
-voice:
-  enabled: false
-  voice: "zh-CN-YunxiNeural"
-  threshold: 20
-
-delegation:
-  enabled: true
-  max_concurrent: 3
-  child_timeout_seconds: 600
-
-consolidation:
-  enabled: true
-  min_messages: 10
-
-task:
-  enabled: false
-  max_parallel: 3
-  default_timeout: 7200
-
-auth:
-  enabled: true
-  default_role: "owner"
-  pairing_enabled: true
-
-link_understanding:
-  enabled: true
-  max_previews: 3
-
-checkpointer:
-  type: "sqlite"
-  path: "~/.flyclaw/data/checkpoints.db"
-
-hooks:
-  hooks: []
 ```
 
 ### 环境变量
@@ -251,19 +124,7 @@ FlyClaw 兼容所有提供 OpenAI API 接口的模型服务，只需配置 `base
 - **Together AI** — `base_url: https://api.together.xyz/v1`
 - **任何 OpenAI 兼容服务** — 自定义 `base_url`
 
-支持模型回退链，主模型失败时自动切换备用模型：
-
-```yaml
-model:
-  name: "deepseek-chat"
-  base_url: "https://api.deepseek.com/v1"
-  api_key: "${DEEPSEEK_API_KEY}"
-  fallbacks:
-    - provider: "openai"
-      name: "qwen-plus"
-      base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-      api_key: "${DASHSCOPE_API_KEY}"
-```
+支持模型回退链（`model.fallbacks`），主模型失败时自动切换备用模型。
 
 ## 渠道
 
@@ -359,25 +220,11 @@ WebSocket 断线**永不放弃重连**（backoff 1→2→5→10→30→60s 封�
 
 ### Skill
 
-在 `skills/` 目录下创建 `SKILL.md`，自动热加载：
-
-```
-skills/my-skill/SKILL.md
-```
-
-支持 `skill_manage` 工具在线创建/编辑，`skill_hub` 从市场安装。安装前自动进行安全扫描（恶意代码检测、Unicode 混淆防护）。内置策展人自动审查和归档过期技能。Skill 目录优先级（高→低）：`extra_dirs` > `~/.flyclaw/skills` > `workspace/skills` > `.agents/skills`。
+在 `skills/` 目录下创建 `SKILL.md`，自动热加载。支持 `skill_manage` 工具在线创建/编辑，`skill_hub` 从市场安装。安装前自动进行安全扫描（恶意代码检测、Unicode 混淆防护）。内置策展人自动审查和归档过期技能。Skill 目录优先级（高→低）：`extra_dirs` > `~/.flyclaw/skills` > `workspace/skills` > `.agents/skills`。
 
 ### Plugin
 
-在 `plugins/` 目录下创建插件，包含 `plugin.json` 清单和 Python 工具模块：
-
-```
-plugins/my-plugin/
-├── plugin.json      # 插件清单
-└── tools.py         # 工具实现
-```
-
-插件支持自定义事件钩子（hooks），可在工具执行前后注入逻辑。
+在 `plugins/` 目录下创建插件（含 `plugin.json` 清单和 Python 工具模块），支持自定义事件钩子（hooks），可在工具执行前后注入逻辑。
 
 ## 记忆系统
 
@@ -406,82 +253,16 @@ plugins/my-plugin/
 
 ## 生产部署
 
-### 直接运行
-
-```bash
-flyclaw
-```
-
-### Docker
-
-仓库自带多阶段 `Dockerfile`（非 root 用户 + HEALTHCHECK）：
+直接运行 `flyclaw`，或使用 `flyclaw-daemon install` 安装为系统服务。仓库自带多阶段 `Dockerfile`（非 root 用户 + HEALTHCHECK）：
 
 ```bash
 docker build -t flyclaw .
-docker run -d \
-  --name flyclaw \
-  -p 18080:18080 \
-  -e DEEPSEEK_API_KEY="sk-..." \
-  -e GATEWAY_AUTH_TOKEN="your-secret" \
-  -e QQ_APP_ID="..." \
-  -e QQ_CLIENT_SECRET="..." \
-  -v flyclaw-data:/root/.flyclaw/data \
-  flyclaw
+docker run -d --name flyclaw -p 18080:18080 -v flyclaw-data:/home/flyclaw/.flyclaw/data flyclaw
 ```
-
-### 守护进程服务（systemd / launchd / schtasks）
-
-`flyclaw-daemon` 内置跨平台服务管理（实例见 `src/daemon.py`）：
-
-```bash
-flyclaw-daemon install    # 安装为系统服务
-flyclaw-daemon status     # 查看状态
-flyclaw-daemon uninstall  # 卸载
-```
-
-| 平台 | 安装方式 | 崩溃自动重启 |
-|------|----------|--------------|
-| **Linux (systemd)** | 生成 `.service`，提示手动 `systemctl enable` | ✅ `Restart=on-failure` |
-| **macOS (launchd)** | 生成 `.plist` 到 `~/Library/LaunchAgents/`，提示手动 `launchctl load` | ✅ `KeepAlive=true` |
-| **Windows (schtasks)** | 直接 `schtasks /create` 创建开机自启任务 | ❌ 仅开机启动一次，进程崩溃不会拉起 |
-
-> **Windows 注意**：schtasks 方案仅开机启动一次，无崩溃重启。如需崩溃自愈，建议改用 NSSM/WinSW 包装。
-
-### 反向代理要点
-
-若需公网暴露，用 Nginx 反代到 `127.0.0.1:18080`，关键配置：`proxy_http_version 1.1` + `Upgrade/Connection` 头（WebSocket）、`proxy_buffering off`（SSE 流式）、`proxy_read_timeout 300s`（LLM 响应慢）。务必配合 TLS。
 
 ## API 接入
 
-部署完成后，任何支持 OpenAI API 的客户端都能接入：
-
-### Python
-
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="https://flyclaw.example.com/v1",
-    api_key="your-gateway-token",
-)
-
-response = client.chat.completions.create(
-    model="flyclaw",
-    messages=[{"role": "user", "content": "hello"}],
-)
-print(response.choices[0].message.content)
-```
-
-### cURL
-
-```bash
-curl -X POST https://flyclaw.example.com/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer your-gateway-token" \
-  -d '{"messages": [{"role": "user", "content": "你好"}], "stream": true}'
-```
-
-另有 ACP WebSocket（`/ws/acp`，JSON-RPC 协议）可供外部程序编程控制代理，详见 `src/acp/`。
+Gateway 提供 OpenAI 兼容接口，任何支持 OpenAI API 的客户端均可直接接入（`base_url` 指向 `http://<host>:18080/v1`）。另有 ACP WebSocket（`/ws/acp`，JSON-RPC 协议）可供外部程序编程控制代理，详见 `src/acp/`。
 
 ## 运维
 
@@ -498,8 +279,8 @@ curl -X POST https://flyclaw.example.com/v1/chat/completions \
 | `/search` | FTS5 关键词搜索历史会话 |
 | `/new` | 新建会话 |
 | `/old` | 查看历史会话 |
-| `/re` | 重新生成最后回复 |
-| `/prune` | 修剪当前会话 |
+| `/re <id>` | 切换会话 |
+| `/prune` | 清理旧会话 |
 | `/sandbox` | 沙箱开关 |
 | `/model` | 查看/切换模型、设置温度 |
 | `/voice` | 语音模式开关与设置 |
@@ -512,35 +293,9 @@ curl -X POST https://flyclaw.example.com/v1/chat/completions \
 | `/compress` | 手动压缩上下文 |
 | `/rounds` | 查看当前轮次 |
 
-### 工具审计日志
-
-开启 `tools.exec.audit_log: true` 后，所有工具调用自动记录，敏感参数（api_key、secret、token）自动脱敏：
-
-```
-[flyclaw.audit] tool=exec_command sender=ou_xxx args="ls -la" ok dur=0.32s
-```
-
 ### 数据目录
 
-```
-~/.flyclaw/
-├── config.yaml            # 主配置
-├── gateway_token          # 自动生成的网关令牌（auth_token 留空时）
-├── data/
-│   ├── checkpoints.db     # 会话持久化（SQLite）
-│   ├── cron.db            # 定时任务
-│   ├── memory.db          # 记忆系统（SQLite + FTS5）
-│   ├── memories.db        # KV 记忆存储
-│   ├── task_runs.db       # 自主任务运行记录
-│   ├── auth.db            # 认证数据
-│   ├── session_index.db   # 会话搜索索引（FTS5）
-│   └── approvals.json     # 持久化审批记录
-├── skills/                # 用户级 Skill
-├── workspace/             # 工作目录（exec_command 默认路径）
-└── plugins/               # 插件目录
-```
-
-备份：`cp -r ~/.flyclaw/data/ ~/.flyclaw/data-backup-$(date +%Y%m%d)/`
+配置、数据库、技能、插件等数据存放在 `~/.flyclaw/`。
 
 ## 常见问题
 
@@ -563,10 +318,9 @@ curl -X POST https://flyclaw.example.com/v1/chat/completions \
 ## 开发
 
 ```bash
-make lint       # ruff 代码检查
-make format     # ruff 格式化
-make test       # pytest 测试
-make test-cov   # 测试覆盖率
+uv run ruff check      # 检查
+uv run ruff format     # 格式化
+uv run pytest          # 测试
 ```
 
 ## 致谢

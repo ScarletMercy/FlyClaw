@@ -14,6 +14,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+from src.version import __version__
+
 from src.gateway import GATEWAY_HOST
 
 
@@ -317,7 +319,7 @@ def cmd_model(args):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="flyclaw", description="flyclaw AI 助手")
-    parser.add_argument("--version", action="version", version="flyclaw 0.1.0")
+    parser.add_argument("--version", action="version", version=f"flyclaw {__version__}")
     sub = parser.add_subparsers(dest="command", help="管理命令")
 
     sub.add_parser("doctor", help="运行系统诊断")

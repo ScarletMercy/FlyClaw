@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from src.agent.tooldef import ToolDef
+from src.version import __version__
 from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger("flyclaw.plugins")
@@ -16,7 +17,7 @@ logger = logging.getLogger("flyclaw.plugins")
 class PluginManifest(BaseModel):
     id: str
     name: str = ""
-    version: str = "0.1.0"
+    version: str = __version__
     description: str = ""
     tools: list[str] = Field(default_factory=list)
     hooks: dict[str, str] = Field(default_factory=dict)

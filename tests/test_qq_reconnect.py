@@ -213,8 +213,9 @@ class TestConnectHandshake:
     This is the closest runtime check short of a live QQ gateway."""
 
     async def _connect(self, client, fake):
-        with patch("websockets.connect", new=AsyncMock(return_value=fake)), patch(
-            "src.channels.qq.api_request_with_retry", new=AsyncMock(return_value=_FakeResp())
+        with (
+            patch("websockets.connect", new=AsyncMock(return_value=fake)),
+            patch("src.channels.qq.api_request_with_retry", new=AsyncMock(return_value=_FakeResp())),
         ):
             await client.connect()
 
@@ -264,8 +265,9 @@ class TestConnectHandshake:
             async def close(self):
                 pass
 
-        with patch("websockets.connect", new=AsyncMock(return_value=_BadWS())), patch(
-            "src.channels.qq.api_request_with_retry", new=AsyncMock(return_value=_FakeResp())
+        with (
+            patch("websockets.connect", new=AsyncMock(return_value=_BadWS())),
+            patch("src.channels.qq.api_request_with_retry", new=AsyncMock(return_value=_FakeResp())),
         ):
             with pytest.raises(RuntimeError):
                 await client.connect()
@@ -397,5 +399,3 @@ class TestStopCancelsStartTask:
         # stop() must cancel the parked task well before 600s.
         await asyncio.wait_for(ch.stop(), timeout=5.0)
         assert cancelled.is_set(), "stop() failed to cancel the parked _ws_start_task"
-
-

@@ -15,6 +15,8 @@ from pathlib import Path
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from src.version import __version__
+
 logger = logging.getLogger("flyclaw.dashboard")
 
 # ── Log ring buffer ──
@@ -194,7 +196,7 @@ code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:12px}</style
 
         skills = _app_ref.skills_cache or []
         status = {
-            "version": "0.1.0",
+            "version": __version__,
             "uptime": f"{hours}h {minutes}m {seconds}s",
             "uptime_seconds": int(uptime),
             "model": {

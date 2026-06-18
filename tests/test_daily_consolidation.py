@@ -121,6 +121,24 @@ class TestSessionFiltering:
         assert result["sessions_skipped"] == 1
 
     @pytest.mark.asyncio
+    async def test_skip_does_not_create_new_session(self):
+        """Skipped sessions must NOT rotate — prevents exponential session growth."""
+        store = MagicMock()
+        state = _make_state(_make_messages(2, 2))
+        store.list_threads = AsyncMock(return_value=["t1"])
+        store.load = AsyncMock(return_value=state)
+
+        container = _make_container(state_store=store, agent_loop=MagicMock(), min_messages=10)
+
+        with patch(_PATCH_NEW_SESSION, new_callable=AsyncMock) as mock_new:
+            from src.services.daily_consolidation import run_daily_consolidation
+
+            result = await run_daily_consolidation(container)
+
+        assert result["sessions_skipped"] == 1
+        mock_new.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_skip_none_state(self):
         store = MagicMock()
         store.list_threads = AsyncMock(return_value=["t1"])

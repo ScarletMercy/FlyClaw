@@ -108,14 +108,14 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
                     f"\u2600\ufe0f wake up! {summary}" if summary else "\u2600\ufe0f wake up! nothing to consolidate"
                 )
                 await _send_notification(container, channel_name, chat_id, wake_msg)
+
+                # Rotate after successful consolidation
+                await _create_new_session(container, thread_id, channel_name)
+
+                if agent_loop:
+                    agent_loop.invalidate_memory_cache()
         else:
             result["sessions_skipped"] += 1
-
-        # Always rotate session \u2014 prevents sessions from getting stuck forever
-        await _create_new_session(container, thread_id, channel_name)
-
-        if agent_loop:
-            agent_loop.invalidate_memory_cache()
 
     logger.info(
         "Consolidation complete: %d processed, %d skipped, %d errors",
