@@ -38,3 +38,6 @@ USER.md
 *.html
 *.wav
 *.zip
+
+# IDE
+.idea/
