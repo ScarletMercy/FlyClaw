@@ -374,3 +374,67 @@ class TestMediaAcknowledgement:
             pass
 
         container.agent_loop.run.assert_called_once()
+
+
+class TestInterruptedNoDuplicateReply:
+    """When agent loop is interrupted, the last assistant message has tool_calls
+    and was already sent via the assistant_message event. The final reply
+    extraction must skip it to avoid duplication."""
+
+    @pytest.mark.asyncio
+    async def test_interrupted_last_assistant_with_tool_calls_not_sent(self, container, reply_fn, mock_approval_mgr):
+        result_state = AgentState(
+            messages=[
+                {"role": "user", "content": "hello"},
+                {
+                    "role": "assistant",
+                    "content": "Let me check that for you.",
+                    "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "echo", "arguments": "{}"}}],
+                },
+                {"role": "tool", "tool_call_id": "tc1", "content": "result"},
+            ]
+        )
+        container.agent_loop.run.return_value = result_state
+
+        handler = MessageHandler(container)
+        callback = handler.create_callback("per_sender")
+        await callback(
+            text="hello",
+            sender_id="u1",
+            chat_id="c1",
+            chat_type="p2p",
+            message_id="m1",
+            reply_fn=reply_fn,
+        )
+
+        reply_fn.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_normal_completion_last_assistant_sent(self, container, reply_fn, mock_approval_mgr):
+        result_state = AgentState(
+            messages=[
+                {"role": "user", "content": "hello"},
+                {
+                    "role": "assistant",
+                    "content": "Let me check that for you.",
+                    "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "echo", "arguments": "{}"}}],
+                },
+                {"role": "tool", "tool_call_id": "tc1", "content": "result"},
+                {"role": "assistant", "content": "Here is your answer."},
+            ]
+        )
+        container.agent_loop.run.return_value = result_state
+
+        handler = MessageHandler(container)
+        callback = handler.create_callback("per_sender")
+        await callback(
+            text="hello",
+            sender_id="u1",
+            chat_id="c1",
+            chat_type="p2p",
+            message_id="m1",
+            reply_fn=reply_fn,
+        )
+
+        reply_fn.assert_awaited()
+        assert "Here is your answer." in reply_fn.call_args[0][0]

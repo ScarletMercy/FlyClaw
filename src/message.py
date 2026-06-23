@@ -10,6 +10,7 @@ from src.agent.loop import ApprovalPending
 logger = logging.getLogger("flyclaw")
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*\n([\s\S]*?)\n\s*```", re.IGNORECASE)
+_MEDIA_MARKER_RE = re.compile(r'\[(?:image_url|video_url):\s*"[^"]*"\]')
 _MAX_FORMAT_LEN = 8000
 
 
@@ -675,7 +676,8 @@ class MessageHandler:
 
             for msg in reversed(messages[pre_msg_count:]):
                 if msg.get("role") == "assistant" and msg.get("content"):
-                    assistant_text = msg["content"].lstrip("\n")
+                    if not msg.get("tool_calls"):
+                        assistant_text = msg["content"].lstrip("\n")
                     break
 
             for msg in messages[pre_msg_count:]:
@@ -793,7 +795,8 @@ class MessageHandler:
                 try:
                     from src.tools.memory_tools import auto_extract_memory, save_memory
 
-                    extracted = auto_extract_memory(original_text, display_text)
+                    clean_text = _MEDIA_MARKER_RE.sub("", original_text).strip()
+                    extracted = auto_extract_memory(clean_text, display_text)
                     if extracted:
                         content, category = extracted
                         await save_memory(content, category=category)
@@ -1006,7 +1009,8 @@ class MessageHandler:
                     assistant_text = ""
                     for msg in reversed(result_state.messages):
                         if msg.get("role") == "assistant" and msg.get("content"):
-                            assistant_text = msg["content"]
+                            if not msg.get("tool_calls"):
+                                assistant_text = msg["content"]
                             break
                     if assistant_text:
                         await approval_ch.send_text(chat_id, assistant_text)

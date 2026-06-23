@@ -325,12 +325,14 @@ def cmd_model(args):
 
     # flyclaw model config
     if sub == "config":
-        from src.setup import _ask, _ask_yn, _ask_required, _verify_api_key
+        from src.setup import _ask, _ask_int, _ask_yn, _ask_required, _verify_api_key
 
         print("\n  当前模型配置:")
         print(f"    模型名称: {config.model.name}")
         print(f"    接口地址: {config.model.base_url or '(未设置)'}")
         print(f"    API 密钥: {'***' if config.model.api_key else '(未设置)'}")
+        print(f"    上下文窗口: {config.model.context_window}")
+        print(f"    多模态: {'是' if config.model.multimodal else '否'}")
         print()
 
         # 模型名称
@@ -362,6 +364,18 @@ def cmd_model(args):
                 print(f"  [警告] API Key 验证失败: {msg}")
                 if not _ask_yn("  是否仍然使用此 API Key？", default=True):
                     config.model.api_key = _ask_required("  重新输入 API 密钥", default="")
+
+        # 上下文窗口
+        if _ask_yn(f"  保留当前上下文窗口 ({config.model.context_window})？", default=True):
+            pass
+        else:
+            config.model.context_window = _ask_int("  上下文窗口大小 (tokens)", default=config.model.context_window)
+
+        # 多模态
+        if _ask_yn(f"  保留当前多模态设置 ({'是' if config.model.multimodal else '否'})？", default=True):
+            pass
+        else:
+            config.model.multimodal = _ask_yn("  该模型是否支持多模态（视觉输入）？", default=config.model.multimodal)
 
         # 保存配置
         from src.config import save_config
