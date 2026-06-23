@@ -78,6 +78,22 @@ def _format_display(text: str) -> str:
     return _JSON_FENCE_RE.sub(_replacer, text)
 
 
+def _media_acknowledgement(text: str) -> str:
+    """图片/视频消息的即时占位反馈;非媒体返回空串。
+
+    marker 格式见 channels.base.build_media_marker: [image_url: "..."] / [video_url: "..."]。
+    """
+    n_img = text.count("[image_url:")
+    n_vid = text.count("[video_url:")
+    if n_img and n_vid:
+        return "我来看看这些图片和视频："
+    if n_img:
+        return "我来看看这张图片：" if n_img == 1 else "我来看看这些图片："
+    if n_vid:
+        return "我来看看这个视频：" if n_vid == 1 else "我来看看这些视频："
+    return ""
+
+
 _SILENT_TOOLS = frozenset(
     {
         "text_to_speech",
@@ -375,6 +391,12 @@ class MessageHandler:
                     len(input_state.messages),
                     existing is None,
                 )
+                ack = _media_acknowledgement(text)
+                if ack:
+                    try:
+                        await reply_fn(ack)
+                    except Exception as e:
+                        logger.warning("媒体占位发送失败,跳过: %s", e)
                 await self._run_agent_turn(
                     input_state=input_state,
                     thread_id=thread_id,
@@ -548,7 +570,7 @@ class MessageHandler:
             if tid != thread_id:
                 return
             content = kwargs.get("content", "")
-            if not content:
+            if not content or not content.strip():
                 return
             try:
                 formatted = _format_display(content)

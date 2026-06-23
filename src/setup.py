@@ -103,6 +103,19 @@ def _ask_required(prompt: str, default: str = "") -> str:
         print("  [错误] 此项不能为空，请重新输入")
 
 
+def _ask_int(prompt: str, default: int) -> int:
+    """要求输入整数;非数字循环重输,留空用 default。
+
+    _ask 留空时返回 str(default),int(str(default)) 必成功 → 留空自然走默认。
+    """
+    while True:
+        raw = _ask(prompt, default=str(default))
+        try:
+            return int(raw)
+        except ValueError:
+            print(f"  [错误] 请输入一个整数(留空用 {default})")
+
+
 async def _verify_api_key_async(provider: str, name: str, base_url: str, api_key: str) -> tuple[bool, str]:
     """验证 API Key 是否可用。"""
     try:
@@ -205,7 +218,7 @@ def _configure_fallbacks(model: dict) -> None:
         if action == "完成":
             break
         elif action == "删除":
-            idx = int(_ask(f"  删除编号 (1-{len(fallbacks)})", default="1")) - 1
+            idx = _ask_int(f"  删除编号 (1-{len(fallbacks)})", default=1) - 1
             if 0 <= idx < len(fallbacks):
                 removed = fallbacks.pop(idx)
                 print(f"  已删除 {removed.get('provider')}/{removed.get('name')}")
@@ -229,6 +242,10 @@ def _configure_fallbacks(model: dict) -> None:
                 fb["name"] = _ask("  模型名称", default="")
                 fb["base_url"] = _ask("  接口地址", default="")
                 fb["api_key"] = _ask("  API 密钥", default="")
+            fb["context_window"] = _ask_int("  上下文窗口大小 (tokens)", default=fb.get("context_window", 200000))
+            fb["multimodal"] = _ask_yn(
+                "  该回退模型是否支持多模态？(切换到它时视觉跟随)", default=bool(fb.get("multimodal", False))
+            )
             fallbacks.append(fb)
             print(f"  已添加 {fb['provider']}/{fb['name']}")
 
@@ -279,8 +296,9 @@ def _step_model(config: dict) -> None:
                 )
                 if success:
                     print("  [通过] API Key 验证成功")
-                    ctx_default = str(model.get("context_window", 1000000))
-                    model["context_window"] = int(_ask("  上下文窗口大小 (tokens)", default=ctx_default))
+                    model["context_window"] = _ask_int(
+                        "  上下文窗口大小 (tokens)", default=model.get("context_window", 1000000)
+                    )
                     print(f"  上下文窗口: {model['context_window']} tokens")
                 else:
                     print(f"  [警告] API Key 验证失败: {msg}")
@@ -288,8 +306,9 @@ def _step_model(config: dict) -> None:
                         model["api_key"] = _ask_required(f"  重新输入 API 密钥 ({env_name})", default="")
         else:
             model.pop("api_key", None)
-            ctx_default = str(model.get("context_window", 1000000))
-            model["context_window"] = int(_ask("  上下文窗口大小 (tokens)", default=ctx_default))
+            model["context_window"] = _ask_int(
+                "  上下文窗口大小 (tokens)", default=model.get("context_window", 1000000)
+            )
             print(f"  上下文窗口: {model['context_window']} tokens")
     else:
         model["provider"] = "openai"
@@ -304,8 +323,9 @@ def _step_model(config: dict) -> None:
             )
             if success:
                 print("  [通过] API Key 验证成功")
-                ctx_default = str(model.get("context_window", 1000000))
-                model["context_window"] = int(_ask("  上下文窗口大小 (tokens)", default=ctx_default))
+                model["context_window"] = _ask_int(
+                    "  上下文窗口大小 (tokens)", default=model.get("context_window", 1000000)
+                )
                 print(f"  上下文窗口: {model['context_window']} tokens")
             else:
                 print(f"  [警告] API Key 验证失败: {msg}")
@@ -313,6 +333,11 @@ def _step_model(config: dict) -> None:
                     model["api_key"] = _ask_required("  重新输入 API 密钥", default="")
 
     model.setdefault("temperature", 1.0)
+
+    model["multimodal"] = _ask_yn(
+        "  该模型是否支持多模态（视觉输入）？(是则 describe_media 复用本模型看图/视频,无需另配视觉模型)",
+        default=bool(model.get("multimodal", False)),
+    )
 
     _configure_fallbacks(model)
 
@@ -331,7 +356,7 @@ def _step_gateway(config: dict) -> None:
     from src.instance import get_instance
 
     default_port = 18080 + (get_instance() or 0)
-    gw["port"] = int(_ask("  监听端口", default=str(gw.get("port", default_port))))
+    gw["port"] = _ask_int("  监听端口", default=gw.get("port", default_port))
 
 
 def _step_channel(config: dict) -> None:
@@ -627,9 +652,12 @@ def _step_summary(config: dict) -> None:
         print(f"  渠道:       未启用")
     print(f"  网页搜索:   {'已启用' if ws.get('enabled') else '未启用'}")
     print(f"  浏览器工具: {'已启用' if br.get('enabled') else '未启用'}")
-    print(f"  媒体理解:   {'已启用' if mu.get('enabled') else '未启用'}")
-    if mu.get("enabled") and mu.get("name"):
-        print(f"    模型:     {mu['name']}")
+    if model.get("multimodal"):
+        print(f"  媒体理解:   主模型多模态（describe_media 复用主模型）")
+    else:
+        print(f"  媒体理解:   {'已启用' if mu.get('enabled') else '未启用'}")
+        if mu.get("enabled") and mu.get("name"):
+            print(f"    模型:     {mu['name']}")
     print(f"  记忆存储:   {'已启用' if ms.get('enabled') else '未启用'}")
 
 
@@ -661,7 +689,10 @@ def run_wizard():
     _step_channel(config)
     _step_search(config)
     _step_browser(config)
-    _step_media_understanding(config)
+    if config.get("model", {}).get("multimodal"):
+        print("\n  [6/8] 媒体理解 — 已跳过（主模型多模态，describe_media 复用主模型）")
+    else:
+        _step_media_understanding(config)
     _step_memory_store(config)
     _step_summary(config)
 

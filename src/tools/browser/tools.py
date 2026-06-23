@@ -256,6 +256,8 @@ async def browser_press(key: str) -> str:
 async def browser_screenshot(path: str = "") -> str:
     """Take a screenshot of the current page. Returns the file path.
 
+    The model can call describe_media on the returned path to see the page.
+
     Args:
         path: Optional file path to save screenshot. Default: auto-generated in workspace.
     """

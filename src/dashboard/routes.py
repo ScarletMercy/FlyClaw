@@ -406,13 +406,13 @@ code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:12px}</style
     async def dashboard_list_models(request: Request):
         _check_auth(request)
         cfg = _app_ref.config
-        active_model = _app_ref.model_ref.model if _app_ref.model_ref else None
         from src.agent.client import FallbackChain
 
-        if isinstance(active_model, FallbackChain):
-            idx = active_model._active_idx
+        active_client = _app_ref.agent_loop._client if _app_ref.agent_loop else None
+        if isinstance(active_client, FallbackChain):
+            idx = active_client._active_idx
             available = []
-            for i, c in enumerate(active_model._all):
+            for i, c in enumerate(active_client._all):
                 available.append({"name": c.model, "active": i == idx})
             current = available[idx] if idx < len(available) else available[0]
         else:
@@ -428,15 +428,15 @@ code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:12px}</style
         name = body.get("name", "").strip()
         if not provider or not name:
             raise HTTPException(status_code=400, detail="provider and name required")
-        if not _app_ref.model_ref:
-            raise HTTPException(status_code=500, detail="model_ref not initialized")
+        if not _app_ref.agent_loop:
+            raise HTTPException(status_code=500, detail="agent_loop not initialized")
 
-        active_model = _app_ref.model_ref.model
+        active_client = _app_ref.agent_loop._client
         from src.agent.client import FallbackChain
 
-        if isinstance(active_model, FallbackChain):
-            all_clients = active_model._all
-            old_idx = active_model._active_idx
+        if isinstance(active_client, FallbackChain):
+            all_clients = active_client._all
+            old_idx = active_client._active_idx
             old_name = all_clients[old_idx].model
             target_idx = None
             for i, c in enumerate(all_clients):
@@ -445,7 +445,7 @@ code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:12px}</style
                     break
             if target_idx is None:
                 raise HTTPException(status_code=404, detail=f"Model {name} not found in chain")
-            active_model.switch_to(target_idx)
+            active_client.switch_to(target_idx)
             logger.info("Model switched from %s to %s", old_name, name)
             return {"ok": True, "previous": old_name, "current": name}
         else:
@@ -455,11 +455,15 @@ code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:12px}</style
             cfg = _app_ref.config
             fb_base_url = None
             fb_api_key = None
+            fb_multimodal = None
             for fb in cfg.model.fallbacks:
                 if fb.provider == provider and fb.name == name:
                     fb_base_url = getattr(fb, "base_url", None)
                     fb_api_key = getattr(fb, "api_key", None)
+                    fb_multimodal = getattr(fb, "multimodal", False)
                     break
+            # 切回 primary(无匹配 fb)用 cfg.model 的 multimodal;否则用匹配 fb 的
+            target_multimodal = fb_multimodal if fb_multimodal is not None else getattr(cfg.model, "multimodal", False)
             try:
                 new_model = create_client(
                     provider,
@@ -467,11 +471,12 @@ code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:12px}</style
                     cfg.model.temperature,
                     base_url=fb_base_url or cfg.model.base_url,
                     api_key=fb_api_key or cfg.model.api_key,
+                    multimodal=target_multimodal,
                 )
             except Exception as e:
                 raise HTTPException(status_code=400, detail=f"Failed to create model: {e}")
             old_name = f"{cfg.model.provider}/{cfg.model.name}"
-            _app_ref.model_ref.model = new_model
+            _app_ref.agent_loop.swap_client(new_model)
             logger.info("Model switched from %s to %s/%s", old_name, provider, name)
             return {"ok": True, "previous": old_name, "current": f"{provider}/{name}"}
 
@@ -646,7 +651,7 @@ code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:12px}</style
                 from src.agent.client import create_chain
 
                 old_client = _app_ref.agent_loop._client
-                _app_ref.agent_loop._client = create_chain(new_cfg)
+                _app_ref.agent_loop.swap_client(create_chain(new_cfg))
                 if hasattr(old_client, "close"):
                     try:
                         await old_client.close()
@@ -908,7 +913,7 @@ code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:12px}</style
                     from src.agent.client import create_chain
 
                     old_client = _app_ref.agent_loop._client
-                    _app_ref.agent_loop._client = create_chain(cfg)
+                    _app_ref.agent_loop.swap_client(create_chain(cfg))
                     if hasattr(old_client, "close"):
                         try:
                             await old_client.close()

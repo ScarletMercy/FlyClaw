@@ -21,7 +21,7 @@ class TestReloadExecutor:
             mock_chain.return_value = MagicMock()
             await executor.execute(plan)
         mock_chain.assert_called_once()
-        assert app.agent_loop._client == mock_chain.return_value
+        app.agent_loop.swap_client.assert_called_once_with(mock_chain.return_value)
 
     @pytest.mark.asyncio
     async def test_reload_cron_restarts_service(self, tmp_path):

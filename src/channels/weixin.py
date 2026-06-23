@@ -26,7 +26,7 @@ from urllib.parse import quote, urlparse
 
 import aiofiles
 
-from .base import Channel
+from .base import Channel, build_media_marker
 
 logger = logging.getLogger("flyclaw.weixin")
 
@@ -361,6 +361,25 @@ def _extract_text(item_list: list[dict[str, Any]]) -> str:
             if voice_text:
                 return voice_text
     return ""
+
+
+def _attach_media_markers(text: str, media_paths: list[str], media_mimes: list[str]) -> str:
+    """把已下载的图片/视频本地路径作为媒体标记追加到 text（对齐 QQ 渠道；音频跳过）。
+
+    模型可提取标记里的路径调 describe_media 看图(主模型多模态时复用主模型,否则用 media_understanding 配置)。
+    无图片/视频时原样返回 text。
+    """
+    markers: list[str] = []
+    for path, mime in zip(media_paths, media_mimes):
+        if mime.startswith("video"):
+            markers.append(build_media_marker("video", path))
+        elif mime.startswith("image"):
+            markers.append(build_media_marker("image", path))
+    if not markers:
+        return text
+    if not text.strip():
+        text = "请查看以下图片/视频"
+    return text + "\n" + "\n".join(markers)
 
 
 def _sync_buf_path(account_id: str) -> Path:
@@ -1203,6 +1222,9 @@ class WeixinChannel(Channel):
             pass
 
         logger.info("weixin: inbound from=%s type=%s media=%d", _safe_id(sender_id), chat_type_str, len(media_paths))
+        # 对齐 QQ：把已下载的图片/视频本地路径注入 text 为媒体标记（音频跳过）。
+        # 模型可提取标记里的路径调 describe_media 看图。
+        text = _attach_media_markers(text, media_paths, media_mimes)
         await self._on_message_callback(
             text=text,
             sender_id=sender_id,

@@ -136,6 +136,7 @@ async def _run_single(
                 config.model.temperature,
                 base_url=config.model.base_url,
                 api_key=config.model.api_key,
+                multimodal=getattr(config.model, "multimodal", False),
             )
         else:
             client = create_chain(config)

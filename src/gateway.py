@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from src.canvas.server import router as canvas_router
+from src.utils.content import content_to_text
 from src.version import __version__
 
 logger = logging.getLogger("flyclaw.gateway")
@@ -179,7 +180,7 @@ async def acp_websocket(ws: WebSocket):
                 params = raw.get("params", {})
                 sid = params.get("sessionId", "")
                 content = params.get("content", [])
-                prompt = " ".join(b.get("text", "") for b in content if b.get("type") == "text")
+                prompt = content_to_text(content, joiner=" ")
                 stop_reason = "end_turn"
                 async for event in runtime.run_turn(session_id=sid, prompt=prompt):
                     if event.type == "text_delta" and event.text:

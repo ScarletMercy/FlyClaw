@@ -86,6 +86,21 @@ def _make_loop(store, config, tools=None, client=None):
     )
 
 
+class TestSwapClient:
+    def test_swap_client_updates_both_client_and_compressor(self, store, config):
+        # finding #1: swap_client 必须同步更新 _client 和 _compressor._client
+        # (压缩/摘要 _llm_summarize 用 _compressor._client;漏更新则切模型后压缩仍用旧模型)
+        old_client = AsyncMock()
+        loop = _make_loop(store, config, client=old_client)
+        assert loop._compressor._client is old_client  # 构造期缓存
+
+        new_client = AsyncMock()
+        loop.swap_client(new_client)
+
+        assert loop._client is new_client
+        assert loop._compressor._client is new_client  # 压缩/摘要跟随新 client
+
+
 class TestAgentLoopSingleTurn:
     @pytest.mark.asyncio
     async def test_no_tool_call_returns_immediately(self, store, config):

@@ -27,6 +27,7 @@ class ChatClient:
         api_key: str,
         model: str,
         temperature: float = 0.0,
+        multimodal: bool = False,
     ):
         self._client = AsyncOpenAI(
             base_url=base_url,
@@ -37,6 +38,7 @@ class ChatClient:
         self.model = model
         self.temperature = temperature
         self.base_url = base_url
+        self.multimodal = multimodal
 
     async def chat(
         self,
@@ -99,15 +101,28 @@ class ChatClient:
 
 
 class FallbackChain:
-    def __init__(self, primary: ChatClient, fallbacks: list[ChatClient] | None = None):
+    def __init__(
+        self,
+        primary: ChatClient,
+        fallbacks: list[ChatClient] | None = None,
+        multimodal_flags: list[bool] | None = None,
+    ):
         self._all = [primary] + (fallbacks or [])
         self._active_idx = 0
         self._cooldowns: dict[int, float] = {}
         self._model_meta: list[dict] = []
+        self._multimodal_flags = multimodal_flags or [False] * len(self._all)
+        if len(self._multimodal_flags) != len(self._all):
+            raise ValueError("multimodal_flags 长度须等于 primary+fallbacks 数")
 
     @property
     def active(self) -> ChatClient:
         return self._all[self._active_idx]
+
+    @property
+    def active_multimodal(self) -> bool:
+        """当前激活模型是否多模态(describe_media 据此决定视觉来源)。"""
+        return self._multimodal_flags[self._active_idx]
 
     def switch_to(self, idx: int) -> None:
         if 0 <= idx < len(self._all):
@@ -175,22 +190,26 @@ def create_client(
     temperature: float,
     base_url: str | None = None,
     api_key: str | None = None,
+    multimodal: bool = False,
 ) -> ChatClient:
     return ChatClient(
         base_url=base_url or "",
         api_key=api_key or "",
         model=name,
         temperature=temperature,
+        multimodal=multimodal,
     )
 
 
 def create_chain(config) -> FallbackChain:
+    primary_mm = getattr(config.model, "multimodal", False)
     primary = create_client(
         config.model.provider,
         config.model.name,
         config.model.temperature,
         base_url=config.model.base_url,
         api_key=config.model.api_key,
+        multimodal=primary_mm,
     )
     fallbacks = []
     for fb in config.model.fallbacks or []:
@@ -201,6 +220,8 @@ def create_chain(config) -> FallbackChain:
                 getattr(fb, "temperature", config.model.temperature),
                 base_url=fb.base_url or config.model.base_url,
                 api_key=fb.api_key or config.model.api_key,
+                multimodal=getattr(fb, "multimodal", False),
             )
         )
-    return FallbackChain(primary, fallbacks)
+    multimodal_flags = [primary_mm] + [getattr(fb, "multimodal", False) for fb in config.model.fallbacks or []]
+    return FallbackChain(primary, fallbacks, multimodal_flags=multimodal_flags)

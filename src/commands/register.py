@@ -214,14 +214,14 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         zh = container.config.agents.language == "zh"
         if zh:
             lines = [
-                f"模型: {container.config.model.provider}/{container.config.model.name}",
+                f"模型: {container.config.model.name}",
                 f"工具: {len(tools)}",
                 f"技能: {len(skills)}",
                 f"会话: {container.session_tracker.active_count}",
             ]
         else:
             lines = [
-                f"Model: {container.config.model.provider}/{container.config.model.name}",
+                f"Model: {container.config.model.name}",
                 f"Tools: {len(tools)}",
                 f"Skills: {len(skills)}",
                 f"Sessions: {container.session_tracker.active_count}",
@@ -508,6 +508,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 "base_url": cfg.model.base_url,
                 "api_key": cfg.model.api_key,
                 "context_window": cfg.model.context_window,
+                "multimodal": cfg.model.multimodal,
             },
         ]
         for fb in cfg.model.fallbacks or []:
@@ -518,6 +519,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                     "base_url": fb.base_url or cfg.model.base_url,
                     "api_key": fb.api_key or cfg.model.api_key,
                     "context_window": fb.context_window,
+                    "multimodal": fb.multimodal,
                 }
             )
 
@@ -532,12 +534,8 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 lines = [f"Available models ({len(model_list)}):"]
             for i, m in enumerate(model_list):
                 marker = " *" if i == active_idx else ""
-                key_status = (
-                    "(有密钥)"
-                    if zh and m.get("api_key")
-                    else ("(has key)" if m.get("api_key") else "(无密钥)" if zh else "(no key)")
-                )
-                lines.append(f"  [{i}] {m['provider']}/{m['name']} {key_status}{marker}")
+                mm = "(多模态)" if zh and m.get("multimodal") else ("(multimodal)" if m.get("multimodal") else "")
+                lines.append(f"  [{i}] {m['name']}{mm}{marker}")
             lines.append("")
             if zh:
                 lines.append("用法: /model switch <id>")
@@ -565,8 +563,8 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                 client.switch_to(idx)
             m = model_list[idx]
             if zh:
-                return f"已切换到 [{idx}] {m['provider']}/{m['name']}"
-            return f"Switched to [{idx}] {m['provider']}/{m['name']}"
+                return f"已切换到 [{idx}] {m['name']}"
+            return f"Switched to [{idx}] {m['name']}"
 
         # /model temp <value>
         if sub in ("temp", "temperature"):
@@ -588,11 +586,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         # /model name <name>
         if sub == "name":
             if not val:
-                return (
-                    f"模型: {cfg.model.provider}/{cfg.model.name}"
-                    if zh
-                    else f"Model: {cfg.model.provider}/{cfg.model.name}"
-                )
+                return f"模型: {cfg.model.name}" if zh else f"Model: {cfg.model.name}"
             cfg.model.name = val
             if isinstance(client, FallbackChain):
                 client._all[0].model = val
@@ -623,7 +617,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         m = model_list[active_idx] if active_idx < len(model_list) else model_list[0]
         if zh:
             lines = [
-                f"当前: [{active_idx}] {m['provider']}/{m['name']}",
+                f"当前: [{active_idx}] {m['name']}",
                 f"温度: {cfg.model.temperature}",
                 f"上下文: {cfg.model.context_window}",
                 f"已加载模型: {len(model_list)}",
@@ -637,7 +631,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
             ]
         else:
             lines = [
-                f"Active: [{active_idx}] {m['provider']}/{m['name']}",
+                f"Active: [{active_idx}] {m['name']}",
                 f"Temperature: {cfg.model.temperature}",
                 f"Context: {cfg.model.context_window}",
                 f"Models loaded: {len(model_list)}",

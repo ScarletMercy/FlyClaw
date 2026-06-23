@@ -10,6 +10,7 @@ import uuid
 from typing import Optional
 
 from .store import SessionIndexStore, parse_thread_id
+from src.utils.content import content_to_text
 
 logger = logging.getLogger("flyclaw.session_index.sync")
 
@@ -29,14 +30,10 @@ def _extract_role(msg: dict) -> str:
 
 def _extract_content(msg: dict) -> str:
     content = msg.get("content", "")
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                parts.append(item.get("text", ""))
-            elif isinstance(item, str):
-                parts.append(item)
-        return "\n".join(parts)
+    if isinstance(content, (str, list)):
+        # allow_bare_str: 历史消息里 content list 可能混入裸字符串
+        return content_to_text(content, allow_bare_str=True)
+    # 非 str/list 兜底(理论不出现):保留历史 str() 行为,不走 util 的空串兜底
     return str(content) if content else ""
 
 

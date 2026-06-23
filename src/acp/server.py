@@ -6,6 +6,7 @@ from typing import Any
 from src.acp.session import AcpSessionManager
 from src.acp.runtime import AgentLoopRuntime, AcpRuntimeEvent
 from src.acp.transport import NdjsonTransport
+from src.utils.content import content_to_text
 
 logger = logging.getLogger("flyclaw.acp.server")
 
@@ -69,7 +70,7 @@ class AcpServer:
     async def _handle_prompt(self, params: dict) -> dict:
         session_id = params.get("sessionId", "")
         content = params.get("content", [])
-        prompt_text = " ".join(b.get("text", "") for b in content if b.get("type") == "text")
+        prompt_text = content_to_text(content, joiner=" ")
 
         stop_reason = "end_turn"
         async for event in self._runtime.run_turn(

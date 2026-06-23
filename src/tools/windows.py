@@ -42,7 +42,7 @@ def _screenshot_dir() -> str:
 async def windows_screenshot() -> str:
     """Take a screenshot of the entire screen. Returns the saved file path.
 
-    The screenshot can be used with media_understanding tools to let AI see the screen.
+    The model can call describe_media on the returned path to see the screen.
     """
     if ImageGrab is None:
         return "Error: Pillow not available on this platform."

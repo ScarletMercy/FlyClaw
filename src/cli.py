@@ -47,7 +47,7 @@ def cmd_doctor(args):
         print("[错误] 模型 API 密钥未设置")
 
     if config.model.provider and config.model.name:
-        print(f"[通过] 模型: {config.model.provider}/{config.model.name}")
+        print(f"[通过] 模型: {config.model.name}")
 
     # 验证模型是否可用
     if config.model.api_key:
@@ -120,7 +120,7 @@ def cmd_doctor(args):
 def cmd_status(args):
     config = _load_config()
     print("flyclaw 系统状态\n" + "=" * 40)
-    print(f"模型:       {config.model.provider}/{config.model.name}")
+    print(f"模型:       {config.model.name}")
     print(f"网关:       {GATEWAY_HOST}:{config.gateway.port}")
     print(f"QQ:         {'已启用' if config.channels.qq.enabled else '未启用'}")
     print(f"定时任务:   {'已启用' if config.cron.enabled else '未启用'}")
@@ -170,6 +170,39 @@ def cmd_sessions(args):
     return asyncio.run(_cmd_sessions_async(args))
 
 
+def _prompt_fallback_model():
+    """交互式收集一个回退模型(复用 setup 的 PRESETS + _ask* 辅助,UX 与向导一致),返回 ModelFallback。
+
+    _configure_fallbacks 的"添加"分支逻辑(setup.py:227-248)的 CLI 友好版本:
+    不嵌在向导里,单独可调(`flyclaw model add` 用)。
+    """
+    from src.config import ModelFallback
+    from src.setup import PRESETS, _ask, _ask_choice, _ask_int, _ask_yn
+
+    choice = _ask_choice("  模型提供商", list(PRESETS.keys()), default="custom")
+    preset = PRESETS[choice]
+    if preset:
+        provider = preset["provider"]
+        name = _ask("  模型名称", default=preset["name"])
+        base_url = _ask("  接口地址", default=preset["base_url"] or "")
+        api_key = _ask(f"  API 密钥 ({preset['env_key']})", default="") if preset["env_key"] else ""
+    else:
+        provider = "openai"
+        name = _ask("  模型名称", default="")
+        base_url = _ask("  接口地址", default="")
+        api_key = _ask("  API 密钥", default="")
+    context_window = _ask_int("  上下文窗口大小 (tokens)", default=200000)
+    multimodal = _ask_yn("  该回退模型是否支持多模态？(切换到它时视觉跟随)", default=False)
+    return ModelFallback(
+        provider=provider,
+        name=name,
+        base_url=base_url or None,
+        api_key=api_key or None,
+        context_window=context_window,
+        multimodal=multimodal,
+    )
+
+
 def cmd_model(args):
     config = _load_config()
     model_list = [
@@ -179,6 +212,7 @@ def cmd_model(args):
             "base_url": config.model.base_url,
             "api_key": config.model.api_key,
             "context_window": config.model.context_window,
+            "multimodal": config.model.multimodal,
         },
     ]
     for fb in config.model.fallbacks or []:
@@ -189,6 +223,7 @@ def cmd_model(args):
                 "base_url": fb.base_url or config.model.base_url,
                 "api_key": fb.api_key or config.model.api_key,
                 "context_window": fb.context_window,
+                "multimodal": fb.multimodal,
             }
         )
 
@@ -198,15 +233,15 @@ def cmd_model(args):
     if sub == "list":
         print(f"模型列表 ({len(model_list)}):")
         for i, m in enumerate(model_list):
-            key_status = "(有密钥)" if m.get("api_key") else "(无密钥)"
-            print(f"  [{i}] {m['provider']}/{m['name']} {key_status}")
+            mm = " (多模态)" if m.get("multimodal") else ""
+            print(f"  [{i}] {m['name']}{mm}")
         return 0
 
     if sub is None:
         print(f"模型列表 ({len(model_list)}):")
         for i, m in enumerate(model_list):
-            key_status = "(有密钥)" if m.get("api_key") else "(无密钥)"
-            print(f"  [{i}] {m['provider']}/{m['name']} {key_status}")
+            mm = " (多模态)" if m.get("multimodal") else ""
+            print(f"  [{i}] {m['name']}{mm}")
         print("\n用法:")
         print("  flyclaw model list              — 列出所有模型")
         print("  flyclaw model switch <id>       — 切换模型")
@@ -221,16 +256,32 @@ def cmd_model(args):
         if idx is None or idx < 0 or idx >= len(model_list):
             print(f"无效 ID。使用 flyclaw model list 查看可用模型 (0-{len(model_list) - 1})。")
             return 1
-        m = model_list[idx]
+        if idx == 0:
+            print(f"[{idx}] {config.model.name} 已是当前主模型。")
+            return 0
+        # 交换语义:选中 fallback 升主,旧主模型降入该 fallback 位(模型不丢、不重)。
+        # 修复前只把 fallback 拷进主模型、不动 fallbacks → 切完主模型与某 fallback 完全重复。
+        fb_idx = idx - 1
+        m = model_list[idx]  # base_url/api_key 已与主模型合并(fallback 为 None 时回退主模型)
+        from src.config import ModelFallback, save_config
+
+        old_primary = ModelFallback(
+            provider=config.model.provider,
+            name=config.model.name,
+            base_url=config.model.base_url,
+            api_key=config.model.api_key,
+            context_window=config.model.context_window,
+            multimodal=config.model.multimodal,
+        )
         config.model.provider = m["provider"]
         config.model.name = m["name"]
         config.model.base_url = m["base_url"]
         config.model.api_key = m["api_key"]
         config.model.context_window = m["context_window"]
-        from src.config import save_config
-
+        config.model.multimodal = m["multimodal"]
+        config.model.fallbacks[fb_idx] = old_primary
         save_config(config)
-        print(f"已切换到 [{idx}] {m['provider']}/{m['name']}")
+        print(f"已切换到 [{idx}] {m['name']}(旧主模型已降为回退)")
         return 0
 
     # flyclaw model test
@@ -262,9 +313,14 @@ def cmd_model(args):
 
     # flyclaw model add
     if sub == "add":
-        from src.setup import run_wizard
+        print("\n  添加回退模型\n  ────────────")
+        fb = _prompt_fallback_model()
+        config.model.fallbacks.append(fb)
+        from src.config import save_config
 
-        run_wizard()
+        save_config(config)
+        print(f"\n  已添加回退模型 {fb.name}")
+        print("  提示:想设为主模型用 `flyclaw model switch`。")
         return 0
 
     # flyclaw model config

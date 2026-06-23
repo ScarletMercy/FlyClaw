@@ -19,7 +19,7 @@ from typing import Any, Callable, Optional
 import httpx
 
 from src.version import __version__
-from .base import Channel, api_request_with_retry
+from .base import Channel, api_request_with_retry, build_media_marker
 
 logger = logging.getLogger("flyclaw.qq")
 
@@ -493,6 +493,27 @@ def _parse_chat_id(chat_id: str) -> tuple[str, str]:
     return "c2c", chat_id
 
 
+def _build_media_text(text: str, image_urls: list[str], video_urls: list[str], has_media: bool) -> str:
+    """根据已收集的图片/视频 URL + 已有 text,构造含 media marker 的最终文本。
+
+    提示文本设置与 marker 追加分离(原 4 个重复 append 循环 dedup 为 2 个,循环提到 if/elif 外)。
+    顺序依赖: video 块先跑(可能把 text 从空设成提示),image 块后跑读修改后的 text 判断是否
+    设提示。image+url 附件不置 has_media,故纯图场景 has_media=False。
+    """
+    if video_urls and not text.strip():
+        text = "请描述这个视频"
+    elif has_media and not text.strip():
+        text = "[收到媒体消息]"
+    for url in video_urls:
+        text += "\n" + build_media_marker("video", url)
+
+    if image_urls and not text.strip():
+        text = "请描述这张图片" if len(image_urls) <= 1 else f"请描述这 {len(image_urls)} 张图片"
+    for url in image_urls:
+        text += "\n" + build_media_marker("image", url)
+    return text
+
+
 # ---------------------------------------------------------------------------
 # QQChannel
 # ---------------------------------------------------------------------------
@@ -879,27 +900,8 @@ class QQChannel(Channel):
             if not text:
                 text = "[收到文件/媒体消息]"
 
-        # Build media context text
-        if video_urls and not text.strip():
-            text = "请描述这个视频"
-            for url in video_urls:
-                text += f"\n[video_url: {url}]"
-        elif video_urls:
-            for url in video_urls:
-                text += f"\n[video_url: {url}]"
-        elif has_media and not text.strip():
-            text = "[收到媒体消息]"
-
-        # If only images were sent (no text), build a describe request
-        if not text.strip() and image_urls:
-            text = "请描述这张图片"
-            if len(image_urls) > 1:
-                text = f"请描述这 {len(image_urls)} 张图片"
-            for url in image_urls:
-                text += f"\n[image_url: {url}]"
-        elif image_urls:
-            for url in image_urls:
-                text += f"\n[image_url: {url}]"
+        # Build media context text (video/image marker: 提示文本设置与追加分离)
+        text = _build_media_text(text, image_urls, video_urls, has_media)
 
         # Voice transcription
         if voice_attachments:

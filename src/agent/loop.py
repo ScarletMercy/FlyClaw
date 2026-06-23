@@ -144,6 +144,17 @@ class AgentLoop:
 
         self._auto_deny_approval: bool = False
 
+    def swap_client(self, new_client):
+        """切换激活 client:对话(_client)与压缩/摘要(_compressor._client)同步跟随。
+
+        供 dashboard 切模型 / config reload 使用。链模式 switch_to 不用此(chain 对象
+        不变,compressor._client 仍是同一 chain)。裸赋 _client 会漏掉 compressor,
+        导致切模型/重载后压缩仍调旧 client;reload 还会 close 旧 client → 压缩崩。
+        """
+        self._client = new_client
+        if self._compressor is not None:
+            self._compressor._client = new_client
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------

@@ -13,6 +13,18 @@ logger = logging.getLogger("flyclaw.channels.base")
 _MAX_API_RETRIES = 3
 
 
+def build_media_marker(kind: str, path: str) -> str:
+    """构造媒体标记,供 LLM 从 text 提取路径调 describe_media。
+
+    kind ∈ {"image","video"}。格式: [{kind}_url: "{path}"],path 永远双引号包裹。
+    qq/weixin 渠道共用此格式(单一 owner);消费者是 LLM,无代码解析端,故格式需稳定。
+    含 ] 等特殊字符的路径靠引号包裹防 inject 正则截断。
+    """
+    if kind not in ("image", "video"):
+        raise ValueError(f"unsupported media kind: {kind!r} (expected 'image' or 'video')")
+    return f'[{kind}_url: "{path}"]'
+
+
 class Channel(ABC):
     """Abstract base class for messaging channels."""
 

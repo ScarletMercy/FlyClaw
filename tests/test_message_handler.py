@@ -264,3 +264,113 @@ class TestMessageCallbackErrorHandling:
         reply_fn.assert_awaited()
         error_msg = reply_fn.call_args[0][0]
         assert "error" in error_msg.lower() or "RuntimeError" in error_msg
+
+
+class TestAssistantMessageBlankContent:
+    @pytest.mark.asyncio
+    async def test_whitespace_only_content_not_replied(self, container, reply_fn):
+        from src.events import emit_async
+
+        handler = MessageHandler(container)
+        cleanup = handler._subscribe_agent_events("t1", reply_fn)
+        try:
+            await emit_async("agent_loop.assistant_message", thread_id="t1", content="\n")
+        finally:
+            cleanup()
+
+        reply_fn.assert_not_called()
+
+
+class TestMediaAcknowledgement:
+    @pytest.mark.parametrize(
+        "text,expected",
+        [
+            ('请描述这张图片\n[image_url: "C:/tmp/a.jpg"]', "我来看看这张图片："),
+            (
+                '请描述这 2 张图片\n[image_url: "C:/tmp/a.jpg"]\n[image_url: "C:/tmp/b.jpg"]',
+                "我来看看这些图片：",
+            ),
+            ('请描述这个视频\n[video_url: "C:/tmp/a.mp4"]', "我来看看这个视频："),
+            (
+                '图+视频\n[image_url: "C:/tmp/a.jpg"]\n[video_url: "C:/tmp/b.mp4"]',
+                "我来看看这些图片和视频：",
+            ),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_media_message_sends_acknowledgement_first(
+        self, container, reply_fn, mock_approval_mgr, text, expected
+    ):
+        container.agent_loop.run.return_value = AgentState(
+            messages=[
+                {"role": "user", "content": text},
+                {"role": "assistant", "content": "这是描述。"},
+            ]
+        )
+        handler = MessageHandler(container)
+        callback = handler.create_callback("per_sender")
+        await callback(
+            text=text,
+            sender_id="u1",
+            chat_id="c1",
+            chat_type="p2p",
+            message_id="m1",
+            reply_fn=reply_fn,
+        )
+
+        first_reply = reply_fn.call_args_list[0][0][0]
+        assert first_reply == expected
+
+    @pytest.mark.asyncio
+    async def test_acknowledgement_followed_by_final_reply(self, container, reply_fn, mock_approval_mgr):
+        container.agent_loop.run.return_value = AgentState(
+            messages=[
+                {"role": "user", "content": "x"},
+                {"role": "assistant", "content": "这是一张橘猫。"},
+            ]
+        )
+        handler = MessageHandler(container)
+        callback = handler.create_callback("per_sender")
+        await callback(
+            text='请描述这张图片\n[image_url: "C:/tmp/a.jpg"]',
+            sender_id="u1",
+            chat_id="c1",
+            chat_type="p2p",
+            message_id="m1",
+            reply_fn=reply_fn,
+        )
+
+        replies = [c[0][0] for c in reply_fn.call_args_list]
+        assert replies[0] == "我来看看这张图片："
+        assert "橘猫" in replies[-1]
+
+    @pytest.mark.asyncio
+    async def test_acknowledgement_send_failure_does_not_block_agent(self, container, mock_approval_mgr):
+        container.agent_loop.run.return_value = AgentState(
+            messages=[
+                {"role": "user", "content": "x"},
+                {"role": "assistant", "content": "描述。"},
+            ]
+        )
+        calls = []
+
+        async def flaky_reply(text):
+            calls.append(text)
+            if len(calls) == 1:
+                raise RuntimeError("ack send failed")
+
+        handler = MessageHandler(container)
+        callback = handler.create_callback("per_sender")
+        try:
+            await callback(
+                text='请描述这张图片\n[image_url: "C:/tmp/a.jpg"]',
+                sender_id="u1",
+                chat_id="c1",
+                chat_type="p2p",
+                message_id="m1",
+                reply_fn=flaky_reply,
+            )
+        except RuntimeError:
+            pass
+
+        container.agent_loop.run.assert_called_once()

@@ -40,7 +40,6 @@ class ServiceContainer:
         self.skills_cache: list = []
         self.agent_loop: AgentLoop | None = None
         self.state_store: StateStore | None = None
-        self.model_ref = None
         self.qq: QQChannel | None = None
         self.weixin: WeixinChannel | None = None
         self.session_tracker: SessionTracker | None = None
@@ -299,17 +298,16 @@ class ServiceContainer:
     def _setup_media_understanding(self):
         if not self.config.tools.media_understanding.enabled:
             return
-        if self.config.channels.qq.enabled:
-            try:
-                from src.media_understanding.runner import MediaUnderstandingRunner
+        try:
+            from src.media_understanding.runner import MediaUnderstandingRunner
 
-                self._qq_mu_runner = MediaUnderstandingRunner(
-                    self.config.tools.media_understanding,
-                    fallback_api_key=self.config.model.api_key or "",
-                )
-                self.media_understanding_runner = self._qq_mu_runner
-            except Exception as e:
-                logger.warning("QQ 多媒体理解初始化失败: %s", e)
+            self._qq_mu_runner = MediaUnderstandingRunner(
+                self.config.tools.media_understanding,
+                fallback_api_key=self.config.model.api_key or "",
+            )
+            self.media_understanding_runner = self._qq_mu_runner
+        except Exception as e:
+            logger.warning("多媒体理解初始化失败: %s", e)
 
     def _setup_browser(self):
         if not self.config.tools.browser.enabled:
@@ -400,6 +398,7 @@ class ServiceContainer:
                 self.config.model.temperature,
                 base_url=self.config.model.base_url,
                 api_key=self.config.model.api_key,
+                multimodal=self.config.model.multimodal,
             )
 
         tools = self._collect_builtin_tools()

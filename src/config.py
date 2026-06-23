@@ -56,6 +56,7 @@ class ModelConfig(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     context_window: int = 1000000
+    multimodal: bool = False  # 主模型是否多模态;true 时 describe_media 复用主模型看图/视频(无需另配视觉模型)
     fallbacks: list[ModelFallback] = Field(default_factory=list)
 
 
@@ -65,6 +66,7 @@ class ModelFallback(BaseModel):
     base_url: Optional[str] = None
     api_key: Optional[str] = None
     context_window: int = 200000
+    multimodal: bool = False  # 此回退模型是否多模态;切换到它时 describe_media 据此决定视觉来源
 
 
 class AgentSubconfig(BaseModel):

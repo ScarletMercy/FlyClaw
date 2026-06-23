@@ -13,6 +13,8 @@ import logging
 import re
 from typing import TYPE_CHECKING, Optional
 
+from src.utils.content import content_to_text
+
 if TYPE_CHECKING:
     from src.agent.client import ChatClient, FallbackChain
 
@@ -142,6 +144,15 @@ def _estimate_tokens(messages: list[dict]) -> int:
     return total
 
 
+def _content_to_text(content) -> str:
+    """薄 wrapper —— 实际逻辑(含"跳过媒体 block,base64 不进摘要")见
+    src.utils.content.content_to_text。
+
+    保留为模块内调用点的稳定入口(默认 joiner="\\n", allow_bare_str=False)。
+    """
+    return content_to_text(content)
+
+
 class ContextCompressor:
     """Compresses long conversations using the current model for summarization."""
 
@@ -228,8 +239,8 @@ class ContextCompressor:
             role = m.get("role", "")
             content = m.get("content", "")
             if role == "user":
-                text = content if isinstance(content, str) else str(content)[:300]
-                lines.append(f"用户: {text[:300]}")
+                text = _content_to_text(content)[:300]
+                lines.append(f"用户: {text}")
             elif role == "assistant":
                 tool_calls = m.get("tool_calls")
                 if tool_calls:
@@ -239,17 +250,17 @@ class ContextCompressor:
                         else tc.get("name", "?")
                         for tc in tool_calls
                     )
-                    text = content if isinstance(content, str) else ""
+                    text = _content_to_text(content)
                     entry = f"AI调用工具: [{calls}]"
                     if text:
                         entry += f" {text[:100]}"
                     lines.append(entry)
                 elif content:
-                    text = content if isinstance(content, str) else str(content)[:300]
-                    lines.append(f"AI: {text[:300]}")
+                    text = _content_to_text(content)[:300]
+                    lines.append(f"AI: {text}")
             elif role == "tool":
-                c = content if isinstance(content, str) else str(content)[:150]
-                lines.append(f"工具结果: {c[:150]}")
+                c = _content_to_text(content)[:150]
+                lines.append(f"工具结果: {c}")
             elif role == "system":
                 pass
         return "\n".join(lines)
@@ -313,8 +324,8 @@ class ContextCompressor:
             content = m.get("content", "")
             if role == "tool":
                 tool_name = m.get("name", "unknown")
-                c = content if isinstance(content, str) else str(content)
-                summaries.append(f"[Tool({tool_name})]: {c[:150]}")
+                c = _content_to_text(content)[:150]
+                summaries.append(f"[Tool({tool_name})]: {c}")
             elif role == "assistant" and m.get("tool_calls"):
                 calls = ", ".join(
                     tc.get("function", {}).get("name", "?")
@@ -322,17 +333,17 @@ class ContextCompressor:
                     else tc.get("name", "?")
                     for tc in m["tool_calls"]
                 )
-                text = content if isinstance(content, str) else ""
+                text = _content_to_text(content)
                 entry = f"Assistant: called [{calls}]"
                 if text:
                     entry += f" {text[:100]}"
                 summaries.append(entry)
             elif role == "user":
-                text = content if isinstance(content, str) else str(content)[:200]
-                summaries.append(f"User: {text[:200]}")
+                text = _content_to_text(content)[:200]
+                summaries.append(f"User: {text}")
             elif role == "assistant" and content:
-                text = content if isinstance(content, str) else str(content)[:200]
-                summaries.append(f"Assistant: {text[:200]}")
+                text = _content_to_text(content)[:200]
+                summaries.append(f"Assistant: {text}")
 
         summary_text = "\n".join(summaries[-20:])
 
