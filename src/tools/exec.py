@@ -416,6 +416,15 @@ def _is_denylisted(command: str, deny_patterns: list[str]) -> tuple[bool, str]:
     return False, ""
 
 
+def is_delete_command(command: str) -> bool:
+    """命令文本是否匹配删除模式(del/rm/rmdir/erase/remove-item…)。
+
+    供审批提示标注「（删除文件）」复用——"何为删除"在此单一来源(exec 的 _DELETE_APPROVAL_PATTERNS)。
+    display-only:只影响标签文案,不影响是否要求审批(那由 _exec_command 的 gate 决定)。
+    """
+    return bool(command) and _is_denylisted(command, _DELETE_APPROVAL_PATTERNS)[0]
+
+
 _SHELL_SPECIAL_VAR_RE = __import__("re").compile(
     r"\$\d"  # $0, $1, ... positional parameters
     r"|\$[!$?#@*%-]",  # $!, $$, $?, $#, $@, $*, $%, $-

@@ -1286,6 +1286,7 @@ class QQChannel(Channel):
         is_dangerous: bool = False,
         timeout_seconds: int = 120,
         zh: bool = True,
+        action_note: str = "",
     ) -> Any:
         """Send an approval message with interactive buttons (C2C/group only).
 
@@ -1303,9 +1304,11 @@ class QQChannel(Channel):
         if not getattr(self.config, "approval_keyboard", True):
             return None
 
-        warn = "⚠️ 危险" if is_dangerous else "需要审批"
+        # action_note: 删除类操作的本地化后缀(如"（删除记忆）"/"（删除文件）"),由调用方按操作类型算好传入,
+        # 追加在"需要审批"后,让用户一眼看出是什么操作。删除操作 denylisted 恒为 False,故不会与"⚠️ 危险"叠加。
+        warn = ("⚠️ 危险" if is_dangerous else "需要审批") + action_note
         if not zh:
-            warn = "⚠️ DANGEROUS" if is_dangerous else "Approval Required"
+            warn = ("⚠️ DANGEROUS" if is_dangerous else "Approval Required") + action_note
 
         md_content = (
             (

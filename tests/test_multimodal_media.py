@@ -291,6 +291,31 @@ class TestDescribeMediaVisionFollowsActive:
         assert result == "[视觉功能未启用]"  # 降级到底
         chain._all[0].chat.assert_awaited_once()  # 试过激活 client
 
+    def test_image_multimodal_active_client_fails_falls_back_to_runner(self, monkeypatch):
+        # image + 激活多模态 + 激活client抛错(429/网络/API error) + 有runner → 降级 runner(与 video 对称)。
+        # 修复前:image 路径无 try/except,失败直接返 [error],够不到 runner。
+        chain = _make_chain(True, False, active_idx=0)
+        chain._all[0].chat = AsyncMock(side_effect=Exception("rate limit"))
+        fake_result = MagicMock(error=None, text="runner看图", model="Qwen-VL")
+        runner = MagicMock()
+        runner.understand = AsyncMock(return_value=fake_result)
+        mut = self._setup(monkeypatch, chain, runner=runner)  # _setup 的 fake_resolve 返 image/png
+
+        result = asyncio.run(mut.describe_media("http://x/a.png"))
+        assert "runner看图" in result  # 降级到 runner
+        chain._all[0].chat.assert_awaited_once()  # 先试了激活 client
+        runner.understand.assert_awaited_once()  # 失败后降级 runner
+
+    def test_image_multimodal_active_client_fails_no_runner_returns_error(self, monkeypatch):
+        # image + 激活多模态 + client抛错 + 无runner → [error](保留原错误语义,不假装"视觉未启用")。
+        chain = _make_chain(True, False, active_idx=0)
+        chain._all[0].chat = AsyncMock(side_effect=Exception("rate limit"))
+        mut = self._setup(monkeypatch, chain, runner=None)
+
+        result = asyncio.run(mut.describe_media("http://x/a.png"))
+        assert result.startswith("[error]")  # 无降级目标 → 原错误语义
+        chain._all[0].chat.assert_awaited_once()
+
     def test_single_chat_client_multimodal_video_uses_active_client(self, monkeypatch):
         # 单 ChatClient(非 FallbackChain,_active_vision_info else 分支)+ 多模态 + video → 走激活 client。
         # 补 reviewer 指出的覆盖缺口:单 client 路径的 video 分支此前未测。

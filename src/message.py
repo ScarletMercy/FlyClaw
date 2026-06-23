@@ -920,6 +920,7 @@ class MessageHandler:
     ):
         from src.tools.approval import get_approval_manager
         from src.agent.loop import ApprovalPending
+        from src.tools.exec import is_delete_command
 
         thread_id = exc.thread_id
         self._approval_handler_threads.add(thread_id)
@@ -939,6 +940,16 @@ class MessageHandler:
                 auto_deny = getattr(current_exc, "auto_deny", False)
                 tool_name = getattr(current_exc, "tool_name", "exec_command")
 
+                # 删除类操作在"需要审批"后追加操作类型后缀,避免和普通命令审批混淆。
+                # memory 走 tool_name;exec 删除靠扫 command_preview(is_delete_command)——
+                # ApprovalPending 异常不携带 approval_key,只能从命令文本判断。
+                if tool_name in ("memory_delete", "memory"):
+                    _action_tag = "（删除记忆）" if zh else " (Delete Memory)"
+                elif is_delete_command(getattr(current_exc, "command_preview", "")):
+                    _action_tag = "（删除文件）" if zh else " (Delete File)"
+                else:
+                    _action_tag = ""
+
                 approval_ch = self._get_channel(channel_prefix)
                 if not approval_ch:
                     return
@@ -953,15 +964,15 @@ class MessageHandler:
                     )
                 else:
                     if zh:
-                        warn = "危险" if current_exc.denylisted else "需要审批"
+                        header = ("危险" if current_exc.denylisted else "需要审批") + _action_tag
                         msg_text = (
-                            f"**需要审批** ({warn})\n```\n{current_exc.command_preview}\n```\n"
+                            f"**{header}**\n```\n{current_exc.command_preview}\n```\n"
                             f"发送 /y 确认，其它任何消息自动取消（{approval_timeout}秒超时）。"
                         )
                     else:
-                        warn = "DANGEROUS" if current_exc.denylisted else "requires approval"
+                        header = ("DANGEROUS" if current_exc.denylisted else "Approval Required") + _action_tag
                         msg_text = (
-                            f"**Approval Required** ({warn})\n```\n{current_exc.command_preview}\n```\n"
+                            f"**{header}**\n```\n{current_exc.command_preview}\n```\n"
                             f"Send /y to confirm. Any other message will cancel ({approval_timeout}s timeout)."
                         )
 
@@ -977,6 +988,7 @@ class MessageHandler:
                                 is_dangerous=current_exc.denylisted,
                                 timeout_seconds=approval_timeout,
                                 zh=zh,
+                                action_note=_action_tag,
                             )
                             sent_keyboard = result is not None
                         except Exception as e:

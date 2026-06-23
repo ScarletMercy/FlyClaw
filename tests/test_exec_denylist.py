@@ -118,3 +118,34 @@ def test_denylist_covers_critical_categories():
     joined = " ".join(_DEFAULT_DENY_PATTERNS)
     for must_have in ["rm -rf", "mkfs", "/dev/", "format ", "diskpart"]:
         assert must_have in joined, f"denylist 缺少关键 pattern 段: {must_have!r}"
+
+
+# ---------------------------------------------------------------------------
+# is_delete_command —— 审批标签「（删除文件）」复用的判断(与 exec 删除审批同源)
+# ---------------------------------------------------------------------------
+
+
+class TestIsDeleteCommand:
+    def test_compound_del_in_middle_detected(self):
+        """cd && del:del 在命令中段(用户实测案例)——必须识别为删除。"""
+        from src.tools.exec import is_delete_command
+
+        assert is_delete_command("cd C:\\x && del a.txt b.png") is True
+
+    def test_rm_and_removeitem_detected(self):
+        from src.tools.exec import is_delete_command
+
+        assert is_delete_command("rm -rf /tmp/foo") is True
+        assert is_delete_command("Remove-Item foo.txt") is True
+
+    def test_plain_commands_not_delete(self):
+        from src.tools.exec import is_delete_command
+
+        assert is_delete_command("ls -la") is False
+        assert is_delete_command("echo hello") is False
+        assert is_delete_command("cat file.txt") is False
+
+    def test_empty_and_none_safe(self):
+        from src.tools.exec import is_delete_command
+
+        assert is_delete_command("") is False

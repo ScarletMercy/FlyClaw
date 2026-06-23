@@ -124,9 +124,17 @@ async def describe_media(media_url: str) -> str:
         if capability == MediaCapability.AUDIO:
             return "[error] Audio files are not supported by describe_media."
 
-        # 激活模型多模态 + 图像 → 用激活模型看图(覆盖 media_understanding)
+        # 激活模型多模态 + 图像 → 优先用激活模型看图;瞬时失败(429/网络/API error)有 runner 则降级(与 video 对称)。
+        # 注意:multimodal flag 是用户手填布尔(能力声明),不是可用性 SLA——429/网络错不是能力缺失,
+        # 此时该用已配好的 runner 兜底,而非直接 [error]。无 runner 则保留原 [error] 语义。
         if active_multimodal and capability == MediaCapability.IMAGE:
-            return await _describe_with_client(active_client, model_name, data, mime_type)
+            try:
+                return await _describe_with_client(active_client, model_name, data, mime_type)
+            except Exception as e:
+                if runner is None:
+                    return f"[error] {e}"  # 无降级目标,保留原错误语义
+                logger.warning("激活模型 %s 处理图像失败,降级独立视觉模型: %s", model_name, e)
+                # 落到下面的 runner 路径降级(capability==IMAGE,会跳过 video 分支)
 
         # 激活模型多模态 + 视频 → 也优先用激活 client(ChatClient.chat 透传 video_url block)。
         # 但 multimodal flag 只保证图像、不保证视频;后端若拒收 video_url 则降级到独立视觉模型。
