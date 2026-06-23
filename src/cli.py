@@ -128,7 +128,7 @@ def cmd_status(args):
     print(f"技能:       {'已启用' if config.skills.enabled else '未启用'}")
     print(f"插件:       {'已启用' if config.plugins.enabled else '未启用'}")
     print(f"命令执行:   审批模式={config.tools.exec.approval_mode}")
-    print(f"会话:       作用域={config.session.scope}")
+    print(f"会话:       DM塌缩(私聊不按openid分), 空闲重置={config.session.idle_reset_minutes}分钟")
 
     import urllib.request
 

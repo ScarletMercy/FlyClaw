@@ -133,13 +133,17 @@ async def _create_new_session(container: Any, thread_id: str, channel_name: str)
         return None
 
     parts = thread_id.split(":")
-    if len(parts) >= 3:
-        user_hash = parts[-1]
-    else:
-        user_hash = thread_id
-
+    user_hash = parts[-1]  # .split(":") 永不返回空列表
     channel_prefix = channel_name or (parts[0] if parts else "unknown")
-    legacy_key = f"{channel_prefix}:user:{user_hash}"
+    # DM 塌缩会话的 user_key 形如 {channel}:dm（无 user: 中缀）；其余（旧 per_sender）
+    # 沿用 {channel}:user:{hash}。用字面值 "dm" 区分：折叠私信的 hash 恰为 "dm"，
+    # 而 user/group 的 hash 是长十六进制 openid/群id，绝不会等于 "dm"。
+    # 注意：群组轮换在此 else 分支会构造错误的 qq:user:<群id>（改动前即如此，
+    # 预存问题，非本次回归；群组正确修法应是 legacy_key=thread_id）。
+    if user_hash == "dm":
+        legacy_key = f"{channel_prefix}:dm"
+    else:
+        legacy_key = f"{channel_prefix}:user:{user_hash}"
 
     try:
         sid = await registry.new_session(legacy_key, channel_prefix, user_hash)

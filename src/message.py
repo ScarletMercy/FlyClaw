@@ -189,14 +189,14 @@ class MessageHandler:
         return text
 
     @staticmethod
-    def _resolve_session_key(sender_id: str, chat_type: str, chat_id: str, scope: str) -> str:
-        if scope == "global":
-            return "global"
+    def _resolve_session_key(sender_id: str, chat_type: str, chat_id: str) -> str:
+        # 私聊塌缩为单一会话，key 不含 user_openid → 根治身份漂移。
+        # 对齐 hermes-agent：DM 默认不按平台 user id 分会话。
         if chat_type == "p2p":
-            return f"user:{sender_id}"
+            return "dm"
         return f"group:{chat_id}"
 
-    def create_callback(self, session_scope: str, channel_prefix: str = "qq"):
+    def create_callback(self, channel_prefix: str = "qq"):
         async def on_message(
             text: str,
             sender_id: str,
@@ -207,7 +207,7 @@ class MessageHandler:
         ):
             from src.events import emit_async
 
-            session_key = self._resolve_session_key(sender_id, chat_type, chat_id, session_scope)
+            session_key = self._resolve_session_key(sender_id, chat_type, chat_id)
             legacy_thread_id = f"{channel_prefix}:{session_key}"
             override = self._container.session_registry.get_current(legacy_thread_id)
             thread_id = override or legacy_thread_id
@@ -242,7 +242,6 @@ class MessageHandler:
                     thread_id,
                     is_command,
                     channel_prefix,
-                    session_scope,
                     legacy_thread_id,
                     session_key,
                 )
@@ -259,7 +258,6 @@ class MessageHandler:
             thread_id,
             is_command,
             channel_prefix,
-            session_scope,
             legacy_thread_id,
             session_key,
         ):

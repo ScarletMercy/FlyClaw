@@ -228,8 +228,9 @@ code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:12px}</style
 
         sessions = []
 
-        # Only show chat sessions (channel:user:* or channel:group:* or channel:sN:*)
-        _chat_pattern = _re.compile(r"^(qq):(user|group|s\d+):")
+        # Only show chat sessions: channel:(user|group|sN):... 以及 DM 塌缩的 channel:dm
+        # dm 无后续段，故用 (:|$) 兼容 "qq:dm" / "weixin:dm" 这种两段塌缩 key
+        _chat_pattern = _re.compile(r"^(qq|weixin):(user|group|s\d+|dm)(:|$)")
 
         # Active sessions from tracker (with idle time)
         active_ids = set()
@@ -353,7 +354,6 @@ code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:12px}</style
                 "has_auth": bool(cfg.gateway.auth_token),
             },
             "session": {
-                "scope": cfg.session.scope,
                 "idle_reset_minutes": cfg.session.idle_reset_minutes,
             },
             "tools": {

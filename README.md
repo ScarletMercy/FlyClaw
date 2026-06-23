@@ -25,7 +25,7 @@ FlyClaw 是一个自包含的 AI 助手框架，直接运行在你的设备上�
 - **事件系统** — 异步事件总线 + 用户自定义钩子回调
 - **斜杠命令** — /reset、/skills 等内置命令
 - **配置热重载** — 运行时自动检测配置文件变更并智能重载
-- **会话管理** — per_sender / global 两种模式，空闲重置，自动修剪
+- **会话管理** — 私聊塌缩为单一会话(不按 openid 分,根治身份漂移)、空闲重置、自动修剪
 - **引导文件** — AGENTS.md / IDENTITY.md / USER.md / HEARTBEAT.md 自动注入上下文
 - **链接理解** — 消息中 URL 自动抓取预览
 - **轻量** — 运行时 ~100MB 内存
@@ -85,7 +85,6 @@ channels:
     group_policy: "allowlist"    # open | allowlist | disabled
 
 session:
-  scope: "per_sender"            # per_sender | global
   idle_reset_minutes: 120
 
 tools:

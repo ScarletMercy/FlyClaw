@@ -272,6 +272,10 @@ class SessionRegistry:
         that may have been orphaned by channel switching or registry loss.
         """
         parts = user_key.split(":")
+        # DM 塌缩后 user_key 是 {channel}:dm（2 段），不符合 3 段假设 → 早返。这是
+        # 预期语义：折叠私信只有一个规范化 key，本无孤儿可恢复；旧的 qq:user:<旧openid>
+        # 线程是 openid 轮换后不可达的废弃历史，折叠后入站永远指向 qq:dm、路由不到旧 key，
+        # 恢复它们也无意义。故此处对 DM 静默返回空是正确的。
         if len(parts) != 3:
             return []
         channel_prefix, _, user_hash = parts
@@ -300,6 +304,10 @@ class SessionRegistry:
         """
         parts = user_key.split(":")
         if len(parts) < 2:
+            return []
+        # DM 塌缩 key（{channel}:dm）无 sender hash，宽匹配会把全频道线程（含群、
+        # 历史 openid）误并进单一 DM 会话 → 与 find_orphaned_threads 一致地早返。
+        if parts[-1] == "dm":
             return []
         channel_prefix = parts[0]
 

@@ -70,7 +70,7 @@ class TestMessageCallbackBasicFlow:
         container.agent_loop.run.return_value = result_state
 
         handler = MessageHandler(container)
-        callback = handler.create_callback("per_sender")
+        callback = handler.create_callback()
         await callback(
             text="hello",
             sender_id="u1",
@@ -85,11 +85,11 @@ class TestMessageCallbackBasicFlow:
         assert "Hi there!" in reply_fn.call_args[0][0]
 
     @pytest.mark.asyncio
-    async def test_session_key_per_sender(self, container, reply_fn, mock_approval_mgr):
+    async def test_session_key_dm_collapses(self, container, reply_fn, mock_approval_mgr):
         container.agent_loop.run.return_value = AgentState(messages=[{"role": "assistant", "content": "ok"}])
 
         handler = MessageHandler(container)
-        callback = handler.create_callback("per_sender")
+        callback = handler.create_callback()
         await callback(
             text="test",
             sender_id="user123",
@@ -101,26 +101,29 @@ class TestMessageCallbackBasicFlow:
 
         call_args = container.agent_loop.run.call_args
         thread_id = call_args[0][1] if len(call_args[0]) > 1 else call_args.kwargs.get("thread_id", "")
-        assert "user123" in thread_id
+        # DM 塌缩：私聊固定落到 qq:dm，openid(user123) 不渗入 key → 漂移根除
+        assert thread_id == "qq:dm"
+        assert "user123" not in thread_id
 
     @pytest.mark.asyncio
-    async def test_session_key_global(self, container, reply_fn, mock_approval_mgr):
+    async def test_session_key_group_keyed_by_chat(self, container, reply_fn, mock_approval_mgr):
         container.agent_loop.run.return_value = AgentState(messages=[{"role": "assistant", "content": "ok"}])
 
         handler = MessageHandler(container)
-        callback = handler.create_callback("global")
+        callback = handler.create_callback()
         await callback(
             text="test",
             sender_id="u1",
-            chat_id="c1",
-            chat_type="p2p",
+            chat_id="group_abc",
+            chat_type="group",
             message_id="m1",
             reply_fn=reply_fn,
         )
 
         call_args = container.agent_loop.run.call_args
         thread_id = call_args[0][1] if len(call_args[0]) > 1 else call_args.kwargs.get("thread_id", "")
-        assert "global" in thread_id
+        # 群聊按群 id 分，与私聊(qq:dm)互不串
+        assert thread_id == "qq:group:group_abc"
 
 
 class TestMessageCallbackSlashCommands:
@@ -130,7 +133,7 @@ class TestMessageCallbackSlashCommands:
         container.dispatcher.dispatch.return_value = "Available commands: ..."
 
         handler = MessageHandler(container)
-        callback = handler.create_callback("per_sender")
+        callback = handler.create_callback()
         await callback(
             text="/help",
             sender_id="u1",
@@ -144,10 +147,10 @@ class TestMessageCallbackSlashCommands:
             "help",
             "",
             context={
-                "thread_id": "qq:user:u1",
+                "thread_id": "qq:dm",
                 "sender_id": "u1",
                 "chat_id": "c1",
-                "user_key": "qq:user:u1",
+                "user_key": "qq:dm",
                 "channel_prefix": "qq",
             },
         )
@@ -162,10 +165,10 @@ class TestMessageCallbackPendingApproval:
             messages=[{"role": "user", "content": "cmd"}],
             pending_approval={"tool_call_id": "tc1"},
         )
-        await container.state_store.save("qq:user:u1", pending_state)
+        await container.state_store.save("qq:dm", pending_state)
 
         handler = MessageHandler(container)
-        callback = handler.create_callback("per_sender")
+        callback = handler.create_callback()
         await callback(
             text="new message",
             sender_id="u1",
@@ -190,7 +193,7 @@ class TestMessageCallbackApprovalViaQQ:
         mock_mgr.is_resolved.return_value = False
 
         handler = MessageHandler(container)
-        callback = handler.create_callback("per_sender", channel_prefix="qq")
+        callback = handler.create_callback(channel_prefix="qq")
 
         with patch("src.tools.approval.get_approval_manager", return_value=mock_mgr):
             await callback(
@@ -215,7 +218,7 @@ class TestMessageCallbackHistoryLoad:
                 {"role": "assistant", "content": "previous answer"},
             ]
         )
-        await container.state_store.save("qq:user:u1", old_state)
+        await container.state_store.save("qq:dm", old_state)
 
         new_result = AgentState(
             messages=[
@@ -228,7 +231,7 @@ class TestMessageCallbackHistoryLoad:
         container.agent_loop.run.return_value = new_result
 
         handler = MessageHandler(container)
-        callback = handler.create_callback("per_sender")
+        callback = handler.create_callback()
         await callback(
             text="new question",
             sender_id="u1",
@@ -251,7 +254,7 @@ class TestMessageCallbackErrorHandling:
         container.agent_loop.run.side_effect = RuntimeError("LLM timeout")
 
         handler = MessageHandler(container)
-        callback = handler.create_callback("per_sender")
+        callback = handler.create_callback()
         await callback(
             text="test",
             sender_id="u1",
@@ -308,7 +311,7 @@ class TestMediaAcknowledgement:
             ]
         )
         handler = MessageHandler(container)
-        callback = handler.create_callback("per_sender")
+        callback = handler.create_callback()
         await callback(
             text=text,
             sender_id="u1",
@@ -330,7 +333,7 @@ class TestMediaAcknowledgement:
             ]
         )
         handler = MessageHandler(container)
-        callback = handler.create_callback("per_sender")
+        callback = handler.create_callback()
         await callback(
             text='请描述这张图片\n[image_url: "C:/tmp/a.jpg"]',
             sender_id="u1",
@@ -360,7 +363,7 @@ class TestMediaAcknowledgement:
                 raise RuntimeError("ack send failed")
 
         handler = MessageHandler(container)
-        callback = handler.create_callback("per_sender")
+        callback = handler.create_callback()
         try:
             await callback(
                 text='请描述这张图片\n[image_url: "C:/tmp/a.jpg"]',
@@ -397,7 +400,7 @@ class TestInterruptedNoDuplicateReply:
         container.agent_loop.run.return_value = result_state
 
         handler = MessageHandler(container)
-        callback = handler.create_callback("per_sender")
+        callback = handler.create_callback()
         await callback(
             text="hello",
             sender_id="u1",
@@ -426,7 +429,7 @@ class TestInterruptedNoDuplicateReply:
         container.agent_loop.run.return_value = result_state
 
         handler = MessageHandler(container)
-        callback = handler.create_callback("per_sender")
+        callback = handler.create_callback()
         await callback(
             text="hello",
             sender_id="u1",

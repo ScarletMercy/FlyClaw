@@ -156,7 +156,6 @@ class ChannelsConfig(BaseModel):
 
 
 class SessionConfig(BaseModel):
-    scope: Literal["per_sender", "global"] = "per_sender"
     idle_reset_minutes: int = 120
     # Session pruning configuration (opt-in, default off)
     auto_prune: bool = False
