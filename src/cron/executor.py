@@ -259,6 +259,13 @@ async def execute_cron_job(
         )
     finally:
         _exec_thread_id.reset(_tid_token)
+        # isolated cron 线程用完即弃:执行后销毁,避免 checkpoints.db 累积死线程
+        # (deferred/busy 的 task job 在此之前 early-return, 不会走到这)
+        if job.session_target != "main":
+            try:
+                await agent_loop.get_store().delete(thread_id)
+            except Exception as e:
+                logger.warning("cron: failed to delete thread %s: %s", thread_id, e)
 
 
 async def execute_with_retry(

@@ -626,6 +626,13 @@ class TestInterruptInLoop:
 
 
 class TestToolCache:
+    @pytest.fixture(autouse=True)
+    def _isolate_cache_root(self, tmp_path, monkeypatch):
+        """隔离缓存目录到 tmp_path，避免污染真实 ~/.flyclaw/temp。"""
+        from src.agent import tool_cache as tc
+
+        monkeypatch.setattr(tc, "cache_root", lambda: tmp_path)
+
     @pytest.mark.asyncio
     async def test_small_content_not_truncated(self):
         from src.agent.loop import AgentLoop
@@ -707,13 +714,17 @@ class TestCleanTruncatedMarkers:
         assert len(cleaned) == 1
 
     @pytest.mark.asyncio
-    async def test_roundtrip_cache_and_strip(self):
+    async def test_roundtrip_cache_and_strip(self, tmp_path, monkeypatch):
         """cache_large_output produces format that strip_cache_path can remove."""
-        from src.agent.tool_cache import cache_large_output
+        # 写到隔离目录，避免污染真实 ~/.flyclaw/temp 留下孤儿缓存目录
+        from src.agent import tool_cache as tc
+
+        monkeypatch.setattr(tc, "cache_root", lambda: tmp_path)
+
         from src.compressor.compressor import strip_cache_path
 
         big = "abc" * 5000  # 15000 chars > default 8000
-        truncated, path = await cache_large_output(big, "test_thread")
+        truncated, path = await tc.cache_large_output(big, "test_thread")
         assert path is not None, "should have cached to file"
         assert "Full content saved to:" in truncated
 

@@ -269,7 +269,7 @@ class AgentLoop:
     async def _run_inner(self, state: AgentState, thread_id: str, max_rounds: int = 50) -> AgentState:
         """Internal run logic, called with thread lock held.
 
-        Uses proactive compression (hermes-style): check token budget BEFORE
+        Uses proactive compression: check token budget BEFORE
         each model call and compress if over threshold.
         """
         import time as _time
@@ -649,7 +649,7 @@ class AgentLoop:
     async def _prepare_messages(self, state: AgentState, thread_id: str = "") -> list[dict]:
         """Prepare messages for model call with proactive compression.
 
-        hermes-style: check token budget BEFORE calling the model.
+        Checks token budget BEFORE calling the model.
         If over threshold, compress first; otherwise send raw history.
         Large tool outputs are always truncated to keep payload small.
         """

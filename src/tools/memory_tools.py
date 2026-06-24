@@ -408,7 +408,7 @@ async def save_memory(content: str, key: str = "", category: str = "fact") -> st
 
 
 # ---------------------------------------------------------------------------
-# Unified memory tool (hermes pattern: single tool with action parameter)
+# Unified memory tool (single tool with action parameter)
 # ---------------------------------------------------------------------------
 
 

@@ -70,7 +70,7 @@ THREAT_PATTERNS = [
         "references Docker config (may contain registry creds)",
     ),
     (
-        r"\$HOME/\.flyclaw\d*/\.env|\~/\.flyclaw\d*/\.env|\$HOME/\.hermes/\.env|\~/\.hermes/\.env",
+        r"\$HOME/\.flyclaw\d*/\.env|\~/\.flyclaw\d*/\.env",
         "agent_env_access",
         "critical",
         "exfiltration",
@@ -523,8 +523,8 @@ THREAT_PATTERNS = [
         "references agent config files (could persist malicious instructions across sessions)",
     ),
     (
-        r"\.flyclaw\d*/config\.yaml|\.hermes/config\.yaml|\.hermes/SOUL\.md",
-        "agent_config_mod_hermes",
+        r"\.flyclaw\d*/config\.yaml|\.flyclaw\d*/SOUL\.md",
+        "flyclaw_config_mod",
         "critical",
         "persistence",
         "references agent configuration files directly",

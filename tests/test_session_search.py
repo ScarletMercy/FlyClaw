@@ -88,6 +88,20 @@ session_search:
         assert result["chat_type"] == "p2p"
         assert result["sender_id"] == "ABC123"
 
+    def test_parse_thread_id_scoped_multi_session_dm(self):
+        from src.session_index.store import parse_thread_id
+
+        result = parse_thread_id("qq:dm:s1")
+        assert result["channel"] == "qq"
+        assert result["chat_type"] == "p2p"
+
+    def test_parse_thread_id_scoped_multi_session_group(self):
+        from src.session_index.store import parse_thread_id
+
+        result = parse_thread_id("qq:group:G1:s1")
+        assert result["channel"] == "qq"
+        assert result["chat_type"] == "group"
+
     def test_parse_thread_id_global(self):
         from src.session_index.store import parse_thread_id
 

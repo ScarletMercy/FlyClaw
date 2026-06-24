@@ -52,6 +52,31 @@ _PATCH_CONSOLIDATE = "src.services.daily_consolidation._consolidate_session"
 _PATCH_NOTIFY = "src.services.daily_consolidation._send_notification"
 _PATCH_NEW_SESSION = "src.services.daily_consolidation._create_new_session"
 _PATCH_REVIEW = "src.skills.review.spawn_background_review"
+_PATCH_SAVE_SUMMARY = "src.services.daily_consolidation._save_session_summary"
+
+
+def _consolidation_msgs(n_user=8, n_assistant=4):
+    """够格被整理的消息(>=10 条, >=3 user)。"""
+    return [{"role": "user", "content": f"u{i}"} for i in range(n_user)] + [
+        {"role": "assistant", "content": f"a{i}"} for i in range(n_assistant)
+    ]
+
+
+async def _run_consolidation(store, reg, min_messages=10):
+    """跑真 run_daily_consolidation; 打桩 LLM 总结/通知/存档(与本修复无关)。"""
+    from src.services.daily_consolidation import run_daily_consolidation
+
+    agent_loop = MagicMock()
+    agent_loop.invalidate_memory_cache = MagicMock()
+    container = _make_container(
+        state_store=store, agent_loop=agent_loop, session_registry=reg, min_messages=min_messages
+    )
+    with (
+        patch(_PATCH_CONSOLIDATE, return_value="summary"),
+        patch(_PATCH_NOTIFY, new_callable=AsyncMock),
+        patch(_PATCH_SAVE_SUMMARY, new_callable=AsyncMock),
+    ):
+        return await run_daily_consolidation(container)
 
 
 # ─── Guard: early return ─────────────────────────────────────────────────────
@@ -229,6 +254,131 @@ class TestNormalFlow:
             await run_daily_consolidation(container)
 
         agent_loop.invalidate_memory_cache.assert_called_once()
+
+
+class TestCreateNewSessionKeyDerivation:
+    """_create_new_session 必须把轮换后的会话注册到正确的 owning user_key。
+
+    回归：new_session 改成 {user_key}:{sid} 后，新格式 DM 多会话 qq:dm:s1 末段是 sid
+    而非 dm，旧"末段判 dm"逻辑误判为非 DM → 注册到 qq:user:s1（错）。修复：末段是 sid
+    (形如 s1)时剥掉得 owning key。
+    """
+
+    @pytest.mark.asyncio
+    async def test_new_dm_multi_registers_under_dm(self):
+        from src.services.daily_consolidation import _create_new_session
+        from src.session.tracker import SessionRegistry
+
+        reg = SessionRegistry()
+        container = _make_container(session_registry=reg)
+        await _create_new_session(container, "qq:dm:s1", "qq")
+        assert reg.list_sessions("qq:dm"), "新格式 DM 多会话应注册到 qq:dm"
+        assert not reg.list_sessions("qq:user:s1"), "不得误注册到 qq:user:s1"
+
+    @pytest.mark.asyncio
+    async def test_new_group_multi_registers_under_group(self):
+        from src.services.daily_consolidation import _create_new_session
+        from src.session.tracker import SessionRegistry
+
+        reg = SessionRegistry()
+        container = _make_container(session_registry=reg)
+        await _create_new_session(container, "qq:group:G1:s1", "qq")
+        assert reg.list_sessions("qq:group:G1"), "新格式群多会话应注册到 qq:group:G1"
+
+    @pytest.mark.asyncio
+    async def test_default_dm_unchanged(self):
+        from src.services.daily_consolidation import _create_new_session
+        from src.session.tracker import SessionRegistry
+
+        reg = SessionRegistry()
+        container = _make_container(session_registry=reg)
+        await _create_new_session(container, "qq:dm", "qq")
+        assert reg.list_sessions("qq:dm")
+
+    @pytest.mark.asyncio
+    async def test_legacy_per_sender_unchanged(self):
+        from src.services.daily_consolidation import _create_new_session
+        from src.session.tracker import SessionRegistry
+
+        reg = SessionRegistry()
+        container = _make_container(session_registry=reg)
+        await _create_new_session(container, "qq:user:ABC123", "qq")
+        assert reg.list_sessions("qq:user:ABC123")
+
+    @pytest.mark.parametrize(
+        "thread_id, expected_owner",
+        [
+            ("qq:dm", "qq:dm"),  # 默认 DM(最常见)
+            ("qq:dm:s18", "qq:dm"),  # 新格式 DM 多会话(本次回归点)
+            ("qq:group:G1:s1", "qq:group:G1"),  # 新格式群多会话
+            ("qq:s1:dm", "qq:dm"),  # legacy 旧 DM 多会话(末段 dm, 向后兼容)
+            ("qq:user:ABC123", "qq:user:ABC123"),  # legacy per-sender(向后兼容)
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_e2e_rotation_by_thread_shape(self, thread_id, expected_owner):
+        """E2E: 各种 thread_id 形状经 run_daily_consolidation 轮换, 注册到正确 owning key。"""
+        import time as _time
+        from src.agent.state import MemoryStateStore
+        from src.session.tracker import SessionRegistry
+
+        store = MemoryStateStore()
+        await store.save(
+            thread_id,
+            AgentState(messages=_consolidation_msgs(), chat_id="c2c:X", channel="qq", created_at=_time.time()),
+        )
+        reg = SessionRegistry()
+        result = await _run_consolidation(store, reg)
+        assert result["sessions_processed"] == 1, (thread_id, result)
+        sessions = reg.list_sessions(expected_owner)
+        assert sessions and all(s["thread_id"].startswith(f"{expected_owner}:s") for s in sessions), (
+            thread_id,
+            sessions,
+        )
+
+    @pytest.mark.asyncio
+    async def test_e2e_skip_below_threshold(self):
+        """<10 条消息的线程应被跳过, 不创建轮换会话(门控边界)。"""
+        import time as _time
+        from src.agent.state import MemoryStateStore
+        from src.session.tracker import SessionRegistry
+
+        store = MemoryStateStore()
+        await store.save(
+            "qq:dm:s18",
+            AgentState(
+                messages=[{"role": "user", "content": "only"}], chat_id="c2c:X", channel="qq", created_at=_time.time()
+            ),
+        )
+        reg = SessionRegistry()
+        result = await _run_consolidation(store, reg)
+        assert result["sessions_processed"] == 0
+        assert result["sessions_skipped"] == 1
+        assert not reg.list_sessions("qq:dm")
+
+    @pytest.mark.asyncio
+    async def test_e2e_multiple_threads_isolated(self):
+        """一次跑处理多线程: 够格的各自轮换到 owner, 不够格的跳过, 互不串。"""
+        import time as _time
+        from src.agent.state import MemoryStateStore
+        from src.session.tracker import SessionRegistry
+
+        store = MemoryStateStore()
+        now = _time.time()
+        for tid in ("qq:dm:s18", "qq:group:G1:s1"):
+            await store.save(tid, AgentState(messages=_consolidation_msgs(), chat_id="x", channel="qq", created_at=now))
+        await store.save(
+            "qq:dm:s19",
+            AgentState(messages=[{"role": "user", "content": "few"}], chat_id="x", channel="qq", created_at=now),
+        )
+        reg = SessionRegistry()
+        result = await _run_consolidation(store, reg)
+        assert result["sessions_processed"] == 2
+        assert result["sessions_skipped"] == 1
+        dm = reg.list_sessions("qq:dm")
+        grp = reg.list_sessions("qq:group:G1")
+        assert dm and all(s["thread_id"].startswith("qq:dm:s") for s in dm), dm
+        assert grp and all(s["thread_id"].startswith("qq:group:G1:s") for s in grp), grp
 
 
 # ─── Notifications ───────────────────────────────────────────────────────────

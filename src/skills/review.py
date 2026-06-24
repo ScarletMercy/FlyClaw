@@ -2,7 +2,6 @@
 
 After accumulating enough tool-calling iterations, spawns a background
 agent that reviews the conversation and creates/updates skills.
-Follows the Hermes-Agent pattern: nudge counter → background review fork.
 """
 
 from __future__ import annotations

@@ -217,7 +217,7 @@ class SessionRegistry:
         """Create a new session for the user. Returns short session_id."""
         us = self._get_user(user_key)
         sid = us._alloc_id()
-        thread_id = f"{channel_prefix}:{sid}:{user_hash}"
+        thread_id = f"{user_key}:{sid}"
         us.sessions.append(
             SessionEntry(
                 session_id=sid,
@@ -272,10 +272,8 @@ class SessionRegistry:
         that may have been orphaned by channel switching or registry loss.
         """
         parts = user_key.split(":")
-        # DM 塌缩后 user_key 是 {channel}:dm（2 段），不符合 3 段假设 → 早返。这是
-        # 预期语义：折叠私信只有一个规范化 key，本无孤儿可恢复；旧的 qq:user:<旧openid>
-        # 线程是 openid 轮换后不可达的废弃历史，折叠后入站永远指向 qq:dm、路由不到旧 key，
-        # 恢复它们也无意义。故此处对 DM 静默返回空是正确的。
+        # DM key 是 {channel}:dm（2 段），不符合 3 段 hash 匹配形状 → 早返。
+        # DM 历史恢复（含轮换 openid 的旧线程）由调用方退到 find_all_channel_threads 兜底完成。
         if len(parts) != 3:
             return []
         channel_prefix, _, user_hash = parts
@@ -305,11 +303,8 @@ class SessionRegistry:
         parts = user_key.split(":")
         if len(parts) < 2:
             return []
-        # DM 塌缩 key（{channel}:dm）无 sender hash，宽匹配会把全频道线程（含群、
-        # 历史 openid）误并进单一 DM 会话 → 与 find_orphaned_threads 一致地早返。
-        if parts[-1] == "dm":
-            return []
         channel_prefix = parts[0]
+        is_group = parts[1] == "group"
 
         threads = await store.list_threads()
         registered = set()
@@ -323,7 +318,8 @@ class SessionRegistry:
             if tid == user_key or tid in registered:
                 continue
             t_parts = tid.split(":")
-            if len(t_parts) >= 2 and t_parts[0] == channel_prefix:
+            # 私聊/群按 key 第 2 段隔离, 不跨域恢复
+            if len(t_parts) >= 2 and t_parts[0] == channel_prefix and (t_parts[1] == "group") == is_group:
                 orphaned.append(tid)
         return orphaned
 

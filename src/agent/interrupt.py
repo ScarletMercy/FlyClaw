@@ -1,4 +1,4 @@
-"""Interrupt and steer flags — hermes-agent pattern.
+"""Interrupt and steer flags.
 
 Interrupt: stops the agent loop immediately. Clears any pending steer.
 Steer: injects user guidance into the last tool result without stopping.

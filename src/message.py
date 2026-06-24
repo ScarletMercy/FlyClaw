@@ -191,7 +191,6 @@ class MessageHandler:
     @staticmethod
     def _resolve_session_key(sender_id: str, chat_type: str, chat_id: str) -> str:
         # 私聊塌缩为单一会话，key 不含 user_openid → 根治身份漂移。
-        # 对齐 hermes-agent：DM 默认不按平台 user id 分会话。
         if chat_type == "p2p":
             return "dm"
         return f"group:{chat_id}"

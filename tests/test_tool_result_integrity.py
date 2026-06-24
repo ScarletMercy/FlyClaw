@@ -338,6 +338,13 @@ class TestParallelApprovalPending:
 
 
 class TestTruncateEdgeCases:
+    @pytest.fixture(autouse=True)
+    def _isolate_cache_root(self, tmp_path, monkeypatch):
+        """隔离缓存目录到 tmp_path，避免污染真实 ~/.flyclaw/temp。"""
+        from src.agent import tool_cache as tc
+
+        monkeypatch.setattr(tc, "cache_root", lambda: tmp_path)
+
     @pytest.mark.asyncio
     async def test_exactly_8000_not_truncated(self):
         loop = AgentLoop.__new__(AgentLoop)

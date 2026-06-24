@@ -1,7 +1,7 @@
 """Session pruning and cleanup utilities.
 
 Provides automatic and manual session pruning to keep the checkpoints database
-from growing unbounded. Follows hermes-agent design:
+from growing unbounded. Design:
 - Opt-in auto-pruning at startup
 - Manual prune command with configurable age threshold
 - VACUUM after prune to reclaim disk space

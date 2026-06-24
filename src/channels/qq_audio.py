@@ -1,7 +1,4 @@
-"""QQ voice message audio processing — SILK/AMR decoding and STT transcription.
-
-Ported from hermes-agent gateway/platforms/qqbot/adapter.py audio pipeline.
-"""
+"""QQ voice message audio processing — SILK/AMR decoding and STT transcription."""
 
 from __future__ import annotations
 

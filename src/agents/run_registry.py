@@ -1,8 +1,7 @@
 """Sub-agent run registry with depth tracking via contextvars.
 
 Tracks active sub-agent runs, enforces depth limits, and provides
-status querying. Pattern follows the original openclaw
-src/agents/subagent-registry.ts and src/agents/subagent-depth.ts.
+status querying.
 """
 
 from __future__ import annotations
