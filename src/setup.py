@@ -12,8 +12,16 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from typing import TypedDict
 
 import yaml
+
+
+class PresetEntry(TypedDict):
+    provider: str
+    name: str
+    env_key: str
+    base_url: str | None
 
 
 def _get_config_path() -> Path:
@@ -22,7 +30,7 @@ def _get_config_path() -> Path:
     return config_path()
 
 
-PRESETS = {
+PRESETS: dict[str, PresetEntry | None] = {
     "openai": {
         "provider": "openai",
         "name": "gpt-4o",

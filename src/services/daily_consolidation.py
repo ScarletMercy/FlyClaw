@@ -145,7 +145,7 @@ async def _create_new_session(container: Any, thread_id: str, channel_name: str)
         legacy_key = f"{channel_prefix}:user:{user_hash}"
 
     try:
-        sid = await registry.new_session(legacy_key, channel_prefix, user_hash)
+        sid = await registry.new_session(legacy_key)
         logger.info("Consolidation: created new session %s for %s (old: %s)", sid, legacy_key, thread_id)
         return sid
     except Exception as e:

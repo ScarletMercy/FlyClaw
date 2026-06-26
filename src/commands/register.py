@@ -280,11 +280,9 @@ def register_builtin_commands(dispatcher, container, tools, skills):
     async def cmd_new(args: str, ctx: dict) -> str:
         zh = container.config.agents.language == "zh"
         user_key = ctx.get("user_key", "")
-        channel_prefix = ctx.get("channel_prefix", "qq")
         if not user_key:
             return "无法确定会话。" if zh else "Cannot determine session."
-        user_hash = user_key.split(":")[-1] if user_key else "unknown"
-        sid = await container.session_registry.new_session(user_key, channel_prefix, user_hash)
+        sid = await container.session_registry.new_session(user_key)
         if container.agent_loop:
             container.agent_loop.invalidate_memory_cache()
         if zh:

@@ -213,7 +213,7 @@ class SessionRegistry:
                 return s.thread_id
         return None
 
-    async def new_session(self, user_key: str, channel_prefix: str, user_hash: str) -> str:
+    async def new_session(self, user_key: str) -> str:
         """Create a new session for the user. Returns short session_id."""
         us = self._get_user(user_key)
         sid = us._alloc_id()
