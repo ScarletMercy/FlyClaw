@@ -65,6 +65,7 @@ class Channel(ABC):
         media_type: str = "file",
         file_bytes: bytes | None = None,
         file_name: str = "",
+        reply_to: str | None = None,
     ) -> bool:
         """Send media to a chat. media_type: 'image', 'audio', 'file'."""
         pass

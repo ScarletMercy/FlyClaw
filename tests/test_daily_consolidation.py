@@ -50,7 +50,6 @@ def _make_messages(n_user, n_assistant=None):
 
 _PATCH_CONSOLIDATE = "src.services.daily_consolidation._consolidate_session"
 _PATCH_NOTIFY = "src.services.daily_consolidation._send_notification"
-_PATCH_NEW_SESSION = "src.services.daily_consolidation._create_new_session"
 _PATCH_REVIEW = "src.skills.review.spawn_background_review"
 _PATCH_SAVE_SUMMARY = "src.services.daily_consolidation._save_session_summary"
 
@@ -146,22 +145,25 @@ class TestSessionFiltering:
         assert result["sessions_skipped"] == 1
 
     @pytest.mark.asyncio
-    async def test_skip_does_not_create_new_session(self):
-        """Skipped sessions must NOT rotate — prevents exponential session growth."""
+    async def test_opens_one_dm_session_even_when_all_skipped(self):
+        """整理跑完后,即便所有线程都不够格被跳过,仍给 qq:dm 开恰好一个新会话(单用户,非轮换)。"""
         store = MagicMock()
-        state = _make_state(_make_messages(2, 2))
+        state = _make_state(_make_messages(2, 2))  # < min_messages → skipped
         store.list_threads = AsyncMock(return_value=["t1"])
         store.load = AsyncMock(return_value=state)
 
-        container = _make_container(state_store=store, agent_loop=MagicMock(), min_messages=10)
+        registry = MagicMock()
+        registry.new_session = AsyncMock(return_value="s1")
+        container = _make_container(
+            state_store=store, agent_loop=MagicMock(), session_registry=registry, min_messages=10
+        )
 
-        with patch(_PATCH_NEW_SESSION, new_callable=AsyncMock) as mock_new:
-            from src.services.daily_consolidation import run_daily_consolidation
+        from src.services.daily_consolidation import run_daily_consolidation
 
-            result = await run_daily_consolidation(container)
+        result = await run_daily_consolidation(container)
 
         assert result["sessions_skipped"] == 1
-        mock_new.assert_not_called()
+        registry.new_session.assert_called_once_with("qq:dm")
 
     @pytest.mark.asyncio
     async def test_skip_none_state(self):
@@ -197,7 +199,6 @@ class TestNormalFlow:
         with (
             patch(_PATCH_CONSOLIDATE, return_value="saved 2 memories"),
             patch(_PATCH_NOTIFY, new_callable=AsyncMock),
-            patch(_PATCH_NEW_SESSION, new_callable=AsyncMock),
         ):
             from src.services.daily_consolidation import run_daily_consolidation
 
@@ -229,7 +230,7 @@ class TestNormalFlow:
 
             await run_daily_consolidation(container)
 
-        registry.new_session.assert_called_once()
+        registry.new_session.assert_called_once_with("qq:dm")
 
     @pytest.mark.asyncio
     async def test_invalidate_memory_cache_called(self):
@@ -247,7 +248,6 @@ class TestNormalFlow:
         with (
             patch(_PATCH_CONSOLIDATE, return_value=""),
             patch(_PATCH_NOTIFY, new_callable=AsyncMock),
-            patch(_PATCH_NEW_SESSION, new_callable=AsyncMock),
         ):
             from src.services.daily_consolidation import run_daily_consolidation
 
@@ -256,129 +256,31 @@ class TestNormalFlow:
         agent_loop.invalidate_memory_cache.assert_called_once()
 
 
-class TestCreateNewSessionKeyDerivation:
-    """_create_new_session 必须把轮换后的会话注册到正确的 owning user_key。
+class TestNewSessionCreation:
+    """整理后开新会话(单用户 bot):无论多少线程合格,run 后只给 qq:dm 开恰好 1 个新会话。
 
-    回归：new_session 改成 {user_key}:{sid} 后，新格式 DM 多会话 qq:dm:s1 末段是 sid
-    而非 dm，旧"末段判 dm"逻辑误判为非 DM → 注册到 qq:user:s1（错）。修复：末段是 sid
-    (形如 s1)时剥掉得 owning key。
+    旧逻辑 per-thread 开 → 一次造 N 个;现改为循环后给 qq:dm 开一次。
     """
 
     @pytest.mark.asyncio
-    async def test_new_dm_multi_registers_under_dm(self):
-        from src.services.daily_consolidation import _create_new_session
-        from src.session.tracker import SessionRegistry
-
-        reg = SessionRegistry()
-        container = _make_container(session_registry=reg)
-        await _create_new_session(container, "qq:dm:s1", "qq")
-        assert reg.list_sessions("qq:dm"), "新格式 DM 多会话应注册到 qq:dm"
-        assert not reg.list_sessions("qq:user:s1"), "不得误注册到 qq:user:s1"
-
-    @pytest.mark.asyncio
-    async def test_new_group_multi_registers_under_group(self):
-        from src.services.daily_consolidation import _create_new_session
-        from src.session.tracker import SessionRegistry
-
-        reg = SessionRegistry()
-        container = _make_container(session_registry=reg)
-        await _create_new_session(container, "qq:group:G1:s1", "qq")
-        assert reg.list_sessions("qq:group:G1"), "新格式群多会话应注册到 qq:group:G1"
-
-    @pytest.mark.asyncio
-    async def test_default_dm_unchanged(self):
-        from src.services.daily_consolidation import _create_new_session
-        from src.session.tracker import SessionRegistry
-
-        reg = SessionRegistry()
-        container = _make_container(session_registry=reg)
-        await _create_new_session(container, "qq:dm", "qq")
-        assert reg.list_sessions("qq:dm")
-
-    @pytest.mark.asyncio
-    async def test_legacy_per_sender_unchanged(self):
-        from src.services.daily_consolidation import _create_new_session
-        from src.session.tracker import SessionRegistry
-
-        reg = SessionRegistry()
-        container = _make_container(session_registry=reg)
-        await _create_new_session(container, "qq:user:ABC123", "qq")
-        assert reg.list_sessions("qq:user:ABC123")
-
-    @pytest.mark.parametrize(
-        "thread_id, expected_owner",
-        [
-            ("qq:dm", "qq:dm"),  # 默认 DM(最常见)
-            ("qq:dm:s18", "qq:dm"),  # 新格式 DM 多会话(本次回归点)
-            ("qq:group:G1:s1", "qq:group:G1"),  # 新格式群多会话
-            ("qq:s1:dm", "qq:dm"),  # legacy 旧 DM 多会话(末段 dm, 向后兼容)
-            ("qq:user:ABC123", "qq:user:ABC123"),  # legacy per-sender(向后兼容)
-        ],
-    )
-    @pytest.mark.asyncio
-    async def test_e2e_rotation_by_thread_shape(self, thread_id, expected_owner):
-        """E2E: 各种 thread_id 形状经 run_daily_consolidation 轮换, 注册到正确 owning key。"""
-        import time as _time
-        from src.agent.state import MemoryStateStore
-        from src.session.tracker import SessionRegistry
-
-        store = MemoryStateStore()
-        await store.save(
-            thread_id,
-            AgentState(messages=_consolidation_msgs(), chat_id="c2c:X", channel="qq", created_at=_time.time()),
-        )
-        reg = SessionRegistry()
-        result = await _run_consolidation(store, reg)
-        assert result["sessions_processed"] == 1, (thread_id, result)
-        sessions = reg.list_sessions(expected_owner)
-        assert sessions and all(s["thread_id"].startswith(f"{expected_owner}:s") for s in sessions), (
-            thread_id,
-            sessions,
-        )
-
-    @pytest.mark.asyncio
-    async def test_e2e_skip_below_threshold(self):
-        """<10 条消息的线程应被跳过, 不创建轮换会话(门控边界)。"""
-        import time as _time
-        from src.agent.state import MemoryStateStore
-        from src.session.tracker import SessionRegistry
-
-        store = MemoryStateStore()
-        await store.save(
-            "qq:dm:s18",
-            AgentState(
-                messages=[{"role": "user", "content": "only"}], chat_id="c2c:X", channel="qq", created_at=_time.time()
-            ),
-        )
-        reg = SessionRegistry()
-        result = await _run_consolidation(store, reg)
-        assert result["sessions_processed"] == 0
-        assert result["sessions_skipped"] == 1
-        assert not reg.list_sessions("qq:dm")
-
-    @pytest.mark.asyncio
-    async def test_e2e_multiple_threads_isolated(self):
-        """一次跑处理多线程: 够格的各自轮换到 owner, 不够格的跳过, 互不串。"""
+    async def test_opens_exactly_one_dm_session_regardless_of_threads(self):
         import time as _time
         from src.agent.state import MemoryStateStore
         from src.session.tracker import SessionRegistry
 
         store = MemoryStateStore()
         now = _time.time()
-        for tid in ("qq:dm:s18", "qq:group:G1:s1"):
+        # 生产真实形态:默认线程 + 旧多会话混存,旧逻辑会各开一个
+        for tid in ("qq:user:ABC123", "qq:s1:ABC123", "qq:s2:ABC123"):
             await store.save(tid, AgentState(messages=_consolidation_msgs(), chat_id="x", channel="qq", created_at=now))
-        await store.save(
-            "qq:dm:s19",
-            AgentState(messages=[{"role": "user", "content": "few"}], chat_id="x", channel="qq", created_at=now),
-        )
         reg = SessionRegistry()
         result = await _run_consolidation(store, reg)
-        assert result["sessions_processed"] == 2
-        assert result["sessions_skipped"] == 1
-        dm = reg.list_sessions("qq:dm")
-        grp = reg.list_sessions("qq:group:G1")
-        assert dm and all(s["thread_id"].startswith("qq:dm:s") for s in dm), dm
-        assert grp and all(s["thread_id"].startswith("qq:group:G1:s") for s in grp), grp
+
+        # 记忆提取对所有合格线程照常执行
+        assert result["sessions_processed"] == 3, result
+        # 但只给 qq:dm 开恰好 1 个新会话(单用户,非 per-thread/per-user)
+        sessions = reg.list_sessions("qq:dm")
+        assert len(sessions) == 1, sessions
 
 
 # ─── Notifications ───────────────────────────────────────────────────────────
@@ -406,7 +308,6 @@ class TestNotifications:
         with (
             patch(_PATCH_CONSOLIDATE, return_value="saved memory"),
             patch(_PATCH_NOTIFY, side_effect=_capture_notify),
-            patch(_PATCH_NEW_SESSION, new_callable=AsyncMock),
         ):
             from src.services.daily_consolidation import run_daily_consolidation
 
@@ -435,7 +336,6 @@ class TestNotifications:
 
         with (
             patch(_PATCH_CONSOLIDATE, return_value=""),
-            patch(_PATCH_NEW_SESSION, new_callable=AsyncMock),
         ):
             from src.services.daily_consolidation import run_daily_consolidation
 
@@ -497,7 +397,6 @@ class TestSummaryCounting:
         with (
             patch(_PATCH_CONSOLIDATE, return_value="memory saved: user likes tea"),
             patch(_PATCH_NOTIFY, new_callable=AsyncMock),
-            patch(_PATCH_NEW_SESSION, new_callable=AsyncMock),
         ):
             from src.services.daily_consolidation import run_daily_consolidation
 
@@ -522,7 +421,6 @@ class TestSummaryCounting:
         with (
             patch(_PATCH_CONSOLIDATE, return_value="skill created: auto_format"),
             patch(_PATCH_NOTIFY, new_callable=AsyncMock),
-            patch(_PATCH_NEW_SESSION, new_callable=AsyncMock),
         ):
             from src.services.daily_consolidation import run_daily_consolidation
 
@@ -565,7 +463,6 @@ class TestAgeFiltering:
         with (
             patch(_PATCH_CONSOLIDATE, return_value="saved 1 memory"),
             patch(_PATCH_NOTIFY, new_callable=AsyncMock),
-            patch(_PATCH_NEW_SESSION, new_callable=AsyncMock),
         ):
             from src.services.daily_consolidation import run_daily_consolidation
 

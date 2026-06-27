@@ -53,69 +53,78 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
     # Day counter for diary-style keys: {days_ago: next_index}
     day_counter: dict[int, int] = defaultdict(int)
 
-    for thread_id in thread_ids:
-        try:
-            state = await state_store.load(thread_id)
-        except Exception:
-            continue
-
-        if state is None:
-            continue
-
-        chat_id = state.chat_id
-        channel_name = state.channel
-
-        # Decide whether to run expensive consolidation
-        should_consolidate = True
-        if len(state.messages) < min_messages:
-            should_consolidate = False
-        elif state.created_at < cutoff_ts:
-            should_consolidate = False
-        elif len([m for m in state.messages if m.get("role") == "user"]) < 3:
-            should_consolidate = False
-
-        summary = ""
-        if should_consolidate:
-            await _send_notification(container, channel_name, chat_id, "\U0001f4a4 dreaming...")
+    try:
+        for thread_id in thread_ids:
             try:
-                summary = await _consolidate_session(
-                    agent_loop=agent_loop,
-                    config=config,
-                    messages=state.messages,
-                )
-            except Exception as e:
-                logger.error("Consolidation failed for session %s: %s", thread_id, e, exc_info=True)
-                result["errors"].append(f"{thread_id}: {e}")
-                await _send_notification(
-                    container, channel_name, chat_id, "\u2600\ufe0f consolidation failed, session preserved"
-                )
-                summary = ""
-            else:
-                result["sessions_processed"] += 1
-                if summary:
-                    if "memory" in summary.lower() or "saved" in summary.lower():
-                        result["memories_saved"] += 1
-                    if "skill" in summary.lower() or "patched" in summary.lower() or "created" in summary.lower():
-                        result["skills_updated"] += 1
+                state = await state_store.load(thread_id)
+            except Exception:
+                continue
 
-                # Save episodic summary (diary-style)
+            if state is None:
+                continue
+
+            chat_id = state.chat_id
+            channel_name = state.channel
+
+            # Decide whether to run expensive consolidation
+            should_consolidate = True
+            if len(state.messages) < min_messages:
+                should_consolidate = False
+            elif state.created_at < cutoff_ts:
+                should_consolidate = False
+            elif len([m for m in state.messages if m.get("role") == "user"]) < 3:
+                should_consolidate = False
+
+            summary = ""
+            if should_consolidate:
+                await _send_notification(container, channel_name, chat_id, "\U0001f4a4 dreaming...")
                 try:
-                    await _save_session_summary(config, state.created_at, state.messages, day_counter)
+                    summary = await _consolidate_session(
+                        agent_loop=agent_loop,
+                        config=config,
+                        messages=state.messages,
+                    )
                 except Exception as e:
-                    logger.warning("Session summary failed for %s: %s", thread_id, e)
+                    logger.error("Consolidation failed for session %s: %s", thread_id, e, exc_info=True)
+                    result["errors"].append(f"{thread_id}: {e}")
+                    await _send_notification(
+                        container, channel_name, chat_id, "\u2600\ufe0f consolidation failed, session preserved"
+                    )
+                    summary = ""
+                else:
+                    result["sessions_processed"] += 1
+                    if summary:
+                        if "memory" in summary.lower() or "saved" in summary.lower():
+                            result["memories_saved"] += 1
+                        if "skill" in summary.lower() or "patched" in summary.lower() or "created" in summary.lower():
+                            result["skills_updated"] += 1
 
-                wake_msg = (
-                    f"\u2600\ufe0f wake up! {summary}" if summary else "\u2600\ufe0f wake up! nothing to consolidate"
-                )
-                await _send_notification(container, channel_name, chat_id, wake_msg)
+                    # Save episodic summary (diary-style)
+                    try:
+                        await _save_session_summary(config, state.created_at, state.messages, day_counter)
+                    except Exception as e:
+                        logger.warning("Session summary failed for %s: %s", thread_id, e)
 
-                # Rotate after successful consolidation
-                await _create_new_session(container, thread_id, channel_name)
-
-                if agent_loop:
-                    agent_loop.invalidate_memory_cache()
-        else:
-            result["sessions_skipped"] += 1
+                    wake_msg = (
+                        f"\u2600\ufe0f wake up! {summary}"
+                        if summary
+                        else "\u2600\ufe0f wake up! nothing to consolidate"
+                    )
+                    await _send_notification(container, channel_name, chat_id, wake_msg)
+            else:
+                result["sessions_skipped"] += 1
+    finally:
+        # 单用户 bot:整理跑完后给 DM 开一个新会话(单纯开新会话,非轮换)。
+        # 不在循环里 per-thread 开——那会让同一用户一次造 N 个。旧会话数据仍在 store。
+        registry = getattr(container, "session_registry", None)
+        if registry is not None:
+            try:
+                sid = await registry.new_session("qq:dm")
+                logger.info("Consolidation: opened new session %s for qq:dm", sid)
+            except Exception as e:
+                logger.error("Consolidation: failed to open new session: %s", e)
+        if agent_loop:
+            agent_loop.invalidate_memory_cache()
 
     logger.info(
         "Consolidation complete: %d processed, %d skipped, %d errors",
@@ -124,33 +133,6 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
         len(result["errors"]),
     )
     return result
-
-
-async def _create_new_session(container: Any, thread_id: str, channel_name: str) -> str | None:
-    registry = getattr(container, "session_registry", None)
-    if registry is None:
-        logger.warning("Consolidation: no session registry, skipping new session creation")
-        return None
-
-    parts = thread_id.split(":")
-    user_hash = parts[-1]  # .split(":") 永不返回空列表
-    channel_prefix = channel_name or (parts[0] if parts else "unknown")
-    # 新格式多会话 key = {user_key}:{sid}（末段 s\d+）→ 剥末段得 owning user_key；
-    # 否则按末段判 dm / user:{hash}（兼容默认线程与旧 per_sender）。
-    if len(parts) >= 2 and user_hash.startswith("s") and user_hash[1:].isdigit():
-        legacy_key = ":".join(parts[:-1])
-    elif user_hash == "dm":
-        legacy_key = f"{channel_prefix}:dm"
-    else:
-        legacy_key = f"{channel_prefix}:user:{user_hash}"
-
-    try:
-        sid = await registry.new_session(legacy_key)
-        logger.info("Consolidation: created new session %s for %s (old: %s)", sid, legacy_key, thread_id)
-        return sid
-    except Exception as e:
-        logger.error("Consolidation: failed to create new session for %s: %s", legacy_key, e)
-        return None
 
 
 async def _consolidate_session(

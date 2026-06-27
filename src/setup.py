@@ -440,9 +440,8 @@ def _configure_qq(qq: dict) -> None:
 
     qq["dm_policy"] = _ask_choice("  私聊策略", ["open", "allowlist"], default=qq.get("dm_policy", "open"))
     qq["group_policy"] = _ask_choice(
-        "  群聊策略", ["allowlist", "open", "disabled"], default=qq.get("group_policy", "allowlist")
+        "  群聊策略", ["open", "allowlist", "disabled"], default=qq.get("group_policy", "open")
     )
-    qq["require_mention"] = _ask_yn("  群聊中需要 @机器人？", default=qq.get("require_mention", True))
     qq["markdown_support"] = _ask_yn("  启用 Markdown 支持？", default=qq.get("markdown_support", True))
 
 
@@ -494,7 +493,7 @@ def _configure_weixin(weixin: dict) -> None:
         "  私聊策略", ["open", "allowlist", "disabled"], default=weixin.get("dm_policy", "open")
     )
     weixin["group_policy"] = _ask_choice(
-        "  群聊策略", ["disabled", "allowlist", "open"], default=weixin.get("group_policy", "disabled")
+        "  群聊策略", ["open", "allowlist", "disabled"], default=weixin.get("group_policy", "open")
     )
 
 

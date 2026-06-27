@@ -1230,6 +1230,7 @@ class QQChannel(Channel):
         media_type: str = "file",
         file_bytes: bytes | None = None,
         file_name: str = "",
+        reply_to: str | None = None,
     ) -> bool:
         """Send media (image / audio / file). Supports local paths, URLs, and raw bytes."""
         kind, _ = _parse_chat_id(chat_id)
@@ -1252,7 +1253,9 @@ class QQChannel(Channel):
                 file_name=file_name or "media.bin",
             )
             if file_info:
-                result = await self._send_message(chat_id, "", msg_type=7, media={"file_info": file_info})
+                result = await self._send_message(
+                    chat_id, "", msg_type=7, media={"file_info": file_info}, reply_to=reply_to
+                )
                 return result is not None
             return False
 
@@ -1261,19 +1264,23 @@ class QQChannel(Channel):
             if Path(file_key).exists():
                 file_info = await self._upload_local_file(chat_id, file_key, file_type=ft)
                 if file_info:
-                    result = await self._send_message(chat_id, "", msg_type=7, media={"file_info": file_info})
+                    result = await self._send_message(
+                        chat_id, "", msg_type=7, media={"file_info": file_info}, reply_to=reply_to
+                    )
                     return result is not None
             return False
 
         # --- URL ---
         file_info = await self._upload_media(chat_id, file_type=ft, url=file_key)
         if file_info:
-            result = await self._send_message(chat_id, "", msg_type=7, media={"file_info": file_info})
+            result = await self._send_message(
+                chat_id, "", msg_type=7, media={"file_info": file_info}, reply_to=reply_to
+            )
             return result is not None
 
         # Fallback for images: send as text
         if media_type == "image":
-            return await self._send_message(chat_id, file_key) is not None
+            return await self._send_message(chat_id, file_key, reply_to=reply_to) is not None
         return False
 
     # --- Approval keyboard ---

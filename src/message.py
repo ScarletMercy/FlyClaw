@@ -406,6 +406,7 @@ class MessageHandler:
                     reply_fn=reply_fn,
                     system_prompt=system_prompt,
                     original_text=text,
+                    message_id=message_id,
                 )
             finally:
                 # Layer-2 invariant: the agent turn awaited above must not be
@@ -420,7 +421,9 @@ class MessageHandler:
 
         return on_message
 
-    async def _try_send_voice(self, text: str, chat_id: str, channel_prefix: str, voice: str) -> bool:
+    async def _try_send_voice(
+        self, text: str, chat_id: str, channel_prefix: str, voice: str, message_id: str | None = None
+    ) -> bool:
         """Try to convert text to speech and send as voice message. Returns True if sent."""
         import edge_tts
         import tempfile
@@ -452,6 +455,7 @@ class MessageHandler:
                     media_type="audio",
                     file_bytes=audio_bytes,
                     file_name="speech.mp3",
+                    reply_to=message_id,
                 )
             elif channel_prefix == "weixin":
                 import tempfile as _tf
@@ -598,6 +602,7 @@ class MessageHandler:
         system_prompt: str,
         original_text: str,
         depth: int = 0,
+        message_id: str | None = None,
     ):
         from src.agent.loop import ApprovalPending as AP
 
@@ -747,7 +752,9 @@ class MessageHandler:
                 and len(display_text.strip()) < voice_cfg.threshold
             ):
                 try:
-                    voice_sent = await self._try_send_voice(display_text, chat_id, channel_prefix, voice_cfg.voice)
+                    voice_sent = await self._try_send_voice(
+                        display_text, chat_id, channel_prefix, voice_cfg.voice, message_id=message_id
+                    )
                 except Exception as e:
                     logger.warning("Voice mode TTS failed: %s", e)
 

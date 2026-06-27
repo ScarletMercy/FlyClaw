@@ -126,7 +126,7 @@ class QQConfig(BaseModel):
     app_id: str = ""
     client_secret: str = ""
     dm_policy: Literal["open", "allowlist"] = "open"
-    group_policy: Literal["open", "allowlist", "disabled"] = "allowlist"
+    group_policy: Literal["open", "allowlist", "disabled"] = "open"
     allow_from: list[str] = Field(default_factory=list)
     group_allow_from: list[str] = Field(default_factory=list)
     require_mention: bool = True
@@ -141,7 +141,7 @@ class WeixinConfig(BaseModel):
     base_url: str = "https://ilinkai.weixin.qq.com"
     cdn_base_url: str = "https://novac2c.cdn.weixin.qq.com/c2c"
     dm_policy: Literal["open", "allowlist", "disabled"] = "open"
-    group_policy: Literal["open", "allowlist", "disabled"] = "disabled"
+    group_policy: Literal["open", "allowlist", "disabled"] = "open"
     allowed_users: list[str] = Field(default_factory=list)
     group_allowed_users: list[str] = Field(default_factory=list)
     split_multiline_messages: bool = False
