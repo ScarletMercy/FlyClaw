@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import re
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, Optional
@@ -85,7 +86,12 @@ _CATEGORY_PREFIX_RE = re.compile(r"^\[(\w+)\]\s*")
 
 store: MemoryStore | None = None
 _store_initialized: bool = False
+_group_store: GroupMemoryStore | None = None
+_group_initialized: bool = False
 _store_lock: asyncio.Lock = asyncio.Lock()
+
+_current_chat_type: ContextVar[str] = ContextVar("_current_chat_type", default="p2p")
+_current_group_id: ContextVar[str] = ContextVar("_current_group_id", default="")
 
 
 class MemoryStore:
@@ -163,11 +169,9 @@ class MemoryStore:
             logger.info("Migrated %d memories: stripped [category] prefix from content", migrated)
 
     async def close(self) -> None:
-        global _store_initialized
         if self._conn:
             await self._conn.close()
             self._conn = None
-        _store_initialized = False
 
     @staticmethod
     def _auto_key(content: str) -> str:
@@ -290,24 +294,254 @@ class MemoryStore:
         return json.dumps({"ok": True, "key": key}, ensure_ascii=False)
 
 
+class GroupMemoryStore(MemoryStore):
+    """群聊记忆存储，带 group_id 维度隔离（独立 db 文件）。"""
+
+    async def initialize(self) -> None:
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        self._conn = await aiosqlite.connect(self.db_path)
+        self._conn.row_factory = aiosqlite.Row
+        await self._conn.execute("PRAGMA journal_mode=WAL")
+        await self._conn.execute("PRAGMA synchronous=NORMAL")
+        await self._conn.execute("PRAGMA busy_timeout=5000")
+        await self._conn.executescript("""
+            CREATE TABLE IF NOT EXISTS memories (
+                key TEXT NOT NULL,
+                content TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'fact',
+                group_id TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (key, group_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
+            CREATE INDEX IF NOT EXISTS idx_memories_group ON memories(group_id);
+        """)
+        await self._ensure_fts()
+        await self._conn.commit()
+        logger.info("GroupMemoryStore initialized: %s (fts=%s)", self.db_path, self._fts_available)
+
+    async def _ensure_fts(self) -> None:
+        try:
+            cursor = await self._conn.execute(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='memories_fts'"
+            )
+            row = await cursor.fetchone()
+            if row[0] > 0:
+                try:
+                    await self._conn.execute("SELECT count(*) FROM memories_fts LIMIT 1")
+                    self._fts_available = True
+                    return
+                except Exception:
+                    await self._conn.execute("DROP TABLE IF EXISTS memories_fts")
+
+            await self._conn.execute("CREATE VIRTUAL TABLE memories_fts USING fts5(key, content, tokenize='trigram')")
+            await self._conn.execute(
+                "INSERT INTO memories_fts (key, content) SELECT group_id || ':' || key, content FROM memories"
+            )
+            self._fts_available = True
+        except Exception:
+            logger.warning("FTS5 trigram not available, search will use LIKE fallback")
+            self._fts_available = False
+
+    async def _find_key_by_content(self, content: str, group_id: str = "") -> str | None:
+        cursor = await self._conn.execute(
+            "SELECT key FROM memories WHERE content = ? AND group_id = ? LIMIT 1",
+            (content, group_id),
+        )
+        row = await cursor.fetchone()
+        return row["key"] if row else None
+
+    async def remember(self, content: str, key: str = "", category: str = "fact", group_id: str = "") -> str:
+        if not isinstance(content, str):
+            return json.dumps({"error": "content too short or empty"}, ensure_ascii=False)
+        content = content.strip()
+        if len(content) < 2:
+            return json.dumps({"error": "content too short or empty"}, ensure_ascii=False)
+
+        is_dedup = False
+        if not key:
+            existing_key = await self._find_key_by_content(content, group_id)
+            if existing_key:
+                key = existing_key
+                is_dedup = True
+            else:
+                key = self._auto_key(content)
+
+        now = datetime.now(timezone.utc).isoformat()
+        await self._conn.execute(
+            "INSERT INTO memories (key, content, category, group_id, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(key, group_id) DO UPDATE SET content=excluded.content, "
+            "category=excluded.category, updated_at=excluded.updated_at",
+            (key, content, category, group_id, now, now),
+        )
+        if not is_dedup and self._fts_available:
+            fts_key = f"{group_id}:{key}"
+            try:
+                await self._conn.execute(
+                    "INSERT OR REPLACE INTO memories_fts (key, content) VALUES (?, ?)",
+                    (fts_key, content),
+                )
+            except Exception:
+                pass
+        await self._conn.commit()
+        result = {"ok": True, "key": key}
+        if is_dedup:
+            result["dedup"] = True
+        return json.dumps(result, ensure_ascii=False)
+
+    async def recall(self, key: str, group_id: str = "") -> str:
+        cursor = await self._conn.execute(
+            "SELECT key, content, category, created_at, updated_at FROM memories WHERE key = ? AND group_id = ?",
+            (key, group_id),
+        )
+        row = await cursor.fetchone()
+        if row:
+            return json.dumps(
+                {
+                    "key": row["key"],
+                    "content": row["content"],
+                    "category": row["category"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps({"error": f"Memory '{key}' not found"}, ensure_ascii=False)
+
+    async def list_all(self, query: str = "", limit: int = 200, group_id: str | None = None) -> list[dict]:
+        if query:
+            if self._fts_available and len(query) >= 3:
+                try:
+                    if group_id is not None:
+                        cursor = await self._conn.execute(
+                            "SELECT m.key, m.content, m.category, m.updated_at "
+                            "FROM memories m "
+                            "JOIN memories_fts f ON f.key = (m.group_id || ':' || m.key) "
+                            "WHERE memories_fts MATCH ? AND m.group_id = ? "
+                            "ORDER BY rank LIMIT ?",
+                            (query, group_id, limit),
+                        )
+                    else:
+                        cursor = await self._conn.execute(
+                            "SELECT m.key, m.content, m.category, m.updated_at, m.group_id "
+                            "FROM memories m "
+                            "JOIN memories_fts f ON f.key = (m.group_id || ':' || m.key) "
+                            "WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?",
+                            (query, limit),
+                        )
+                    rows = await cursor.fetchall()
+                    if rows:
+                        return [
+                            {
+                                "key": r["key"],
+                                "content": r["content"],
+                                "category": r["category"],
+                                "updated_at": r["updated_at"],
+                            }
+                            for r in rows
+                        ]
+                except Exception:
+                    pass
+            if group_id is not None:
+                cursor = await self._conn.execute(
+                    "SELECT key, content, category, updated_at FROM memories "
+                    "WHERE (content LIKE ? OR key LIKE ?) AND group_id = ? "
+                    "ORDER BY updated_at DESC LIMIT ?",
+                    (f"%{query}%", f"%{query}%", group_id, limit),
+                )
+            else:
+                cursor = await self._conn.execute(
+                    "SELECT key, content, category, updated_at FROM memories "
+                    "WHERE content LIKE ? OR key LIKE ? ORDER BY updated_at DESC LIMIT ?",
+                    (f"%{query}%", f"%{query}%", limit),
+                )
+        else:
+            if group_id is not None:
+                cursor = await self._conn.execute(
+                    "SELECT key, content, category, updated_at FROM memories "
+                    "WHERE group_id = ? ORDER BY updated_at DESC LIMIT ?",
+                    (group_id, limit),
+                )
+            else:
+                cursor = await self._conn.execute(
+                    "SELECT key, content, category, updated_at, group_id FROM memories "
+                    "ORDER BY updated_at DESC LIMIT ?",
+                    (limit,),
+                )
+                rows = await cursor.fetchall()
+                return [
+                    {
+                        "key": r["key"],
+                        "content": r["content"],
+                        "category": r["category"],
+                        "updated_at": r["updated_at"],
+                        "group_id": r["group_id"],
+                    }
+                    for r in rows
+                ]
+        rows = await cursor.fetchall()
+        return [
+            {
+                "key": r["key"],
+                "content": r["content"],
+                "category": r["category"],
+                "updated_at": r["updated_at"],
+            }
+            for r in rows
+        ]
+
+    async def forget(self, key: str, group_id: str = "") -> str:
+        await self._conn.execute(
+            "DELETE FROM memories WHERE key = ? AND group_id = ?",
+            (key, group_id),
+        )
+        if self._fts_available:
+            fts_key = f"{group_id}:{key}"
+            try:
+                await self._conn.execute("DELETE FROM memories_fts WHERE key = ?", (fts_key,))
+            except Exception:
+                pass
+        await self._conn.commit()
+        return json.dumps({"ok": True, "key": key}, ensure_ascii=False)
+
+
 def _default_memories_db() -> str:
     from src.instance import data_dir
 
     return str(data_dir() / "memories.db")
 
 
-async def get_memory_store(db_path: str | None = None) -> MemoryStore:
-    global store, _store_initialized
+def _default_group_memories_db() -> str:
+    from src.instance import data_dir
+
+    return str(data_dir() / "memories_group.db")
+
+
+async def get_memory_store(db_path: str | None = None, chat_type: str = "p2p") -> MemoryStore:
+    global store, _store_initialized, _group_store, _group_initialized
+    if chat_type == "group":
+        if _group_initialized:
+            return _group_store  # type: ignore[return-value]
+        async with _store_lock:
+            if _group_initialized:
+                return _group_store  # type: ignore[return-value]
+            if _group_store is None:
+                _group_store = GroupMemoryStore(_default_group_memories_db())
+            await _group_store.initialize()
+            _group_initialized = True
+        return _group_store  # type: ignore[return-value]
     if _store_initialized:
-        return store
+        return store  # type: ignore[return-value]
     async with _store_lock:
         if _store_initialized:
-            return store
+            return store  # type: ignore[return-value]
         if store is None:
             store = MemoryStore(db_path or _default_memories_db())
         await store.initialize()
         _store_initialized = True
-    return store
+    return store  # type: ignore[return-value]
 
 
 async def reset_memory_store() -> None:
@@ -315,15 +549,33 @@ async def reset_memory_store() -> None:
 
     调用后下次 get_memory_store() 将用新的 db_path 创建实例。
     """
-    global store, _store_initialized
+    global store, _store_initialized, _group_store, _group_initialized
     async with _store_lock:
         if store is not None:
             try:
                 await store.close()
             except Exception:
                 pass
+        if _group_store is not None:
+            try:
+                await _group_store.close()
+            except Exception:
+                pass
         store = None
         _store_initialized = False
+        _group_store = None
+        _group_initialized = False
+
+
+def set_memory_session(chat_type: str, group_id: str = "") -> None:
+    """设置当前 memory scope（由 message.py 在消息入口处调用）。"""
+    _current_chat_type.set(chat_type)
+    _current_group_id.set(group_id)
+
+
+def get_memory_scope() -> tuple[str, str]:
+    """读取当前 memory scope（chat_type, group_id）。"""
+    return _current_chat_type.get(), _current_group_id.get()
 
 
 # ---------------------------------------------------------------------------
@@ -403,7 +655,10 @@ def _extract_matched_clause(text: str, match_start: int, match_end: int) -> str:
 
 
 async def save_memory(content: str, key: str = "", category: str = "fact") -> str:
-    s = await get_memory_store()
+    chat_type, group_id = get_memory_scope()
+    s = await get_memory_store(chat_type=chat_type)
+    if isinstance(s, GroupMemoryStore):
+        return await s.remember(content, key, category, group_id=group_id)
     return await s.remember(content, key, category)
 
 
@@ -453,15 +708,22 @@ async def memory(
             return json.dumps({"error": "content is required for save action"}, ensure_ascii=False)
         return await save_memory(content, key, category)
 
+    chat_type, group_id = get_memory_scope()
+    s = await get_memory_store(chat_type=chat_type)
+    is_group = isinstance(s, GroupMemoryStore)
+
     if normalized == "get":
         if not key:
             return json.dumps({"error": "key is required for get action"}, ensure_ascii=False)
-        s = await get_memory_store()
+        if is_group:
+            return await s.recall(key, group_id=group_id)
         return await s.recall(key)
 
     if normalized == "list":
-        s = await get_memory_store()
-        items = await s.list_all(query)
+        if is_group:
+            items = await s.list_all(query, group_id=group_id)
+        else:
+            items = await s.list_all(query)
         if verbose:
             return json.dumps(items, ensure_ascii=False)
         return json.dumps([i["key"] for i in items], ensure_ascii=False)
@@ -472,11 +734,13 @@ async def memory(
         unique_keys = list(dict.fromkeys(k for k in keys if k))
         if not unique_keys:
             return json.dumps({"error": "No valid keys specified"}, ensure_ascii=False)
-        s = await get_memory_store()
         found_keys = []
         previews = []
         for k in unique_keys:
-            raw = await s.recall(k)
+            if is_group:
+                raw = await s.recall(k, group_id=group_id)
+            else:
+                raw = await s.recall(k)
             try:
                 data = json.loads(raw)
             except (json.JSONDecodeError, TypeError):
@@ -502,7 +766,10 @@ async def memory(
         # Approved via session/durable — execute delete directly
         deleted = []
         for k in found_keys:
-            await s.forget(k)
+            if is_group:
+                await s.forget(k, group_id=group_id)
+            else:
+                await s.forget(k)
             deleted.append(k)
         return json.dumps({"ok": True, "deleted": deleted, "count": len(deleted)}, ensure_ascii=False)
 

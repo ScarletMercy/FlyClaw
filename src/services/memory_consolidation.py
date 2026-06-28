@@ -80,6 +80,120 @@ _CONSOLIDATION_PROMPT = """\
 {items}"""
 
 
+async def _consolidate_store(
+    store: Any,
+    client: Any,
+    now: datetime,
+    today_str: str,
+    result: dict[str, Any],
+    memories: list[dict],
+    group_id: str = "",
+) -> None:
+    """对单个 store（DM 或特定 group_id）执行记忆合并/删除整理。"""
+    from src.tools.memory_tools import GroupMemoryStore
+
+    is_group = isinstance(store, GroupMemoryStore)
+
+    if len(memories) < 5:
+        scope = f"group {group_id}" if group_id else "DM"
+        logger.info("Memory consolidation: %s has only %d memories, skipping", scope, len(memories))
+        return
+
+    by_category: dict[str, list[dict]] = defaultdict(list)
+    for mem in memories:
+        cat = mem.get("category", "fact") or "fact"
+        by_category[cat].append(mem)
+
+    for category, cat_memories in by_category.items():
+        if len(cat_memories) < 2:
+            continue
+
+        category_label = _CATEGORY_LABELS.get(category, category)
+        lines = []
+        for m in cat_memories:
+            age = _friendly_age(m.get("updated_at"), now)
+            lines.append(f"- key: {m['key']}\n  content: {m['content']}\n  updated: {age}")
+        items_text = "\n".join(lines)
+
+        prompt = _CONSOLIDATION_PROMPT.format(
+            category_label=category_label,
+            category=category,
+            today=today_str,
+            items=items_text,
+        )
+
+        try:
+            plan = await _ask_llm(client, prompt)
+        except Exception as e:
+            label = f"{category}[{group_id}]" if group_id else category
+            logger.error("Memory consolidation LLM call failed for %s: %s", label, e)
+            result["errors"].append(f"{label}: {e}")
+            continue
+
+        if plan is None:
+            continue
+
+        merge_ops = plan.get("merge", [])
+        delete_keys = plan.get("delete", [])
+        keep_keys = plan.get("keep", [])
+
+        if not isinstance(merge_ops, list):
+            merge_ops = []
+        if not isinstance(delete_keys, list):
+            delete_keys = []
+        if not isinstance(keep_keys, list):
+            keep_keys = []
+
+        for op in merge_ops:
+            if not isinstance(op, dict):
+                continue
+            from_keys = op.get("from_keys", [])
+            to_content = op.get("to_content", "")
+            to_category = op.get("to_category", category)
+            if not from_keys or not to_content:
+                continue
+            try:
+                if is_group:
+                    result_json = await store.remember(to_content, key="", category=to_category, group_id=group_id)
+                else:
+                    result_json = await store.remember(to_content, key="", category=to_category)
+                parsed = json.loads(result_json)
+                if "error" in parsed:
+                    logger.warning(
+                        "Merge rejected for keys %s: remember returned %s",
+                        from_keys,
+                        parsed["error"],
+                    )
+                    continue
+                new_key = parsed.get("key", "")
+                for fk in from_keys:
+                    if fk == new_key:
+                        logger.warning("Merge: auto-key '%s' collides with from_key, skipping forget", fk)
+                        continue
+                    if is_group:
+                        await store.forget(fk, group_id=group_id)
+                    else:
+                        await store.forget(fk)
+                result["merged"] += 1
+            except Exception as e:
+                logger.warning("Merge failed for keys %s: %s", from_keys, e)
+
+        for dk in delete_keys:
+            if not isinstance(dk, str) or not dk:
+                continue
+            try:
+                if is_group:
+                    await store.forget(dk, group_id=group_id)
+                else:
+                    await store.forget(dk)
+                result["deleted"] += 1
+            except Exception as e:
+                logger.warning("Delete failed for key %s: %s", dk, e)
+
+        result["kept"] += len(keep_keys)
+        result["categories_processed"] += 1
+
+
 async def run_memory_consolidation(container: Any) -> dict[str, Any]:
     result: dict[str, Any] = {
         "categories_processed": 0,
@@ -96,23 +210,10 @@ async def run_memory_consolidation(container: Any) -> dict[str, Any]:
         return result
 
     from src.agent.client import ChatClient
-    from src.tools.memory_tools import get_memory_store
-
-    store = await get_memory_store()
-    all_memories = await store.list_all(limit=2000)
-    result["total_memories"] = len(all_memories)
-
-    if len(all_memories) < 5:
-        logger.info("Memory consolidation: only %d memories, skipping", len(all_memories))
-        return result
+    from src.tools.memory_tools import GroupMemoryStore, get_memory_store
 
     now = datetime.now(timezone.utc)
     today_str = now.strftime("%Y-%m-%d")
-
-    by_category: dict[str, list[dict]] = defaultdict(list)
-    for mem in all_memories:
-        cat = mem.get("category", "fact") or "fact"
-        by_category[cat].append(mem)
 
     client = ChatClient(
         base_url=config.model.base_url,
@@ -122,84 +223,22 @@ async def run_memory_consolidation(container: Any) -> dict[str, Any]:
     )
 
     try:
-        for category, memories in by_category.items():
-            if len(memories) < 2:
-                continue
+        dm_store = await get_memory_store()
+        dm_memories = await dm_store.list_all(limit=2000)
+        result["total_memories"] += len(dm_memories)
+        await _consolidate_store(dm_store, client, now, today_str, result, memories=dm_memories)
 
-            category_label = _CATEGORY_LABELS.get(category, category)
-            lines = []
-            for m in memories:
-                age = _friendly_age(m.get("updated_at"), now)
-                lines.append(f"- key: {m['key']}\n  content: {m['content']}\n  updated: {age}")
-            items_text = "\n".join(lines)
+        group_store = await get_memory_store(chat_type="group")
+        if isinstance(group_store, GroupMemoryStore):
+            all_group = await group_store.list_all(limit=2000, group_id=None)
+            result["total_memories"] += len(all_group)
 
-            prompt = _CONSOLIDATION_PROMPT.format(
-                category_label=category_label,
-                category=category,
-                today=today_str,
-                items=items_text,
-            )
+            by_group: dict[str, list[dict]] = defaultdict(list)
+            for mem in all_group:
+                by_group[mem.get("group_id", "")].append(mem)
 
-            try:
-                plan = await _ask_llm(client, prompt)
-            except Exception as e:
-                logger.error("Memory consolidation LLM call failed for category %s: %s", category, e)
-                result["errors"].append(f"{category}: {e}")
-                continue
-
-            if plan is None:
-                continue
-
-            merge_ops = plan.get("merge", [])
-            delete_keys = plan.get("delete", [])
-            keep_keys = plan.get("keep", [])
-
-            if not isinstance(merge_ops, list):
-                merge_ops = []
-            if not isinstance(delete_keys, list):
-                delete_keys = []
-            if not isinstance(keep_keys, list):
-                keep_keys = []
-
-            for op in merge_ops:
-                if not isinstance(op, dict):
-                    continue
-                from_keys = op.get("from_keys", [])
-                to_content = op.get("to_content", "")
-                to_category = op.get("to_category", category)
-                if not from_keys or not to_content:
-                    continue
-                try:
-                    result_json = await store.remember(to_content, key="", category=to_category)
-                    parsed = json.loads(result_json)
-                    if "error" in parsed:
-                        logger.warning(
-                            "Merge rejected for keys %s: remember returned %s",
-                            from_keys,
-                            parsed["error"],
-                        )
-                        continue
-                    new_key = parsed.get("key", "")
-                    for fk in from_keys:
-                        if fk == new_key:
-                            logger.warning("Merge: auto-key '%s' collides with from_key, skipping forget", fk)
-                            continue
-                        await store.forget(fk)
-                    result["merged"] += 1
-                except Exception as e:
-                    logger.warning("Merge failed for keys %s: %s", from_keys, e)
-
-            for dk in delete_keys:
-                if not isinstance(dk, str) or not dk:
-                    continue
-                try:
-                    await store.forget(dk)
-                    result["deleted"] += 1
-                except Exception as e:
-                    logger.warning("Delete failed for key %s: %s", dk, e)
-
-            result["kept"] += len(keep_keys)
-            result["categories_processed"] += 1
+            for gid, gmemories in by_group.items():
+                await _consolidate_store(group_store, client, now, today_str, result, memories=gmemories, group_id=gid)
     finally:
         await client.close()
 

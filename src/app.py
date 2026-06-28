@@ -730,10 +730,10 @@ class ServiceContainer:
                 await self.memory_searcher.close()
             if getattr(self.config, "memory_store", None) and self.config.memory_store.enabled:
                 try:
-                    from src.tools.memory_tools import get_memory_store
+                    # 关 DM + group 两个 store 单例并复位标志(直接 close() 会漏关 group store)
+                    from src.tools.memory_tools import reset_memory_store
 
-                    mem_store = await get_memory_store()
-                    await mem_store.close()
+                    await reset_memory_store()
                 except Exception:
                     pass
             if getattr(self.config, "task", None) and self.config.task.enabled:

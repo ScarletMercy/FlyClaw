@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import re
 import time
 from collections import defaultdict
 from typing import Any
@@ -52,6 +53,7 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
 
     # Day counter for diary-style keys: {days_ago: next_index}
     day_counter: dict[int, int] = defaultdict(int)
+    consolidated_keys: set[str] = set()
 
     try:
         for thread_id in thread_ids:
@@ -65,6 +67,12 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
 
             chat_id = state.chat_id
             channel_name = state.channel
+
+            from src.tools.memory_tools import set_memory_session
+
+            ct = getattr(state, "chat_type", "p2p")
+            gid = chat_id if ct != "p2p" else ""
+            set_memory_session(ct, gid)
 
             # Decide whether to run expensive consolidation
             should_consolidate = True
@@ -93,6 +101,7 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
                     summary = ""
                 else:
                     result["sessions_processed"] += 1
+                    consolidated_keys.add(re.sub(r":s\d+$", "", thread_id))
                     if summary:
                         if "memory" in summary.lower() or "saved" in summary.lower():
                             result["memories_saved"] += 1
@@ -114,15 +123,14 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
             else:
                 result["sessions_skipped"] += 1
     finally:
-        # 单用户 bot:整理跑完后给 DM 开一个新会话(单纯开新会话,非轮换)。
-        # 不在循环里 per-thread 开——那会让同一用户一次造 N 个。旧会话数据仍在 store。
         registry = getattr(container, "session_registry", None)
         if registry is not None:
-            try:
-                sid = await registry.new_session("qq:dm")
-                logger.info("Consolidation: opened new session %s for qq:dm", sid)
-            except Exception as e:
-                logger.error("Consolidation: failed to open new session: %s", e)
+            for legacy in consolidated_keys:
+                try:
+                    sid = await registry.new_session(legacy)
+                    logger.info("Consolidation: opened new session %s for %s", sid, legacy)
+                except Exception as e:
+                    logger.error("Consolidation: failed to open new session for %s: %s", legacy, e)
         if agent_loop:
             agent_loop.invalidate_memory_cache()
 

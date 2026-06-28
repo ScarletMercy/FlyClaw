@@ -127,8 +127,8 @@ class AgentLoop:
         # Keyed by thread_id so each session gets its own frozen prompt.
         self._system_prompt_cache: dict[str, str] = {}
 
-        self._memory_summary_cache: str = ""
-        self._memory_summary_queried: bool = False
+        self._memory_summary_cache: dict[str, str] = {}
+        self._memory_summary_queried: set[str] = set()
 
         gr_cfg = None
         if config and hasattr(config, "tools"):
@@ -220,8 +220,8 @@ class AgentLoop:
             await self._client.close()
 
     def invalidate_memory_cache(self) -> None:
-        self._memory_summary_cache = ""
-        self._memory_summary_queried = False
+        self._memory_summary_cache.clear()
+        self._memory_summary_queried.clear()
 
     def is_thread_busy(self, thread_id: str) -> bool:
         lock = self._store._locks.get(thread_id)
@@ -441,6 +441,12 @@ class AgentLoop:
         if state is None:
             raise RuntimeError(f"No saved state for thread {thread_id}")
 
+        from src.tools.memory_tools import set_memory_session
+
+        ct = getattr(state, "chat_type", "p2p")
+        gid = getattr(state, "chat_id", "") if ct != "p2p" else ""
+        set_memory_session(ct, gid)
+
         pending = state.pending_approval or {}
         pending_tc_id = pending.get("tool_call_id", "")
 
@@ -479,19 +485,24 @@ class AgentLoop:
                 if pending_tool in ("memory_delete", "memory") and memory_keys:
                     deleted = []
                     try:
-                        from src.tools.memory_tools import get_memory_store
+                        from src.tools.memory_tools import GroupMemoryStore, get_memory_scope, get_memory_store
 
-                        mem_store = await get_memory_store()
+                        ct, gid = get_memory_scope()
+                        mem_store = await get_memory_store(chat_type=ct)
+                        is_group = isinstance(mem_store, GroupMemoryStore)
                         for k in memory_keys:
-                            await mem_store.forget(k)
+                            if is_group:
+                                await mem_store.forget(k, group_id=gid)
+                            else:
+                                await mem_store.forget(k)
                             deleted.append(k)
                     except Exception as exc:
                         import logging as _log
 
                         _log.getLogger("flyclaw.loop").warning("memory delete resume failed: %s", exc)
                     if deleted:
-                        self._memory_summary_cache = ""
-                        self._memory_summary_queried = False
+                        self._memory_summary_cache.clear()
+                        self._memory_summary_queried.clear()
                     result_content = json.dumps(
                         {"ok": True, "deleted": deleted, "count": len(deleted)},
                         ensure_ascii=False,
@@ -879,15 +890,21 @@ class AgentLoop:
         )
 
     async def _fetch_memory_summary(self) -> str:
-        if self._memory_summary_queried:
-            return self._memory_summary_cache
-        try:
-            from src.tools.memory_tools import get_memory_store
+        from src.tools.memory_tools import GroupMemoryStore, get_memory_scope, get_memory_store
 
-            store = await get_memory_store()
-            items = await store.list_all(limit=20)
+        chat_type, group_id = get_memory_scope()
+        scope_key = "dm" if chat_type == "p2p" else group_id
+
+        if scope_key in self._memory_summary_queried:
+            return self._memory_summary_cache.get(scope_key, "")
+        try:
+            store = await get_memory_store(chat_type=chat_type)
+            if isinstance(store, GroupMemoryStore):
+                items = await store.list_all(limit=20, group_id=group_id)
+            else:
+                items = await store.list_all(limit=20)
             if not items:
-                self._memory_summary_queried = True
+                self._memory_summary_queried.add(scope_key)
                 return ""
             lines = ["## 已知记忆"]
             for item in items:
@@ -898,11 +915,11 @@ class AgentLoop:
                 "以上是已加载的主要部分的记忆，直接基于这些信息回答即可，除非用户表示不足或要求更多回忆，否则无需再次搜索。如果需要修改或补充，使用 memory 工具。"
             )
             result = "\n".join(lines)
-            self._memory_summary_cache = result
-            self._memory_summary_queried = True
+            self._memory_summary_cache[scope_key] = result
+            self._memory_summary_queried.add(scope_key)
             return result
         except Exception:
-            return self._memory_summary_cache or ""
+            return self._memory_summary_cache.get(scope_key, "")
 
     def _build_system_prompt(self, state: AgentState, active_tools: list[ToolDef], memory_summary: str = "") -> str:
         from src.prompt import _build_platform_hints, _build_tool_index, _build_sandbox_hints
@@ -1171,8 +1188,8 @@ class AgentLoop:
             tool_name, args, success=True, result=result if isinstance(result, str) else ""
         )
         if tool_name == "memory":
-            self._memory_summary_cache = ""
-            self._memory_summary_queried = False
+            self._memory_summary_cache.clear()
+            self._memory_summary_queried.clear()
         await emit_async(
             "tool.exec_completed",
             thread_id=thread_id,

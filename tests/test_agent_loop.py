@@ -1338,7 +1338,7 @@ class TestMemorySummaryQueried:
         assert result2 == result1
         # store.list_all should only be called once
         mock_store.list_all.assert_called_once()
-        assert loop._memory_summary_queried is True
+        assert "dm" in loop._memory_summary_queried
 
     @pytest.mark.asyncio
     async def test_empty_items_sets_flag(self, store, config):
@@ -1352,7 +1352,7 @@ class TestMemorySummaryQueried:
             result1 = await loop._fetch_memory_summary()
 
         assert result1 == ""
-        assert loop._memory_summary_queried is True
+        assert "dm" in loop._memory_summary_queried
 
         # Second call should not hit store
         with patch("src.tools.memory_tools.get_memory_store") as mock_get:
@@ -1369,7 +1369,7 @@ class TestMemorySummaryQueried:
             result = await loop._fetch_memory_summary()
 
         assert result == ""
-        assert loop._memory_summary_queried is False
+        assert "dm" not in loop._memory_summary_queried
 
         # Next call should retry (call get_memory_store again)
         mock_store = AsyncMock()
@@ -1377,33 +1377,33 @@ class TestMemorySummaryQueried:
         with patch("src.tools.memory_tools.get_memory_store", return_value=mock_store):
             result2 = await loop._fetch_memory_summary()
         assert "recovered" in result2
-        assert loop._memory_summary_queried is True
+        assert "dm" in loop._memory_summary_queried
 
     @pytest.mark.asyncio
     async def test_invalidate_resets_both(self, store, config):
         """invalidate_memory_cache clears cache content and resets flag."""
         loop = _make_loop(store, config)
-        loop._memory_summary_cache = "## cached summary"
-        loop._memory_summary_queried = True
+        loop._memory_summary_cache = {"dm": "## cached summary"}
+        loop._memory_summary_queried = {"dm"}
 
         loop.invalidate_memory_cache()
 
-        assert loop._memory_summary_cache == ""
-        assert loop._memory_summary_queried is False
+        assert loop._memory_summary_cache.get("dm", "") == ""
+        assert "dm" not in loop._memory_summary_queried
 
     @pytest.mark.asyncio
     async def test_memory_tool_usage_invalidates(self, store, config):
         """After memory tool execution, cache is cleared for fresh data."""
         loop = _make_loop(store, config)
-        loop._memory_summary_cache = "## old summary"
-        loop._memory_summary_queried = True
+        loop._memory_summary_cache = {"dm": "## old summary"}
+        loop._memory_summary_queried = {"dm"}
 
         # Simulate what happens in _execute_tools_inner after memory tool use
-        loop._memory_summary_cache = ""
-        loop._memory_summary_queried = False
+        loop._memory_summary_cache.clear()
+        loop._memory_summary_queried.clear()
 
-        assert loop._memory_summary_cache == ""
-        assert loop._memory_summary_queried is False
+        assert loop._memory_summary_cache.get("dm", "") == ""
+        assert "dm" not in loop._memory_summary_queried
 
         # Next fetch should re-query store
         mock_store = AsyncMock()
@@ -1411,6 +1411,67 @@ class TestMemorySummaryQueried:
         with patch("src.tools.memory_tools.get_memory_store", return_value=mock_store):
             result = await loop._fetch_memory_summary()
         assert "fresh data" in result
+
+
+class TestMemorySummaryScope:
+    """群 scope 与 DM scope 的记忆注入隔离。
+
+    _fetch_memory_summary 是提示词记忆注入的数据源——它返回什么,
+    _build_system_prompt 就把什么注入 system prompt。这里专测它的群分支
+    (isinstance GroupMemoryStore → list_all(group_id=…)) 与跨 scope 独立缓存,
+    补上 TestMemorySummaryQueried 只覆盖 DM 的缺口。
+    """
+
+    @pytest.mark.asyncio
+    async def test_group_scope_fetches_group_memories_with_group_id(self, store, config):
+        """群 scope 下取记忆带 group_id 过滤, scope_key 落群而非 dm。"""
+        from src.tools.memory_tools import GroupMemoryStore, set_memory_session
+
+        loop = _make_loop(store, config)
+        grp_store = MagicMock(spec=GroupMemoryStore)
+        grp_store.list_all = AsyncMock(return_value=[{"category": "fact", "content": "群G1规则:禁止广告"}])
+
+        set_memory_session("group", "G1")
+        try:
+            with patch("src.tools.memory_tools.get_memory_store", return_value=grp_store):
+                result = await loop._fetch_memory_summary()
+
+            grp_store.list_all.assert_awaited_once()
+            assert grp_store.list_all.call_args.kwargs.get("group_id") == "G1"
+            assert "禁止广告" in result
+            assert "G1" in loop._memory_summary_queried
+            assert "dm" not in loop._memory_summary_queried
+        finally:
+            set_memory_session("p2p", "")
+
+    @pytest.mark.asyncio
+    async def test_dm_and_group_scopes_cached_and_served_independently(self, store, config):
+        """DM 与群两 scope 各自缓存、互不串: DM 注入不含群记忆, 群注入不含 DM 记忆。"""
+        from src.tools.memory_tools import GroupMemoryStore, set_memory_session
+
+        loop = _make_loop(store, config)
+        dm_store = AsyncMock()
+        dm_store.list_all.return_value = [{"category": "fact", "content": "DM专属事实X"}]
+        grp_store = MagicMock(spec=GroupMemoryStore)
+        grp_store.list_all = AsyncMock(return_value=[{"category": "fact", "content": "群专属事实Y"}])
+
+        set_memory_session("p2p", "")
+        with patch("src.tools.memory_tools.get_memory_store", return_value=dm_store):
+            dm_result = await loop._fetch_memory_summary()
+
+        set_memory_session("group", "G1")
+        try:
+            with patch("src.tools.memory_tools.get_memory_store", return_value=grp_store):
+                grp_result = await loop._fetch_memory_summary()
+
+            # 注入内容按 scope 隔离
+            assert "DM专属事实X" in dm_result and "群专属事实Y" not in dm_result
+            assert "群专属事实Y" in grp_result and "DM专属事实X" not in grp_result
+            # 两 scope 各自缓存
+            assert "dm" in loop._memory_summary_queried
+            assert "G1" in loop._memory_summary_queried
+        finally:
+            set_memory_session("p2p", "")
 
 
 class TestUsageAccumulation:

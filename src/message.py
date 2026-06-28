@@ -324,6 +324,10 @@ class MessageHandler:
 
             set_task_context(chat_id=chat_id, sender_id=sender_id, thread_id=thread_id)
 
+            from src.tools.memory_tools import set_memory_session
+
+            set_memory_session(chat_type, chat_id if chat_type != "p2p" else "")
+
             from src.agent.state import AgentState
 
             system_prompt = self._container.config.agents.system_prompt

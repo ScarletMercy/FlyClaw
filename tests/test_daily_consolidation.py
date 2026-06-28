@@ -145,8 +145,8 @@ class TestSessionFiltering:
         assert result["sessions_skipped"] == 1
 
     @pytest.mark.asyncio
-    async def test_opens_one_dm_session_even_when_all_skipped(self):
-        """整理跑完后,即便所有线程都不够格被跳过,仍给 qq:dm 开恰好一个新会话(单用户,非轮换)。"""
+    async def test_no_new_session_when_all_skipped(self):
+        """所有线程被跳过时,不给任何 session 开新会话。"""
         store = MagicMock()
         state = _make_state(_make_messages(2, 2))  # < min_messages → skipped
         store.list_threads = AsyncMock(return_value=["t1"])
@@ -163,7 +163,7 @@ class TestSessionFiltering:
         result = await run_daily_consolidation(container)
 
         assert result["sessions_skipped"] == 1
-        registry.new_session.assert_called_once_with("qq:dm")
+        registry.new_session.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_skip_none_state(self):
@@ -230,7 +230,7 @@ class TestNormalFlow:
 
             await run_daily_consolidation(container)
 
-        registry.new_session.assert_called_once_with("qq:dm")
+        registry.new_session.assert_called_once_with("qq:group:abc")
 
     @pytest.mark.asyncio
     async def test_invalidate_memory_cache_called(self):
@@ -257,30 +257,30 @@ class TestNormalFlow:
 
 
 class TestNewSessionCreation:
-    """整理后开新会话(单用户 bot):无论多少线程合格,run 后只给 qq:dm 开恰好 1 个新会话。
+    """整理后开新会话:每个被整理 session 的 legacy_thread_id 开 1 个新会话。
 
-    旧逻辑 per-thread 开 → 一次造 N 个;现改为循环后给 qq:dm 开一次。
+    同一 legacy 的多个 session_id 不重复开（set 去重）。
     """
 
     @pytest.mark.asyncio
-    async def test_opens_exactly_one_dm_session_regardless_of_threads(self):
+    async def test_one_new_session_per_legacy_thread_id(self):
+        """同一 legacy_thread_id 的多个 session_id 只开 1 个新会话（set 去重）。"""
         import time as _time
         from src.agent.state import MemoryStateStore
         from src.session.tracker import SessionRegistry
 
         store = MemoryStateStore()
         now = _time.time()
-        # 生产真实形态:默认线程 + 旧多会话混存,旧逻辑会各开一个
-        for tid in ("qq:user:ABC123", "qq:s1:ABC123", "qq:s2:ABC123"):
+        # 3 个线程，后两个的 legacy 都是 "qq:user:ABC123"（:s1/:s2 后缀在结尾）
+        for tid in ("qq:user:ABC123", "qq:user:ABC123:s1", "qq:user:ABC123:s2"):
             await store.save(tid, AgentState(messages=_consolidation_msgs(), chat_id="x", channel="qq", created_at=now))
         reg = SessionRegistry()
         result = await _run_consolidation(store, reg)
 
         # 记忆提取对所有合格线程照常执行
         assert result["sessions_processed"] == 3, result
-        # 但只给 qq:dm 开恰好 1 个新会话(单用户,非 per-thread/per-user)
-        sessions = reg.list_sessions("qq:dm")
-        assert len(sessions) == 1, sessions
+        # set 去重：3 个线程同一 legacy，只开 1 个新会话
+        assert len(reg.list_sessions("qq:user:ABC123")) == 1
 
 
 # ─── Notifications ───────────────────────────────────────────────────────────
