@@ -1025,6 +1025,8 @@ class QQChannel(Channel):
 
     async def _typing_loop(self, chat_id: str, msg_id: str | None = None):
         """Send typing indicator every 50 seconds (QQ timeout is 60s)."""
+        _t_start = _time.monotonic()
+        logger.info("[typing] loop start: chat=%s", chat_id)
         try:
             while True:
                 await self._send_typing(chat_id, msg_id)
@@ -1034,6 +1036,11 @@ class QQChannel(Channel):
         except Exception as e:
             logger.debug("Typing loop error: %s", e)
         finally:
+            logger.info(
+                "[typing] loop stop: chat=%s duration=%.0fs",
+                chat_id,
+                _time.monotonic() - _t_start,
+            )
             if self._typing_tasks.get(chat_id) is asyncio.current_task():
                 self._typing_tasks.pop(chat_id, None)
 

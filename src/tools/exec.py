@@ -255,6 +255,7 @@ async def _exec_streaming(
     err_buf: list[bytes] = []
     readers_remaining = 0
     killed = False
+    _last_heartbeat = start
 
     async def _read_stream(stream: asyncio.StreamReader, buffer: list[bytes]):
         nonlocal readers_remaining
@@ -296,9 +297,31 @@ async def _exec_streaming(
     try:
         deadline = start + timeout
         while True:
+            # Heartbeat: log every 30s so long-running commands are observable
+            _now = time.monotonic()
+            if _now - _last_heartbeat >= 30:
+                _last_heartbeat = _now
+                logger.info(
+                    "[exec-heartbeat] elapsed=%.0fs out=%dB err=%dB rc=%s cmd=%.120s",
+                    _now - start,
+                    sum(len(b) for b in out_buf),
+                    sum(len(b) for b in err_buf),
+                    proc.returncode,
+                    command,
+                )
+
             # Check if process already exited
             if proc.returncode is not None:
-                await asyncio.gather(*tasks, return_exceptions=True)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True),
+                        timeout=2.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "[exec-audit] reader drain timed out after 2s (child may hold pipe), cmd=%.120s",
+                        command,
+                    )
                 break
 
             # Check overall timeout
@@ -316,7 +339,16 @@ async def _exec_streaming(
 
             # Re-check process exit after waiting
             if proc.returncode is not None:
-                await asyncio.gather(*tasks, return_exceptions=True)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*tasks, return_exceptions=True),
+                        timeout=2.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "[exec-audit] reader drain timed out after 2s (child may hold pipe), cmd=%.120s",
+                        command,
+                    )
                 break
 
             if not got_output:
@@ -700,7 +732,9 @@ async def exec_command(
             return await _exec_streaming(proc, command, timeout, no_output_timeout, max_output, start)
         else:
             # Original buffered mode (backward compatible)
+            logger.info("[exec] communicate start: timeout=%ds cmd=%.120s", timeout, command)
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            logger.info("[exec] communicate done: exit=%s", proc.returncode)
             exit_code = proc.returncode or 0
 
             output_parts = []

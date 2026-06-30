@@ -316,6 +316,15 @@ class AgentLoop:
                 (_time.monotonic() - start_ts) * 1000,
                 len(messages),
             )
+            if response is not None:
+                _tc_count = len(response.tool_calls) if response.tool_calls else 0
+                _content_len = len(response.content) if response.content else 0
+                logger.info(
+                    "[round=%d] model returned: tool_calls=%d content_len=%d",
+                    tool_round,
+                    _tc_count,
+                    _content_len,
+                )
             if response is None:
                 if await self._check_interrupt(state, thread_id, start_ts, tool_round):
                     return state
@@ -374,8 +383,27 @@ class AgentLoop:
 
             # 6. Execute tool calls (always parallel)
             tool_round += 1
+            _tc_names = []
+            for _tc in response.tool_calls:
+                if isinstance(_tc, dict):
+                    _tc_names.append(_tc.get("function", {}).get("name", "?"))
+                else:
+                    _tc_names.append(getattr(_tc.function, "name", "?"))
+            logger.info(
+                "[round=%d] tool execution start: %d calls=%s",
+                tool_round,
+                len(response.tool_calls),
+                _tc_names,
+            )
+            _t_tools_exec = _time.monotonic()
             parallel_results = await self._execute_tools_parallel(
                 response.tool_calls, state, thread_id, interrupt_event=ie
+            )
+            logger.info(
+                "[round=%d] tool execution done: %d results duration=%.0fms",
+                tool_round,
+                len(parallel_results),
+                (_time.monotonic() - _t_tools_exec) * 1000,
             )
             for tc_id, result in parallel_results:
                 state.append_message(
@@ -1059,8 +1087,20 @@ class AgentLoop:
         # inbound handler sets it. Without this the two tools disagreed.
         _tid_token = _current_thread_id.set(thread_id)
         try:
+            logger.info(
+                "[tool] start: %s timeout=%ds args=%.150s",
+                tool_name,
+                tool_def.timeout,
+                args_preview,
+            )
             result = await asyncio.wait_for(tool_def.execute(args), timeout=tool_def.timeout)
             duration_ms = (_time.monotonic() - start) * 1000
+            logger.info(
+                "[tool] done: %s duration=%.0fms result_len=%d",
+                tool_name,
+                duration_ms,
+                len(result) if isinstance(result, str) else 0,
+            )
             return await self._record_tool_success(
                 tool_name=tool_name,
                 args=args,
@@ -1221,6 +1261,13 @@ class AgentLoop:
                 results[idx] = exc
 
         tasks = [asyncio.create_task(_run_one(i, tc)) for i, tc in enumerate(tool_calls)]
+        _tc_names = []
+        for _tc in tool_calls:
+            if isinstance(_tc, dict):
+                _tc_names.append(_tc.get("function", {}).get("name", "?"))
+            else:
+                _tc_names.append(getattr(_tc.function, "name", "?"))
+        logger.info("[parallel] dispatching %d tools: %s", len(tool_calls), _tc_names)
         gather_task = asyncio.gather(*tasks, return_exceptions=True)
 
         if interrupt_event is not None:
@@ -1244,6 +1291,7 @@ class AgentLoop:
         else:
             await gather_task
 
+        logger.info("[parallel] gather done: %d results", len(results))
         final: list[tuple[str, str]] = []
         for i, r in enumerate(results):
             tc_id = tool_calls[i].id if hasattr(tool_calls[i], "id") else tool_calls[i].get("id", "")
