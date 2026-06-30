@@ -14,6 +14,7 @@ from typing import Literal, Optional
 import aiosqlite
 
 from src.agent.tooldef import ToolDef
+from src.utils.tz import now_iso
 
 logger = logging.getLogger("flyclaw.memory_tools")
 
@@ -115,12 +116,14 @@ class MemoryStore:
                 content TEXT NOT NULL,
                 category TEXT NOT NULL DEFAULT 'fact',
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                updated_ts REAL NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
         """)
         await self._ensure_fts()
         await self._migrate_category_prefix()
+        await self._migrate_add_updated_ts()
         await self._conn.commit()
         logger.info("MemoryStore initialized: %s (fts=%s)", self.db_path, self._fts_available)
 
@@ -168,6 +171,28 @@ class MemoryStore:
         if migrated:
             logger.info("Migrated %d memories: stripped [category] prefix from content", migrated)
 
+    async def _migrate_add_updated_ts(self) -> None:
+        """Add updated_ts REAL column (epoch seconds) for correct sorting, backfilling from updated_at."""
+        cursor = await self._conn.execute("PRAGMA table_info(memories)")
+        cols = {row["name"] for row in await cursor.fetchall()}
+        if "updated_ts" in cols:
+            return
+        await self._conn.execute("ALTER TABLE memories ADD COLUMN updated_ts REAL NOT NULL DEFAULT 0")
+        cursor = await self._conn.execute("SELECT rowid, updated_at FROM memories")
+        rows = await cursor.fetchall()
+        for row in rows:
+            try:
+                dt = datetime.fromisoformat(row["updated_at"])
+                if dt.tzinfo is None:
+                    dt = dt.astimezone()
+                ts = dt.timestamp()
+            except Exception:
+                ts = 0.0
+            await self._conn.execute("UPDATE memories SET updated_ts = ? WHERE rowid = ?", (ts, row["rowid"]))
+        await self._conn.commit()
+        if rows:
+            logger.info("Backfilled updated_ts for %d memories", len(rows))
+
     async def close(self) -> None:
         if self._conn:
             await self._conn.close()
@@ -202,13 +227,15 @@ class MemoryStore:
             else:
                 key = self._auto_key(content)
 
-        now = datetime.now(timezone.utc).isoformat()
+        dt = datetime.now().astimezone()
+        now = dt.replace(microsecond=0).isoformat()
+        now_ts = dt.timestamp()
         await self._conn.execute(
-            "INSERT INTO memories (key, content, category, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?) "
+            "INSERT INTO memories (key, content, category, created_at, updated_at, updated_ts) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(key) DO UPDATE SET content=excluded.content, "
-            "category=excluded.category, updated_at=excluded.updated_at",
-            (key, content, category, now, now),
+            "category=excluded.category, updated_at=excluded.updated_at, updated_ts=excluded.updated_ts",
+            (key, content, category, now, now, now_ts),
         )
         # FTS sync only needed when content actually changed (new insert, not dedup)
         if not is_dedup and self._fts_available:
@@ -269,12 +296,12 @@ class MemoryStore:
                     pass
             cursor = await self._conn.execute(
                 "SELECT key, content, category, updated_at FROM memories "
-                "WHERE content LIKE ? OR key LIKE ? ORDER BY updated_at DESC LIMIT ?",
+                "WHERE content LIKE ? OR key LIKE ? ORDER BY updated_ts DESC LIMIT ?",
                 (f"%{query}%", f"%{query}%", limit),
             )
         else:
             cursor = await self._conn.execute(
-                "SELECT key, content, category, updated_at FROM memories ORDER BY updated_at DESC LIMIT ?",
+                "SELECT key, content, category, updated_at FROM memories ORDER BY updated_ts DESC LIMIT ?",
                 (limit,),
             )
         rows = await cursor.fetchall()
@@ -312,12 +339,14 @@ class GroupMemoryStore(MemoryStore):
                 group_id TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
+                updated_ts REAL NOT NULL DEFAULT 0,
                 PRIMARY KEY (key, group_id)
             );
             CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
             CREATE INDEX IF NOT EXISTS idx_memories_group ON memories(group_id);
         """)
         await self._ensure_fts()
+        await self._migrate_add_updated_ts()
         await self._conn.commit()
         logger.info("GroupMemoryStore initialized: %s (fts=%s)", self.db_path, self._fts_available)
 
@@ -368,13 +397,15 @@ class GroupMemoryStore(MemoryStore):
             else:
                 key = self._auto_key(content)
 
-        now = datetime.now(timezone.utc).isoformat()
+        dt = datetime.now().astimezone()
+        now = dt.replace(microsecond=0).isoformat()
+        now_ts = dt.timestamp()
         await self._conn.execute(
-            "INSERT INTO memories (key, content, category, group_id, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
+            "INSERT INTO memories (key, content, category, group_id, created_at, updated_at, updated_ts) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(key, group_id) DO UPDATE SET content=excluded.content, "
-            "category=excluded.category, updated_at=excluded.updated_at",
-            (key, content, category, group_id, now, now),
+            "category=excluded.category, updated_at=excluded.updated_at, updated_ts=excluded.updated_ts",
+            (key, content, category, group_id, now, now, now_ts),
         )
         if not is_dedup and self._fts_available:
             fts_key = f"{group_id}:{key}"
@@ -448,26 +479,26 @@ class GroupMemoryStore(MemoryStore):
                 cursor = await self._conn.execute(
                     "SELECT key, content, category, updated_at FROM memories "
                     "WHERE (content LIKE ? OR key LIKE ?) AND group_id = ? "
-                    "ORDER BY updated_at DESC LIMIT ?",
+                    "ORDER BY updated_ts DESC LIMIT ?",
                     (f"%{query}%", f"%{query}%", group_id, limit),
                 )
             else:
                 cursor = await self._conn.execute(
                     "SELECT key, content, category, updated_at FROM memories "
-                    "WHERE content LIKE ? OR key LIKE ? ORDER BY updated_at DESC LIMIT ?",
+                    "WHERE content LIKE ? OR key LIKE ? ORDER BY updated_ts DESC LIMIT ?",
                     (f"%{query}%", f"%{query}%", limit),
                 )
         else:
             if group_id is not None:
                 cursor = await self._conn.execute(
                     "SELECT key, content, category, updated_at FROM memories "
-                    "WHERE group_id = ? ORDER BY updated_at DESC LIMIT ?",
+                    "WHERE group_id = ? ORDER BY updated_ts DESC LIMIT ?",
                     (group_id, limit),
                 )
             else:
                 cursor = await self._conn.execute(
                     "SELECT key, content, category, updated_at, group_id FROM memories "
-                    "ORDER BY updated_at DESC LIMIT ?",
+                    "ORDER BY updated_ts DESC LIMIT ?",
                     (limit,),
                 )
                 rows = await cursor.fetchall()

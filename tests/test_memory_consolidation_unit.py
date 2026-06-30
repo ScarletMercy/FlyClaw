@@ -90,6 +90,20 @@ class TestFriendlyAge:
         # +09:00 = 2026-06-11T03:00:00 UTC
         assert _friendly_age("2026-06-11T12:00:00+09:00", now) == "1天前"
 
+    def test_naive_treated_as_local(self):
+        """line 27 naive 兜底当本地(和 line 215 now 一致),跨午夜边界验证。
+
+        naive 2026-06-27T10:00:00 当本地(+08:00) = UTC 02:00,
+        now = 2026-06-28T11:00:00+08:00 = UTC 03:00,差 25h → '1天前'。
+        若 line 27 仍是 UTC 解释,差 17h → '0天前',此用例可区分。
+        """
+        from src.utils.tz import get_tz
+
+        tz = get_tz("Asia/Shanghai")
+        now = datetime(2026, 6, 28, 11, 0, tzinfo=tz)
+        naive_str = "2026-06-27T10:00:00"
+        assert _friendly_age(naive_str, now) == "1天前"
+
 
 # ─── _extract_json ────────────────────────────────────────────────────────────
 

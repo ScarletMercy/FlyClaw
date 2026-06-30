@@ -6,7 +6,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
-_DEFAULT_TZ = "Asia/Shanghai"
+from src.utils.tz import get_tz
+
+_DEFAULT_TZ = "local"
 
 
 class CronSchedule(BaseModel):
@@ -29,14 +31,13 @@ class CronSchedule(BaseModel):
     def to_apscheduler_trigger(self):
         if self.kind == "at":
             from apscheduler.triggers.date import DateTrigger
-            import zoneinfo
 
             raw = self.at or ""
             # Try ISO format first (handles timezone-aware strings)
             try:
                 dt = datetime.fromisoformat(raw)
                 if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=zoneinfo.ZoneInfo(self.tz or _DEFAULT_TZ))
+                    dt = dt.replace(tzinfo=get_tz(self.tz or _DEFAULT_TZ))
                 return DateTrigger(run_date=dt)
             except ValueError:
                 pass
@@ -44,7 +45,7 @@ class CronSchedule(BaseModel):
             for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
                 try:
                     dt = datetime.strptime(raw, fmt)
-                    dt = dt.replace(tzinfo=zoneinfo.ZoneInfo(self.tz or _DEFAULT_TZ))
+                    dt = dt.replace(tzinfo=get_tz(self.tz or _DEFAULT_TZ))
                     return DateTrigger(run_date=dt)
                 except ValueError:
                     continue
@@ -52,11 +53,12 @@ class CronSchedule(BaseModel):
         elif self.kind == "every":
             from apscheduler.triggers.interval import IntervalTrigger
 
-            return IntervalTrigger(seconds=self.every_seconds or 60, timezone=self.tz)
+            return IntervalTrigger(seconds=self.every_seconds or 60, timezone=get_tz(self.tz or _DEFAULT_TZ))
         elif self.kind == "cron":
             from apscheduler.triggers.cron import CronTrigger
 
             parts = (self.expr or "* * * * *").split()
+            tz = get_tz(self.tz or _DEFAULT_TZ)
             if len(parts) == 5:
                 return CronTrigger(
                     minute=parts[0],
@@ -64,9 +66,9 @@ class CronSchedule(BaseModel):
                     day=parts[2],
                     month=parts[3],
                     day_of_week=parts[4],
-                    timezone=self.tz,
+                    timezone=tz,
                 )
-            return CronTrigger.from_crontab(self.expr or "* * * * *", timezone=self.tz)
+            return CronTrigger.from_crontab(self.expr or "* * * * *", timezone=tz)
         raise ValueError(f"Unknown schedule kind: {self.kind}")
 
 

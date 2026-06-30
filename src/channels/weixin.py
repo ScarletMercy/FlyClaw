@@ -19,6 +19,7 @@ import struct
 import tempfile
 import textwrap
 import time
+from src.utils.tz import now_iso
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -235,7 +236,7 @@ async def save_weixin_account(
         "token": token,
         "base_url": base_url,
         "user_id": user_id,
-        "saved_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "saved_at": now_iso(),
     }
     path = _account_file(account_id)
     await _atomic_json_write(path, payload)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime, timezone
+from src.utils.tz import now_iso
 from pathlib import Path
 
 from src.security.credential_patterns import CREDENTIAL_PATTERNS
@@ -782,7 +782,7 @@ def scan_skill(skill_path: Path, source: str = "community") -> ScanResult:
         trust_level=trust_level,
         verdict=verdict,
         findings=all_findings,
-        scanned_at=datetime.now(timezone.utc).isoformat(),
+        scanned_at=now_iso(),
         summary=summary,
     )
 

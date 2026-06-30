@@ -12,7 +12,7 @@ import json
 import logging
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 logger = logging.getLogger("flyclaw.memory_consolidation")
@@ -24,7 +24,7 @@ def _friendly_age(updated_at: str | None, now: datetime) -> str:
     try:
         dt = datetime.fromisoformat(updated_at)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=now.tzinfo)
         days = (now - dt).days
         if days <= 0:
             return "今天"
@@ -212,7 +212,7 @@ async def run_memory_consolidation(container: Any) -> dict[str, Any]:
     from src.agent.client import ChatClient
     from src.tools.memory_tools import GroupMemoryStore, get_memory_store
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now().astimezone()
     today_str = now.strftime("%Y-%m-%d")
 
     client = ChatClient(

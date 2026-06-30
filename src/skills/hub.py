@@ -12,7 +12,7 @@ import time
 import zipfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from src.utils.tz import now_iso
 from pathlib import Path, PurePosixPath
 from typing import Any, Optional, Union
 from urllib.parse import urlparse
@@ -940,8 +940,8 @@ class HubLockFile:
             "install_path": install_path,
             "files": files,
             "metadata": metadata or {},
-            "installed_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "installed_at": now_iso(),
+            "updated_at": now_iso(),
         }
         self.save(data)
 
@@ -967,7 +967,7 @@ def append_audit_log(
     extra: str = "",
 ) -> None:
     _audit_log().parent.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = now_iso()
     parts = [timestamp, action, skill_name, f"{source}:{trust_level}", verdict]
     if extra:
         parts.append(extra)

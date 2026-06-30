@@ -11,7 +11,7 @@ import json
 import os
 import logging
 import re
-from datetime import datetime
+from src.utils.tz import now_iso
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -362,16 +362,16 @@ class SkillManager:
             usage_data[skill_name]["created_by"] = created_by
 
         record = usage_data[skill_name]
-        record["last_used_at"] = datetime.now().isoformat()
+        record["last_used_at"] = now_iso()
 
         if action == "created":
             record["created_by"] = created_by
         elif action == "edited":
             record["patch_count"] = record.get("patch_count", 0) + 1
-            record["last_patched_at"] = datetime.now().isoformat()
+            record["last_patched_at"] = now_iso()
         elif action == "viewed":
             record["view_count"] = record.get("view_count", 0) + 1
-            record["last_viewed_at"] = datetime.now().isoformat()
+            record["last_viewed_at"] = now_iso()
 
         await self._write_usage(usage_data)
 
@@ -383,19 +383,19 @@ class SkillManager:
     async def bump_view(self, skill_name: str) -> None:
         await self._mutate_usage(
             skill_name,
-            lambda r: (r.update(view_count=r.get("view_count", 0) + 1, last_viewed_at=datetime.now().isoformat()),),
+            lambda r: (r.update(view_count=r.get("view_count", 0) + 1, last_viewed_at=now_iso()),),
         )
 
     async def bump_use(self, skill_name: str) -> None:
         await self._mutate_usage(
             skill_name,
-            lambda r: (r.update(use_count=r.get("use_count", 0) + 1, last_used_at=datetime.now().isoformat()),),
+            lambda r: (r.update(use_count=r.get("use_count", 0) + 1, last_used_at=now_iso()),),
         )
 
     async def bump_patch(self, skill_name: str) -> None:
         await self._mutate_usage(
             skill_name,
-            lambda r: (r.update(patch_count=r.get("patch_count", 0) + 1, last_patched_at=datetime.now().isoformat()),),
+            lambda r: (r.update(patch_count=r.get("patch_count", 0) + 1, last_patched_at=now_iso()),),
         )
 
     async def mark_agent_created(self, skill_name: str) -> None:
@@ -419,7 +419,7 @@ class SkillManager:
             "created_by": None,
             "state": "active",
             "pinned": False,
-            "created_at": datetime.now().isoformat(),
+            "created_at": now_iso(),
             "archived_at": None,
         }
 

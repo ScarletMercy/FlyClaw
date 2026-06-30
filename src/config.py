@@ -113,7 +113,7 @@ class AgentConfig(BaseModel):
         }
     )
     subagent_max_depth: int = 2
-    timezone: str = "Asia/Shanghai"
+    timezone: str = "local"
     language: Literal["zh", "en"] = "zh"
     tool_progress_notifications: bool = False
     tool_output_cache_chars: int = 8000

@@ -18,6 +18,7 @@ from typing import Any, Optional
 
 from src.skills.manager import SkillManager
 from src.skills.types import Skill
+from src.utils.tz import now_iso
 
 logger = logging.getLogger("flyclaw.skills.curator")
 
@@ -107,7 +108,9 @@ class SkillCurator:
         if not self.state.get("last_review"):
             return self.review_interval_days + 1
         last = datetime.fromisoformat(self.state["last_review"])
-        return (datetime.now() - last).days
+        if last.tzinfo is None:
+            last = last.astimezone()
+        return (datetime.now().astimezone() - last).days
 
     async def review_skills(self, dry_run: bool = False) -> dict:
         """审查技能库，执行自动生命周期转换。"""
@@ -163,7 +166,7 @@ class SkillCurator:
                     }
                 )
 
-        self.state["last_review"] = datetime.now().isoformat()
+        self.state["last_review"] = now_iso()
         self.state["total_reviews"] = self.state.get("total_reviews", 0) + 1
         self._save_state()
 
@@ -241,7 +244,9 @@ class SkillCurator:
             return True
         try:
             last = datetime.fromisoformat(last_used)
-            return (datetime.now() - last) > timedelta(days=days)
+            if last.tzinfo is None:
+                last = last.astimezone()
+            return (datetime.now().astimezone() - last) > timedelta(days=days)
         except Exception:
             return True
 
@@ -249,7 +254,7 @@ class SkillCurator:
         def _set_state(record):
             record["state"] = new_state
             if new_state == "archived":
-                record["archived_at"] = datetime.now().isoformat()
+                record["archived_at"] = now_iso()
 
         await self.manager._mutate_usage(skill_name, _set_state)
 
@@ -275,7 +280,7 @@ class SkillCurator:
         suffix = "_dryrun" if dry_run else ""
         report_file = self.reports_dir / f"{ts}{suffix}.md"
         lines = [
-            f"# Curator Report — {datetime.now().isoformat()}",
+            f"# Curator Report — {now_iso()}",
             f"Dry run: {dry_run}",
             "",
             "## Automatic Transitions",

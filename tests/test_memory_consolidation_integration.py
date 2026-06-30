@@ -47,8 +47,8 @@ async def _seed_backdated(store: MemoryStore, key: str, content: str, category: 
     dt = datetime.now(timezone.utc) - timedelta(days=days_old)
     iso = dt.isoformat()
     await store._conn.execute(
-        "UPDATE memories SET created_at = ?, updated_at = ? WHERE key = ?",
-        (iso, iso, key),
+        "UPDATE memories SET created_at = ?, updated_at = ?, updated_ts = ? WHERE key = ?",
+        (iso, iso, dt.timestamp(), key),
     )
     await store._conn.commit()
 

@@ -14,8 +14,9 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
-import zoneinfo
 from typing import Any
+
+from src.utils.tz import get_tz
 
 logger = logging.getLogger("flyclaw.consolidation.scheduler")
 
@@ -46,8 +47,8 @@ class ConsolidationScheduler:
 
     async def _loop(self, container: Any) -> None:
         while True:
-            tz_name = getattr(container.config.agents, "timezone", "Asia/Shanghai")
-            tz = zoneinfo.ZoneInfo(tz_name)
+            tz_name = getattr(container.config.agents, "timezone", "local")
+            tz = get_tz(tz_name)
 
             now = datetime.datetime.now(tz)
             next_run = _next_occurrence(now, _TRIGGER_HOUR, _TRIGGER_MINUTE)

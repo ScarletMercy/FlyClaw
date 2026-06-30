@@ -76,13 +76,10 @@ class CronService:
                     logger.error("Failed to send failure alert: %s", e)
 
     def _get_scheduler_tz(self):
-        """Get the scheduler timezone from config."""
+        """Get the scheduler timezone from config (defaults to system local)."""
         from src.utils.tz import get_tz
 
         tz_name = self._config.agents.timezone if self._config else None
-        if not tz_name:
-            logger.warning("No timezone configured, falling back to UTC for scheduler")
-            tz_name = "UTC"
         return get_tz(tz_name)
 
     async def start(self):
@@ -212,7 +209,7 @@ class CronService:
                 max_instances=1,
             )
             try:
-                next_time = trigger.get_next_fire_time(None, datetime.now())
+                next_time = trigger.get_next_fire_time(None, datetime.now().astimezone())
                 job.next_run_at = next_time.timestamp() if next_time else None
             except Exception:
                 job.next_run_at = None

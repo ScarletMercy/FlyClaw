@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from src.utils.tz import now_iso
 from pathlib import Path
 from typing import Optional
 
@@ -102,7 +102,7 @@ class BaseMemoryStore(ABC):
         if not chunks:
             return 0
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = now_iso()
         meta_json = json.dumps(metadata) if metadata else None
         added = 0
 
