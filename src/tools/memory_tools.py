@@ -9,7 +9,7 @@ import re
 from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 import aiosqlite
 
@@ -90,6 +90,52 @@ _store_initialized: bool = False
 _group_store: GroupMemoryStore | None = None
 _group_initialized: bool = False
 _store_lock: asyncio.Lock = asyncio.Lock()
+
+# Archive searcher 单例（KV 旧记忆归档；vector on 时为 LanceMemoryStore，off 时为 MemoryStore FTS5-only）
+_dm_archive_searcher: Any = None
+_group_archive_searcher: Any = None
+_dm_archive_initialized: bool = False
+_group_archive_initialized: bool = False
+
+
+async def set_memory_archive_searcher(searcher: Any, chat_type: str) -> None:
+    """注册 archive searcher 单例（覆盖时 close 旧的，避免句柄泄漏）。"""
+    global _dm_archive_searcher, _group_archive_searcher, _dm_archive_initialized, _group_archive_initialized
+    old = _group_archive_searcher if chat_type == "group" else _dm_archive_searcher
+    if old is not None and old is not searcher:
+        try:
+            await old.close()
+        except Exception:
+            pass
+    if chat_type == "group":
+        _group_archive_searcher = searcher
+        _group_archive_initialized = searcher is not None
+    else:
+        _dm_archive_searcher = searcher
+        _dm_archive_initialized = searcher is not None
+
+
+async def get_memory_archive_searcher(chat_type: str = "p2p") -> Any:
+    """按 scope 返回对应 archive searcher；未启用返回 None。"""
+    if chat_type == "group":
+        return _group_archive_searcher if _group_archive_initialized else None
+    return _dm_archive_searcher if _dm_archive_initialized else None
+
+
+async def reset_memory_archive_searcher() -> None:
+    """关闭并重置 archive searcher 单例（热重载调）。"""
+    global _dm_archive_searcher, _group_archive_searcher, _dm_archive_initialized, _group_archive_initialized
+    for s in (_dm_archive_searcher, _group_archive_searcher):
+        if s is not None:
+            try:
+                await s.close()
+            except Exception:
+                pass
+    _dm_archive_searcher = None
+    _group_archive_searcher = None
+    _dm_archive_initialized = False
+    _group_archive_initialized = False
+
 
 _current_chat_type: ContextVar[str] = ContextVar("_current_chat_type", default="p2p")
 _current_group_id: ContextVar[str] = ContextVar("_current_group_id", default="")
@@ -271,12 +317,12 @@ class MemoryStore:
             )
         return json.dumps({"error": f"Memory '{key}' not found"}, ensure_ascii=False)
 
-    async def list_all(self, query: str = "", limit: int = 200) -> list[dict]:
+    async def list_all(self, query: str = "", limit: int = 200, offset: int = 0) -> list[dict]:
         if query:
             if self._fts_available and len(query) >= 3:
                 try:
                     cursor = await self._conn.execute(
-                        "SELECT m.key, m.content, m.category, m.updated_at FROM memories m "
+                        "SELECT m.key, m.content, m.category, m.updated_at, m.updated_ts FROM memories m "
                         "JOIN memories_fts f ON f.key = m.key "
                         "WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?",
                         (query, limit),
@@ -289,24 +335,31 @@ class MemoryStore:
                                 "content": r["content"],
                                 "category": r["category"],
                                 "updated_at": r["updated_at"],
+                                "updated_ts": r["updated_ts"],
                             }
                             for r in rows
                         ]
                 except Exception:
                     pass
             cursor = await self._conn.execute(
-                "SELECT key, content, category, updated_at FROM memories "
+                "SELECT key, content, category, updated_at, updated_ts FROM memories "
                 "WHERE content LIKE ? OR key LIKE ? ORDER BY updated_ts DESC LIMIT ?",
                 (f"%{query}%", f"%{query}%", limit),
             )
         else:
             cursor = await self._conn.execute(
-                "SELECT key, content, category, updated_at FROM memories ORDER BY updated_ts DESC LIMIT ?",
-                (limit,),
+                "SELECT key, content, category, updated_at, updated_ts FROM memories ORDER BY updated_ts DESC LIMIT ? OFFSET ?",
+                (limit, offset),
             )
         rows = await cursor.fetchall()
         return [
-            {"key": r["key"], "content": r["content"], "category": r["category"], "updated_at": r["updated_at"]}
+            {
+                "key": r["key"],
+                "content": r["content"],
+                "category": r["category"],
+                "updated_at": r["updated_at"],
+                "updated_ts": r["updated_ts"],
+            }
             for r in rows
         ]
 
@@ -441,13 +494,15 @@ class GroupMemoryStore(MemoryStore):
             )
         return json.dumps({"error": f"Memory '{key}' not found"}, ensure_ascii=False)
 
-    async def list_all(self, query: str = "", limit: int = 200, group_id: str | None = None) -> list[dict]:
+    async def list_all(
+        self, query: str = "", limit: int = 200, group_id: str | None = None, offset: int = 0
+    ) -> list[dict]:
         if query:
             if self._fts_available and len(query) >= 3:
                 try:
                     if group_id is not None:
                         cursor = await self._conn.execute(
-                            "SELECT m.key, m.content, m.category, m.updated_at "
+                            "SELECT m.key, m.content, m.category, m.updated_at, m.updated_ts "
                             "FROM memories m "
                             "JOIN memories_fts f ON f.key = (m.group_id || ':' || m.key) "
                             "WHERE memories_fts MATCH ? AND m.group_id = ? "
@@ -456,7 +511,7 @@ class GroupMemoryStore(MemoryStore):
                         )
                     else:
                         cursor = await self._conn.execute(
-                            "SELECT m.key, m.content, m.category, m.updated_at, m.group_id "
+                            "SELECT m.key, m.content, m.category, m.updated_at, m.group_id, m.updated_ts "
                             "FROM memories m "
                             "JOIN memories_fts f ON f.key = (m.group_id || ':' || m.key) "
                             "WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?",
@@ -470,6 +525,7 @@ class GroupMemoryStore(MemoryStore):
                                 "content": r["content"],
                                 "category": r["category"],
                                 "updated_at": r["updated_at"],
+                                "updated_ts": r["updated_ts"],
                             }
                             for r in rows
                         ]
@@ -477,29 +533,29 @@ class GroupMemoryStore(MemoryStore):
                     pass
             if group_id is not None:
                 cursor = await self._conn.execute(
-                    "SELECT key, content, category, updated_at FROM memories "
+                    "SELECT key, content, category, updated_at, updated_ts FROM memories "
                     "WHERE (content LIKE ? OR key LIKE ?) AND group_id = ? "
                     "ORDER BY updated_ts DESC LIMIT ?",
                     (f"%{query}%", f"%{query}%", group_id, limit),
                 )
             else:
                 cursor = await self._conn.execute(
-                    "SELECT key, content, category, updated_at FROM memories "
+                    "SELECT key, content, category, updated_at, updated_ts FROM memories "
                     "WHERE content LIKE ? OR key LIKE ? ORDER BY updated_ts DESC LIMIT ?",
                     (f"%{query}%", f"%{query}%", limit),
                 )
         else:
             if group_id is not None:
                 cursor = await self._conn.execute(
-                    "SELECT key, content, category, updated_at FROM memories "
-                    "WHERE group_id = ? ORDER BY updated_ts DESC LIMIT ?",
-                    (group_id, limit),
+                    "SELECT key, content, category, updated_at, updated_ts FROM memories "
+                    "WHERE group_id = ? ORDER BY updated_ts DESC LIMIT ? OFFSET ?",
+                    (group_id, limit, offset),
                 )
             else:
                 cursor = await self._conn.execute(
-                    "SELECT key, content, category, updated_at, group_id FROM memories "
-                    "ORDER BY updated_ts DESC LIMIT ?",
-                    (limit,),
+                    "SELECT key, content, category, updated_at, group_id, updated_ts FROM memories "
+                    "ORDER BY updated_ts DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
                 )
                 rows = await cursor.fetchall()
                 return [
@@ -509,6 +565,7 @@ class GroupMemoryStore(MemoryStore):
                         "category": r["category"],
                         "updated_at": r["updated_at"],
                         "group_id": r["group_id"],
+                        "updated_ts": r["updated_ts"],
                     }
                     for r in rows
                 ]
@@ -519,6 +576,7 @@ class GroupMemoryStore(MemoryStore):
                 "content": r["content"],
                 "category": r["category"],
                 "updated_at": r["updated_at"],
+                "updated_ts": r["updated_ts"],
             }
             for r in rows
         ]
@@ -698,6 +756,49 @@ async def save_memory(content: str, key: str = "", category: str = "fact") -> st
 # ---------------------------------------------------------------------------
 
 
+async def _list_past(query: str, verbose: bool = False) -> str:
+    """mode=past: 搜向量归档库，回填 key/category/updated_at。
+
+    verbose=False（默认）只返回键名字符串数组（与 KV 命中 verbose=False 一致）；
+    verbose=True 返回完整对象数组。
+    """
+    chat_type, group_id = get_memory_scope()
+    if chat_type == "group" and not group_id:
+        logger.error("memory mode=past: group scope 但 group_id 为空，阻断")
+        return json.dumps({"error": "group scope 下 group_id 为空"}, ensure_ascii=False)
+
+    searcher = await get_memory_archive_searcher(chat_type)
+    if searcher is None:
+        return json.dumps({"error": "记忆归档未启用"}, ensure_ascii=False)
+
+    if not query.strip():
+        return json.dumps([], ensure_ascii=False)
+
+    # 群检索：按 group_id 键值匹配（SQL/LanceDB 层过滤），不靠 path 前缀过滤
+    search_group_id = group_id if chat_type == "group" else None
+    results = await searcher.search(query, max_results=20, min_score=0.2, group_id=search_group_id)
+
+    # 反解 key：用已知 scope 构造前缀截取，不靠 split（group_id 可能带冒号）
+    prefix = f"kv:g:{group_id}:" if chat_type == "group" else "kv:"
+    formatted = []
+    for r in results[:6]:
+        path = r.get("path", "")
+        rkey = path[len(prefix) :] if path.startswith(prefix) else path
+        meta = r.get("metadata") or {}
+        updated_ts = meta.get("updated_ts", 0)
+        formatted.append(
+            {
+                "key": rkey,
+                "content": r.get("content", ""),
+                "category": meta.get("category", "fact"),
+                "updated_at": datetime.fromtimestamp(updated_ts).isoformat() if updated_ts else "",
+            }
+        )
+    if verbose:
+        return json.dumps(formatted, ensure_ascii=False)
+    return json.dumps([f["key"] for f in formatted], ensure_ascii=False)
+
+
 async def memory(
     action: Literal["save", "get", "list", "delete"],
     content: str = "",
@@ -705,6 +806,7 @@ async def memory(
     category: Literal["preference", "identity", "contact", "project", "episodic", "fact"] = "fact",
     query: str = "",
     keys: list[str] | None = None,
+    mode: Literal["recent", "past"] = "recent",
     verbose: bool = False,
 ) -> str:
     """管理持久记忆（跨会话保存）。用 action 参数指定操作。
@@ -718,7 +820,11 @@ async def memory(
     ACTIONS:
     - save: 保存记忆（自动去重）。需要 content，可选 key/category
     - get: 按键取回完整记忆内容。键名即记忆摘要，先用 list 查看键名
-    - list: 列出记忆。每条记忆的键名就是该条记忆的内容摘要，默认只返回键名。verbose=true 时同时返回完整内容
+    - list: 列出记忆。
+        mode="recent"（默认）：搜最近保留区（KV，约最近 7 天/20 条内），关键词匹配；
+                      KV 无命中时自动 fallback 到 archive（past）
+        mode="past"：只搜已归档的旧记忆（archive，FTS5 + 向量 hybrid 或 FTS5-only）
+        query 为空时 recent 返回全部键名（不 fallback）；past 返回空
     - delete: 删除指定记忆条目。需要 keys 数组
 
     不要保存：任务进度、闲聊、一次性指令、通用知识。
@@ -730,6 +836,7 @@ async def memory(
         category: 记忆分类（默认 fact）
         query: list 用关键词过滤记忆
         keys: 要删除的记忆键名列表（delete 必填）
+        mode: list 时的检索池。recent=KV 保留区，past=归档库
         verbose: list 时是否同时返回完整内容。默认只返回键名
     """
     normalized = (action or "").strip().lower()
@@ -751,10 +858,18 @@ async def memory(
         return await s.recall(key)
 
     if normalized == "list":
+        if mode == "past":
+            return await _list_past(query, verbose=verbose)
+        # mode="recent"（默认）：查 KV，空则自动 fallback 到 archive
         if is_group:
             items = await s.list_all(query, group_id=group_id)
         else:
             items = await s.list_all(query)
+        if not items and query.strip():
+            # KV 无命中 → 自动查 archive；archive 未启用则返回空（不报错，保持 recent 行为）
+            if await get_memory_archive_searcher(chat_type) is not None:
+                return await _list_past(query, verbose=verbose)
+            return json.dumps([], ensure_ascii=False)
         if verbose:
             return json.dumps(items, ensure_ascii=False)
         return json.dumps([i["key"] for i in items], ensure_ascii=False)

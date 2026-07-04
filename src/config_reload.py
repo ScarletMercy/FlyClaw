@@ -249,6 +249,17 @@ class ReloadExecutor:
             if app.agent_loop:
                 app.agent_loop.invalidate_memory_cache()
 
+            # KV archive searcher 热重载：先 close + reset 模块单例，再按新 config 重建
+            if app.memory_archive_searchers:
+                from src.tools.memory_tools import reset_memory_archive_searcher
+
+                await reset_memory_archive_searcher()
+                app.memory_archive_searchers = None
+            try:
+                await app._setup_memory_archive()
+            except Exception as e:
+                logger.warning("memory archive searcher reload failed: %s", e)
+
             logger.info("Memory system reloaded")
         except Exception as e:
             # 清理已初始化但未移交的组件

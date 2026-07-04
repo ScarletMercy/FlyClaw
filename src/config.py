@@ -361,6 +361,16 @@ class MemoryStoreConfig(BaseModel):
     enabled: bool = False
     db_path: str = "~/.flyclaw/data/memories.db"
 
+    # 向量归档（KV → LanceDB）；启用时 vector_model/base_url/api_key 必填
+    vector_enabled: bool = False
+    vector_model: str = "text-embedding-3-small"
+    vector_base_url: str = ""
+    vector_api_key: str = ""
+    vector_dimensions: int = 1536
+    vector_db_path: str = "~/.flyclaw/data/memory_kv_vec.db"
+    vector_keep_recent_n: int = 20
+    vector_keep_recent_days: int = 7
+
 
 class ConsolidationConfig(BaseModel):
     """Daily memory & skill consolidation configuration."""
@@ -471,6 +481,9 @@ def _expand_paths(config: AppConfig) -> AppConfig:
 
     # Memory store
     config.memory_store.db_path = str(Path(config.memory_store.db_path).expanduser().resolve())
+
+    # Memory store vector archive
+    config.memory_store.vector_db_path = str(Path(config.memory_store.vector_db_path).expanduser().resolve())
 
     # Task
     config.task.db_path = str(Path(config.task.db_path).expanduser().resolve())

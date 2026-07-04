@@ -24,12 +24,16 @@ class MemorySearcher:
         self,
         query: str,
         max_results: Optional[int] = None,
+        min_score: Optional[float] = None,
+        group_id: Optional[str] = None,
     ) -> list[dict]:
         """Search memory for relevant chunks.
 
-        Returns list of dicts with keys: content, path, score, chunk_index.
+        Returns list of dicts with keys: content, path, score, chunk_index, metadata.
+        group_id 非空时按群键值过滤（archive 群检索用）。
         """
         max_results = max_results or self.config.max_results
+        effective_min_score = min_score if min_score is not None else self.config.min_score
 
         query_embedding = None
         if self.embeddings is not None and self.store.dimensions > 0:
@@ -43,7 +47,8 @@ class MemorySearcher:
             query_text=query,
             max_results=max_results,
             vector_weight=getattr(self.config, "vector_weight", 0.7),
-            min_score=self.config.min_score,
+            min_score=effective_min_score,
+            group_id=group_id,
         )
 
         formatted = []
@@ -54,6 +59,7 @@ class MemorySearcher:
                     "path": r["path"],
                     "score": round(r.get("score", 0), 3),
                     "chunk_index": r.get("chunk_index", 0),
+                    "metadata": r.get("metadata"),
                 }
             )
         return formatted

@@ -5,6 +5,7 @@ Falls back to FTS5-only search if sqlite-vec is not installed.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
 
@@ -69,29 +70,40 @@ class MemoryStore(BaseMemoryStore):
     def _has_vector_support(self) -> bool:
         return _HAS_SQLITE_VEC
 
-    async def _vec_search(self, query_embedding: list[float], limit: int = 24) -> list[dict]:
+    async def _vec_search(
+        self, query_embedding: list[float], limit: int = 24, group_id: Optional[str] = None
+    ) -> list[dict]:
         results = []
         try:
             blob = _vec_to_blob(query_embedding)
-            cursor = await self._conn.execute(
-                """
-                SELECT c.id, c.path, c.chunk_index, c.content, v.distance
+            sql = """
+                SELECT c.id, c.path, c.chunk_index, c.content, c.metadata, v.distance
                 FROM chunks_vec v
                 JOIN chunks c ON c.id = v.rowid
                 WHERE v.embedding MATCH ?
-                ORDER BY v.distance
-                LIMIT ?
-                """,
-                (blob, limit),
-            )
+                """
+            params: list = [blob]
+            if group_id is not None:
+                sql += " AND c.group_id = ? "
+                params.append(group_id)
+            sql += " ORDER BY v.distance LIMIT ?"
+            params.append(limit)
+            cursor = await self._conn.execute(sql, params)
             rows = await cursor.fetchall()
             for row in rows:
+                meta = None
+                if row["metadata"]:
+                    try:
+                        meta = json.loads(row["metadata"])
+                    except (json.JSONDecodeError, TypeError):
+                        meta = None
                 results.append(
                     {
                         "id": row["id"],
                         "path": row["path"],
                         "chunk_index": row["chunk_index"],
                         "content": row["content"],
+                        "metadata": meta,
                         "fts_score": 0.0,
                         "vec_score": 1.0 - row["distance"],
                     }

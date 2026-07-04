@@ -1,8 +1,8 @@
 """Built-in consolidation scheduler (no cron dependency).
 
 Runs as an asyncio background task, waking at 03:00 every day in the
-configured timezone.  On Sundays it runs memory consolidation first,
-then daily (session) consolidation.  On other days only daily.
+configured timezone.  On Sundays it runs daily (session) consolidation
+first, then memory cleanup.  On other days only daily.
 
 Lifecycle:
   - start() called from app.on_startup()
@@ -59,8 +59,15 @@ class ConsolidationScheduler:
 
             is_sunday = next_run.weekday() == 6
 
+            try:
+                from src.services.daily_consolidation import run_daily_consolidation
+
+                await run_daily_consolidation(container)
+            except Exception as e:
+                logger.error("Daily consolidation failed: %s", e, exc_info=True)
+
             if is_sunday:
-                logger.info("Sunday consolidation: running memory cleanup first")
+                logger.info("Sunday consolidation: running memory cleanup after daily extraction")
                 try:
                     from src.services.memory_consolidation import run_memory_consolidation
 
@@ -68,12 +75,13 @@ class ConsolidationScheduler:
                 except Exception as e:
                     logger.error("Sunday memory consolidation failed: %s", e, exc_info=True)
 
-            try:
-                from src.services.daily_consolidation import run_daily_consolidation
+                # KV → 记忆归档迁移，仅周日
+                try:
+                    from src.services.memory_archive_migration import migrate_kv_to_archive
 
-                await run_daily_consolidation(container)
-            except Exception as e:
-                logger.error("Daily consolidation failed: %s", e, exc_info=True)
+                    await migrate_kv_to_archive(container)
+                except Exception as e:
+                    logger.error("KV→archive migration failed: %s", e, exc_info=True)
 
 
 def _next_occurrence(now: datetime.datetime, hour: int, minute: int) -> datetime.datetime:

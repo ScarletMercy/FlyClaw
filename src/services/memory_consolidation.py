@@ -1,6 +1,6 @@
 """Weekly memory consolidation.
 
-Runs every Sunday at 03:00 (before daily consolidation) via the built-in
+Runs every Sunday at 03:00 (after daily consolidation) via the built-in
 ConsolidationScheduler. Loads all memories from the KV store, groups by
 category, and for each group asks the LLM to: merge duplicates, delete
 outdated/useless entries, keep valid ones.

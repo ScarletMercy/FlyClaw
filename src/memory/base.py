@@ -45,9 +45,11 @@ class BaseMemoryStore(ABC):
                 chunk_index INTEGER NOT NULL DEFAULT 0,
                 content TEXT NOT NULL,
                 metadata TEXT,
+                group_id TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path);
+            CREATE INDEX IF NOT EXISTS idx_chunks_group ON chunks(group_id);
         """)
 
         try:
@@ -59,6 +61,7 @@ class BaseMemoryStore(ABC):
             logger.warning("Failed to create FTS5 table: %s", e)
 
         await self._conn.commit()
+        await self._migrate_add_group_id_column()
         await self._init_vector_backend()
 
     async def close(self) -> None:
@@ -66,6 +69,16 @@ class BaseMemoryStore(ABC):
             await self._conn.close()
             self._conn = None
         await self._close_vector_backend()
+
+    async def _migrate_add_group_id_column(self) -> None:
+        """旧 chunks 表无 group_id 列时补上（archive 按 group_id 键值匹配，不靠 path 前缀）。"""
+        cursor = await self._conn.execute("PRAGMA table_info(chunks)")
+        cols = {row["name"] for row in await cursor.fetchall()}
+        if "group_id" not in cols:
+            await self._conn.execute("ALTER TABLE chunks ADD COLUMN group_id TEXT NOT NULL DEFAULT ''")
+            await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_group ON chunks(group_id)")
+            await self._conn.commit()
+            logger.info("chunks table migrated: added group_id column")
 
     # ── Abstract hooks (vector backend) ─────────────────────
 
@@ -81,8 +94,8 @@ class BaseMemoryStore(ABC):
         """Return True if vector search is available."""
 
     @abstractmethod
-    async def _vec_search(self, query_embedding: list[float], limit: int) -> list[dict]:
-        """Search using vector similarity. Returns list of result dicts."""
+    async def _vec_search(self, query_embedding: list[float], limit: int, group_id: Optional[str] = None) -> list[dict]:
+        """Search using vector similarity. group_id 非空时按群过滤。"""
 
     @abstractmethod
     async def _store_embeddings(self, chunk_ids: list[int], embeddings: list[list[float]]) -> None:
@@ -94,22 +107,26 @@ class BaseMemoryStore(ABC):
 
     # ── Public API (shared) ─────────────────────────────────
 
-    async def add_document(self, path: str, content: str, metadata: Optional[dict] = None) -> int:
-        """Chunk content, store in SQLite + FTS5. Returns number of chunks added."""
-        from src.memory.chunker import chunk_markdown
+    async def add_document(self, path: str, content: str, metadata: Optional[dict] = None, chunk: bool = True) -> int:
+        """Chunk content (unless chunk=False), store in SQLite + FTS5. Returns number of chunks added."""
+        if chunk:
+            from src.memory.chunker import chunk_markdown
 
-        chunks = chunk_markdown(content)
-        if not chunks:
-            return 0
+            chunks = chunk_markdown(content)
+            if not chunks:
+                return 0
+        else:
+            chunks = [{"index": 0, "text": content}]
 
         now = now_iso()
         meta_json = json.dumps(metadata) if metadata else None
+        group_id = (metadata or {}).get("group_id", "")
         added = 0
 
-        for chunk in chunks:
+        for chunk_obj in chunks:
             cursor = await self._conn.execute(
-                "INSERT INTO chunks (path, chunk_index, content, metadata, created_at) VALUES (?, ?, ?, ?, ?)",
-                (path, chunk["index"], chunk["text"], meta_json, now),
+                "INSERT INTO chunks (path, chunk_index, content, metadata, group_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (path, chunk_obj["index"], chunk_obj["text"], meta_json, group_id, now),
             )
             chunk_id = cursor.lastrowid
             added += 1
@@ -117,10 +134,10 @@ class BaseMemoryStore(ABC):
             try:
                 await self._conn.execute(
                     "INSERT INTO chunks_fts(rowid, path, content) VALUES (?, ?, ?)",
-                    (chunk_id, path, chunk["text"]),
+                    (chunk_id, path, chunk_obj["text"]),
                 )
             except Exception as e:
-                logger.warning("FTS5 insert failed for chunk %d: %s", chunk["index"], e)
+                logger.warning("FTS5 insert failed for chunk %d: %s", chunk_obj["index"], e)
 
         await self._conn.commit()
         return added
@@ -143,14 +160,18 @@ class BaseMemoryStore(ABC):
         max_results: int = 6,
         vector_weight: float = 0.7,
         min_score: float = 0.35,
+        group_id: Optional[str] = None,
     ) -> list[dict]:
-        """Hybrid search: FTS5 BM25 + optional vector similarity."""
-        fts_results = await self._fts_search(query_text, limit=max(20, max_results * 3))
+        """Hybrid search: FTS5 BM25 + optional vector similarity.
+
+        group_id 非空时按群键值过滤（不再靠 path 前缀）。
+        """
+        fts_results = await self._fts_search(query_text, limit=max(20, max_results * 3), group_id=group_id)
 
         if not query_embedding or not self._has_vector_support():
             return self._normalize_fts_scores(fts_results[:max_results], min_score)
 
-        vec_results = await self._vec_search(query_embedding, limit=max(24, max_results * 4))
+        vec_results = await self._vec_search(query_embedding, limit=max(24, max_results * 4), group_id=group_id)
 
         return self._merge_results(
             fts_results,
@@ -199,32 +220,41 @@ class BaseMemoryStore(ABC):
 
     # ── FTS5 search (shared) ────────────────────────────────
 
-    async def _fts_search(self, query: str, limit: int = 20) -> list[dict]:
+    async def _fts_search(self, query: str, limit: int = 20, group_id: Optional[str] = None) -> list[dict]:
         if not query.strip():
             return []
         results = []
         fts_query = sanitize_fts5_query(query)
         try:
-            cursor = await self._conn.execute(
-                """
-                SELECT c.id, c.path, c.chunk_index, c.content,
+            sql = """
+                SELECT c.id, c.path, c.chunk_index, c.content, c.metadata,
                        bm25(chunks_fts) AS score
                 FROM chunks_fts f
                 JOIN chunks c ON c.id = f.rowid
                 WHERE chunks_fts MATCH ?
-                ORDER BY score
-                LIMIT ?
-                """,
-                (fts_query, limit),
-            )
+                """
+            params: list = [fts_query]
+            if group_id is not None:
+                sql += " AND c.group_id = ? "
+                params.append(group_id)
+            sql += " ORDER BY score LIMIT ?"
+            params.append(limit)
+            cursor = await self._conn.execute(sql, params)
             rows = await cursor.fetchall()
             for row in rows:
+                meta = None
+                if row["metadata"]:
+                    try:
+                        meta = json.loads(row["metadata"])
+                    except (json.JSONDecodeError, TypeError):
+                        meta = None
                 results.append(
                     {
                         "id": row["id"],
                         "path": row["path"],
                         "chunk_index": row["chunk_index"],
                         "content": row["content"],
+                        "metadata": meta,
                         "fts_score": row["score"],
                         "vec_score": 0.0,
                     }

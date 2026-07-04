@@ -369,6 +369,11 @@ code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:12px}</style
             "memory_store": {
                 "enabled": getattr(cfg.memory_store, "enabled", False),
                 "db_path": cfg.memory_store.db_path,
+                "archive_enabled": getattr(cfg.memory_store, "enabled", False),
+                "vector_enabled": getattr(cfg.memory_store, "vector_enabled", False),
+                "vector_model": getattr(cfg.memory_store, "vector_model", "")
+                if getattr(cfg.memory_store, "vector_enabled", False)
+                else "",
             },
             "task": {
                 "enabled": getattr(cfg.task, "enabled", False),

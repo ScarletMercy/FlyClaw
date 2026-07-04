@@ -48,6 +48,7 @@ class ServiceContainer:
         self.cron_service: CronService | None = None
         self.api = None
         self.memory_searcher = None
+        self.memory_archive_searchers = None
         self.rbac = None
         self.session_index = None
         self.plugin_registry = None
@@ -256,6 +257,63 @@ class ServiceContainer:
         except Exception as e:
             logger.warning("记忆系统初始化失败: %s", e)
 
+    async def _setup_memory_archive(self):
+        """初始化 KV 旧记忆归档（memory_store.enabled 即启用）。
+
+        vector_enabled=True  → LanceMemoryStore（SQLite + LanceDB hybrid）
+        vector_enabled=False → MemoryStore（SQLite FTS5-only，不 embed）
+        """
+        ms = getattr(self.config, "memory_store", None)
+        if not (ms and ms.enabled):
+            return
+        try:
+            from src.instance import data_dir
+            from src.memory.search import MemorySearcher
+            from src.tools.memory_tools import set_memory_archive_searcher
+
+            vector_on = ms.vector_enabled
+            dims = ms.vector_dimensions
+            dm_db = ms.vector_db_path
+            grp_base = str(data_dir() / "memory_kv_vec_group")
+
+            def _make_searcher(db_path: str, lance_uri: str):
+                if vector_on:
+                    from src.memory.lance_store import LanceMemoryStore
+                    from src.memory.embeddings import EmbeddingProvider
+
+                    store = LanceMemoryStore(db_path=db_path, dimensions=dims, lancedb_uri=lance_uri)
+                    emb = EmbeddingProvider.from_vector_config(ms, self.config.model)
+                else:
+                    from src.memory.store import MemoryStore
+
+                    store = MemoryStore(db_path=db_path, dimensions=dims)
+                    emb = None
+                return store, emb
+
+            dm_store, dm_emb = _make_searcher(dm_db, dm_db.replace(".db", ".lance"))
+            await dm_store.initialize()
+            dm_searcher = MemorySearcher(dm_store, dm_emb, self.config.memory)
+            await set_memory_archive_searcher(dm_searcher, "p2p")
+
+            # group store 单独 try：失败时仍保留 DM，避免 app.memory_archive_searchers=None
+            # 导致 migration 静默跳过 + 后续 reload 跳过 reset 泄漏 DM 单例
+            group_searcher = None
+            try:
+                group_store, group_emb = _make_searcher(grp_base + ".db", grp_base + ".lance")
+                await group_store.initialize()
+                group_searcher = MemorySearcher(group_store, group_emb, self.config.memory)
+                await set_memory_archive_searcher(group_searcher, "group")
+            except Exception as e:
+                logger.warning("KV 记忆归档 group store 初始化失败: %s", e)
+
+            self.memory_archive_searchers = (dm_searcher, group_searcher)
+            mode = "hybrid (FTS5+向量)" if vector_on else "FTS5-only"
+            logger.info("KV 记忆归档已初始化 (DM + group, %s)", mode)
+        except ImportError as e:
+            logger.warning("KV 记忆归档初始化失败（缺包）: %s", e)
+        except Exception as e:
+            logger.warning("KV 记忆归档初始化失败: %s", e)
+
     async def _setup_auth(self):
         if not self.config.auth.enabled:
             return
@@ -385,6 +443,7 @@ class ServiceContainer:
         self._setup_plugins()
         self._setup_agents()
         await self._setup_memory()
+        await self._setup_memory_archive()
         await self._setup_auth()
 
         # Phase 2: client + tools + skills
@@ -728,6 +787,13 @@ class ServiceContainer:
                 await self._config_watcher.stop()
             if self.memory_searcher:
                 await self.memory_searcher.close()
+            if self.memory_archive_searchers:
+                for s in self.memory_archive_searchers:
+                    try:
+                        await s.close()
+                    except Exception:
+                        pass
+                self.memory_archive_searchers = None
             if getattr(self.config, "memory_store", None) and self.config.memory_store.enabled:
                 try:
                     # 关 DM + group 两个 store 单例并复位标志(直接 close() 会漏关 group store)

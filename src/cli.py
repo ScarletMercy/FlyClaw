@@ -125,6 +125,15 @@ def cmd_status(args):
     print(f"QQ:         {'已启用' if config.channels.qq.enabled else '未启用'}")
     print(f"定时任务:   {'已启用' if config.cron.enabled else '未启用'}")
     print(f"记忆系统:   {'已启用' if config.memory.enabled else '未启用'}")
+    ms = getattr(config, "memory_store", None)
+    if ms and ms.enabled and ms.vector_enabled:
+        print(f"记忆归档:   已启用 (hybrid: FTS5+向量, model={ms.vector_model}, dim={ms.vector_dimensions})")
+    elif ms and ms.enabled and not ms.vector_enabled:
+        print(f"记忆归档:   已启用 (FTS5-only)")
+    elif ms and ms.vector_enabled and not ms.enabled:
+        print(f"记忆归档:   ⚠ memory_store.enabled=False 但 vector_enabled=True (矛盾)")
+    else:
+        print(f"记忆归档:   未启用")
     print(f"技能:       {'已启用' if config.skills.enabled else '未启用'}")
     print(f"插件:       {'已启用' if config.plugins.enabled else '未启用'}")
     print(f"命令执行:   审批模式={config.tools.exec.approval_mode}")

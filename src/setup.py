@@ -141,6 +141,33 @@ def _verify_api_key(provider: str, name: str, base_url: str, api_key: str) -> tu
     return asyncio.run(_verify_api_key_async(provider, name, base_url, api_key))
 
 
+async def _verify_embedding_api_key_async(base_url: str, api_key: str, model: str) -> tuple[bool, str]:
+    """验证嵌入 API Key：用 'hi' 跑一次 /v1/embeddings。"""
+    import httpx
+
+    url = f"{base_url.rstrip('/')}/v1/embeddings"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                url,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={"model": model, "input": "hi"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("data") and data["data"][0].get("embedding"):
+                    return True, str(len(data["data"][0]["embedding"]))
+                return True, ""
+            return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
+    except Exception as e:
+        return False, str(e)
+
+
+def _verify_embedding_api_key(base_url: str, api_key: str, model: str) -> tuple[bool, str]:
+    """验证嵌入 API Key（同步包装）。"""
+    return asyncio.run(_verify_embedding_api_key_async(base_url, api_key, model))
+
+
 def _ask_choice(prompt: str, choices: list[str], default: str = "") -> str:
     options = ", ".join(choices)
     while True:
@@ -623,6 +650,45 @@ def _step_memory_store(config: dict) -> None:
 
     enabled = _ask_yn("  启用记忆存储？", default=ms.get("enabled", True))
     ms["enabled"] = enabled
+
+    if enabled:
+        _configure_vector_memory(ms)
+
+
+def _configure_vector_memory(ms: dict) -> None:
+    """向导子步骤：配置 KV 向量归档。"""
+    if not _ask_yn(
+        "  启用向量记忆？（将旧记忆自动归档到向量库，提升长期检索）",
+        default=ms.get("vector_enabled", False),
+    ):
+        ms["vector_enabled"] = False
+        return
+
+    while True:
+        model = _ask_required("  嵌入模型名称", default=ms.get("vector_model", "text-embedding-3-small"))
+        base_url = _ask_required("  嵌入接口地址", default=ms.get("vector_base_url", ""))
+        api_key = _ask_required("  嵌入 API 密钥", default=ms.get("vector_api_key", ""))
+
+        print("  验证嵌入 API Key 中...")
+        ok, dim_str = _verify_embedding_api_key(base_url, api_key, model)
+        if ok:
+            default_dim = int(dim_str) if dim_str.isdigit() else ms.get("vector_dimensions", 1536)
+            ms["vector_dimensions"] = _ask_int("  向量维度", default=default_dim)
+            ms["vector_model"] = model
+            ms["vector_base_url"] = base_url
+            ms["vector_api_key"] = api_key
+            ms["vector_enabled"] = True
+            print(f"  [通过] 嵌入 API 验证成功，维度={ms['vector_dimensions']}")
+            return
+
+        print(f"  [警告] 嵌入 API 验证失败: {dim_str}")
+        action = _ask_choice("  操作 (1=重新输入, 2=放弃)", ["1", "2"], default="1")
+        if action == "1":
+            continue  # 重新输入
+        else:
+            ms["vector_enabled"] = False
+            print("  已放弃向量记忆配置。")
+            return
 
 
 def _step_summary(config: dict) -> None:
