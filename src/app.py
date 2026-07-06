@@ -11,8 +11,13 @@ from src.agent.client import create_client, create_chain
 from src.agent.loop import AgentLoop
 from src.agent.state import StateStore
 from src.agent.tooldef import ToolDef
-from src.channels.qq import QQChannel
-from src.channels.weixin import WeixinChannel
+
+if TYPE_CHECKING:
+    # Lazy: QQChannel/WeixinChannel are imported inside _setup_*_channel() so
+    # that importing this module does not pull weixin → aiohttp, whose import
+    # calls platform.system() → WMI on Py3.13/Windows and can hang.
+    from src.channels.qq import QQChannel
+    from src.channels.weixin import WeixinChannel
 from src.config import load_config
 from src.cron.executor import execute_cron_job
 from src.cron.service import CronService
@@ -411,12 +416,16 @@ class ServiceContainer:
             await store.initialize()
 
     def _setup_qq_channel(self):
+        from src.channels.qq import QQChannel
+
         self.qq = QQChannel(self.config.channels.qq)
         if self._qq_mu_runner:
             self.qq.set_media_understanding_runner(self._qq_mu_runner)
             logger.info("QQ 频道多媒体理解已初始化")
 
     def _setup_weixin_channel(self):
+        from src.channels.weixin import WeixinChannel
+
         self.weixin = WeixinChannel(self.config.channels.weixin)
         logger.info("微信频道已初始化")
 

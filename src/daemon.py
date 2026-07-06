@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 import getpass
 import os
-import platform
 import shlex
 import subprocess
 import sys
@@ -47,16 +46,20 @@ class DaemonManager:
         return args
 
     def get_platform(self) -> str:
-        """Detect the current platform."""
-        system = platform.system().lower()
-        if system == "linux":
+        """Detect the current platform.
+
+        用 sys.platform 不走 platform.system()——后者在 Py3.13/Win 经 WMI，
+        服务抽风时会挂死。注意 sys.platform 值与 platform.system().lower() 不同：
+        Win 上是 'win32' 而非 'windows'。
+        """
+        if sys.platform == "linux":
             return "systemd"
-        elif system == "darwin":
+        elif sys.platform == "darwin":
             return "launchd"
-        elif system == "windows":
+        elif sys.platform == "win32":
             return "schtasks"
         else:
-            raise NotImplementedError(f"Platform {system} is not supported")
+            raise NotImplementedError(f"Platform {sys.platform} is not supported")
 
     def install(self) -> None:
         """Install the flyclaw service."""

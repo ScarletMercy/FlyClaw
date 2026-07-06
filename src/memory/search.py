@@ -65,9 +65,11 @@ class MemorySearcher:
         return formatted
 
     async def close(self) -> None:
-        """Close the underlying store."""
+        """Close the underlying store and the embedding provider's connection pool."""
         if self.store:
             await self.store.close()
+        if self.embeddings:
+            await self.embeddings.close()
 
     async def index_document(self, path: str, content: str) -> int:
         """Index a document: chunk, embed, and store.

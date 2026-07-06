@@ -95,7 +95,10 @@ def _build_environment_hints(workspace_dir: str = "") -> list[str]:
     host_lines: list[str] = []
 
     if sys.platform == "win32":
-        host_lines.append(f"Host: Windows ({platform.release()})")
+        # 不用 platform.release()——Py3.13/Win 上它经 platform.win32_ver()→WMI，
+        # WMI 服务抽风时会无限挂死。sys.getwindowsversion() 走 GetVersionEx，即返。
+        winver = sys.getwindowsversion()
+        host_lines.append(f"Host: Windows (build {winver.build})")
     elif sys.platform == "darwin":
         mac_ver = platform.mac_ver()[0]
         host_lines.append(f"Host: macOS ({mac_ver or platform.release()})")

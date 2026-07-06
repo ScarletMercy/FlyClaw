@@ -102,13 +102,6 @@ class TestMemoryStore:
         assert len(norm) == 1
         assert norm[0]["score"] == 1.0
 
-    def test_vec_to_blob(self):
-        from src.memory.store import _vec_to_blob
-
-        vec = [1.0, 2.0, 3.0]
-        blob = _vec_to_blob(vec)
-        assert len(blob) == 12  # 3 floats * 4 bytes
-
     def test_get_chunk_ids_for_path(self, store):
         _run(store.add_document("doc1", "Paragraph one about testing.\n\nParagraph two about coverage."))
         ids = _run(store.get_chunk_ids_for_path("doc1"))

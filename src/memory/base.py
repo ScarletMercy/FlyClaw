@@ -89,21 +89,21 @@ class BaseMemoryStore(ABC):
     async def _close_vector_backend(self) -> None:
         """Clean up vector resources. Default: no-op."""
 
-    @abstractmethod
     def _has_vector_support(self) -> bool:
-        """Return True if vector search is available."""
+        """Return True if vector search is available. Default: False (FTS5-only)."""
+        return False
 
-    @abstractmethod
     async def _vec_search(self, query_embedding: list[float], limit: int, group_id: Optional[str] = None) -> list[dict]:
-        """Search using vector similarity. group_id 非空时按群过滤。"""
+        """Search using vector similarity. group_id 非空时按群过滤。Default: no-op（FTS5-only store 不实现）。"""
+        return []
 
-    @abstractmethod
     async def _store_embeddings(self, chunk_ids: list[int], embeddings: list[list[float]]) -> None:
-        """Store vector embeddings for the given chunk IDs."""
+        """Store vector embeddings for the given chunk IDs. Default: no-op."""
+        return
 
-    @abstractmethod
     async def _delete_vectors(self, ids: list[int]) -> None:
-        """Delete vectors for the given chunk IDs."""
+        """Delete vectors for the given chunk IDs. Default: no-op."""
+        return
 
     # ── Public API (shared) ─────────────────────────────────
 

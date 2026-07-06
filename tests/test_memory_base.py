@@ -27,18 +27,6 @@ class DummyMemoryStore(BaseMemoryStore):
     async def _close_vector_backend(self):
         self._vec_close_called = True
 
-    def _has_vector_support(self):
-        return False
-
-    async def _vec_search(self, query_embedding, limit):
-        return []
-
-    async def _store_embeddings(self, chunk_ids, embeddings):
-        pass
-
-    async def _delete_vectors(self, ids):
-        pass
-
 
 @pytest.fixture
 async def store(tmp_path):

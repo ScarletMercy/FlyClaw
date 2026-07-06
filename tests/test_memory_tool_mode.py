@@ -321,6 +321,9 @@ class TestMemoryModeGroupScope:
             async def embed_texts(self, ts):
                 return [[0.1, 0.2, 0.3, 0.4] for _ in ts]
 
+            async def close(self):
+                pass
+
         # DM vec store —— 只有 DM 数据（关键词 redis）
         dm_store = LanceMemoryStore(
             db_path=str(tmp_path / "dm.db"), dimensions=4, lancedb_uri=str(tmp_path / "dm.lance")

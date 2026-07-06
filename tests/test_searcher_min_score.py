@@ -16,6 +16,9 @@ class FakeEmbeddings:
     async def embed_texts(self, texts):
         return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
 
+    async def close(self):
+        pass
+
 
 @pytest.fixture
 async def searcher(tmp_path):

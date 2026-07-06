@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 from pathlib import Path
@@ -124,48 +123,57 @@ def _ask_int(prompt: str, default: int) -> int:
             print(f"  [错误] 请输入一个整数(留空用 {default})")
 
 
-async def _verify_api_key_async(provider: str, name: str, base_url: str, api_key: str) -> tuple[bool, str]:
-    """验证 API Key 是否可用。"""
-    try:
-        from src.agent.client import ChatClient
-
-        client = ChatClient(base_url=base_url or "", api_key=api_key, model=name)
-        resp = await client.chat_simple([{"role": "user", "content": "你好"}])
-        return True, resp
-    except Exception as e:
-        return False, str(e)
-
-
 def _verify_api_key(provider: str, name: str, base_url: str, api_key: str) -> tuple[bool, str]:
-    """验证 API Key 是否可用（同步包装）。"""
-    return asyncio.run(_verify_api_key_async(provider, name, base_url, api_key))
+    """验证 API Key 是否可用（同步 httpx 直发 /chat/completions）。
 
-
-async def _verify_embedding_api_key_async(base_url: str, api_key: str, model: str) -> tuple[bool, str]:
-    """验证嵌入 API Key：用 'hi' 跑一次 /v1/embeddings。"""
+    刻意不走 asyncio.run + AsyncOpenAI：在 Windows 上后者对本接口会挂死——同步
+    httpx 0.6s 返回 200，async 请求永远不返回、timeout 也不触发。这与超时无关，
+    是 asyncio + httpx async 在 Windows 上的 TLS 卡死，所以"换思路"改用同步。
+    base_url 透传给 URL 拼接（OpenAI 兼容 provider 惯例已含 /v1），空则用 OpenAI 默认。
+    """
     import httpx
 
-    url = f"{base_url.rstrip('/')}/v1/embeddings"
+    base = (base_url or "https://api.openai.com/v1").rstrip("/")
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                url,
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json={"model": model, "input": "hi"},
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(
+                f"{base}/chat/completions",
+                json={"model": name, "messages": [{"role": "user", "content": "你好"}]},
+                headers={"Authorization": f"Bearer {api_key}"},
             )
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get("data") and data["data"][0].get("embedding"):
-                    return True, str(len(data["data"][0]["embedding"]))
-                return True, ""
-            return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
+        if resp.status_code == 200:
+            return True, ""
+        return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
     except Exception as e:
         return False, str(e)
 
 
 def _verify_embedding_api_key(base_url: str, api_key: str, model: str) -> tuple[bool, str]:
-    """验证嵌入 API Key（同步包装）。"""
-    return asyncio.run(_verify_embedding_api_key_async(base_url, api_key, model))
+    """验证嵌入 API Key：同步 httpx 直发 /embeddings。
+
+    与 _verify_api_key 同理，不走 asyncio.run+AsyncOpenAI——后者在 Windows 上对
+    部分 TLS 接口永久挂死(timeout 不触发)。base_url 透传给 URL 拼接(OpenAI 兼容
+    provider 惯例已含 /v1，自己再追加 /v1 会变成 `…/v1/v1/embeddings` → 404)，空
+    则用 OpenAI 默认。成功返回向量维度字符串(调用方据此填默认维度)。
+    """
+    import httpx
+
+    base = (base_url or "https://api.openai.com/v1").rstrip("/")
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(
+                f"{base}/embeddings",
+                json={"model": model, "input": "hi"},
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+        if resp.status_code != 200:
+            return False, f"HTTP {resp.status_code}: {resp.text[:200]}"
+        data = resp.json().get("data") or []
+        if data and data[0].get("embedding"):
+            return True, str(len(data[0]["embedding"]))
+        return True, ""
+    except Exception as e:
+        return False, str(e)
 
 
 def _ask_choice(prompt: str, choices: list[str], default: str = "") -> str:
@@ -619,24 +627,33 @@ def _step_media_understanding(config: dict) -> None:
     enabled = _ask_yn("  启用媒体理解？", default=mu.get("enabled", False))
     mu["enabled"] = enabled
 
-    if enabled:
+    if not enabled:
+        return
+
+    while True:
         mu["provider"] = _ask("  模型提供商", default=mu.get("provider", "openai"))
         mu["name"] = _ask("  模型名称", default=mu.get("name", "gpt-4o-mini"))
         mu["base_url"] = _ask("  接口地址（留空使用默认）", default=mu.get("base_url", ""))
         mu["api_key"] = _ask("  API 密钥", default=mu.get("api_key", "${OPENAI_API_KEY}"))
 
-        # 验证 API Key
-        if mu["api_key"]:
-            print("  验证 API Key 中...")
-            success, msg = _verify_api_key(
-                mu.get("provider", ""), mu.get("name", ""), mu.get("base_url", ""), mu["api_key"]
-            )
-            if success:
-                print("  [通过] API Key 验证成功")
-            else:
-                print(f"  [警告] API Key 验证失败: {msg}")
-                if not _ask_yn("  是否仍然使用此 API Key？", default=True):
-                    mu["api_key"] = _ask("  重新输入 API 密钥", default="")
+        if not mu["api_key"]:
+            return  # 留空跳过验证
+
+        print("  验证 API Key 中...")
+        success, msg = _verify_api_key(
+            mu.get("provider", ""), mu.get("name", ""), mu.get("base_url", ""), mu["api_key"]
+        )
+        if success:
+            print("  [通过] API Key 验证成功")
+            return
+
+        print(f"  [警告] API Key 验证失败: {msg}")
+        action = _ask_choice("  操作 (1=重新输入, 2=放弃)", ["1", "2"], default="1")
+        if action == "1":
+            continue  # 重新输入（字段已填，回车即沿用，重新验证）
+        mu["enabled"] = False
+        print("  已放弃媒体理解配置。")
+        return
 
 
 def _step_memory_store(config: dict) -> None:
@@ -672,8 +689,13 @@ def _configure_vector_memory(ms: dict) -> None:
         print("  验证嵌入 API Key 中...")
         ok, dim_str = _verify_embedding_api_key(base_url, api_key, model)
         if ok:
-            default_dim = int(dim_str) if dim_str.isdigit() else ms.get("vector_dimensions", 1536)
-            ms["vector_dimensions"] = _ask_int("  向量维度", default=default_dim)
+            # 维度由探测得出，直接用——不再问用户。运行时不发 dimensions 参数，
+            # 用户改非原生值只会导致维度不一致校验失败，所以没必要让用户填。
+            if dim_str.isdigit():
+                ms["vector_dimensions"] = int(dim_str)
+            else:
+                ms["vector_dimensions"] = ms.get("vector_dimensions", 1536)
+                print(f"  [注意] 未探测到维度（响应无 embedding 数据），沿用 {ms['vector_dimensions']}")
             ms["vector_model"] = model
             ms["vector_base_url"] = base_url
             ms["vector_api_key"] = api_key

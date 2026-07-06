@@ -47,6 +47,9 @@ class FakeEmbeddings:
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
 
+    async def close(self):
+        pass
+
 
 @pytest.fixture
 async def isolated_env(tmp_path, monkeypatch):
@@ -333,6 +336,9 @@ class TestMigrationE2E:
 
             async def embed_query(self, t):
                 raise RuntimeError("fail")
+
+            async def close(self):
+                pass
 
         failing_searcher = MemorySearcher(vec_store, FailingEmbeddings(), MemoryConfig())
 

@@ -30,11 +30,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-memory = ["sqlite-vec>=0.1.6"]
 memory-lancedb = ["lancedb>=0.6", "pyarrow"]
-termux = [
-    "flyclaw[memory]",
-]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "pytest-cov>=6.0", "pytest-timeout>=2.3", "ruff>=0.8", "httpx>=0.28", "types-PyYAML>=6.0"]
 
 [tool.ruff]

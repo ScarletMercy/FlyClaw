@@ -68,7 +68,7 @@ class LanceMemoryStore(BaseMemoryStore):
 
         try:
             self._lance_table = self._lance_db.open_table("memory_vectors")
-            # 旧表 schema 迁移：缺列则补（lancedb 0.34+ 支持 add_columns）
+            # 旧表 schema 迁移：缺列则补（lancedb add_columns，实测 0.30.2 可用）
             existing_cols = {f.name for f in self._lance_table.schema}
             for col in ("metadata", "group_id"):
                 if col not in existing_cols:
