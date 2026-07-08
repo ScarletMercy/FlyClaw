@@ -376,6 +376,41 @@ class TestNotifications:
         assert "dreaming" in notifications[0]
         assert "consolidation failed" in notifications[1]
 
+    @pytest.mark.asyncio
+    async def test_empty_summary_sends_nothing_not_failed(self):
+        """成功但 review 无产出(空 summary)→ 通知应是 nothing to consolidate,
+        不是 consolidation failed。回归:三遍重构曾把「成功无文本」误判为失败。"""
+        store = MagicMock()
+        msgs = _make_messages(5, 10)
+        state = _make_state(msgs, chat_id="chat_abc", channel="qq")
+        store.list_threads = AsyncMock(return_value=["qq:group:abc"])
+        store.load = AsyncMock(return_value=state)
+
+        agent_loop = MagicMock()
+        agent_loop.invalidate_memory_cache = MagicMock()
+        container = _make_container(state_store=store, agent_loop=agent_loop)
+
+        notifications = []
+
+        async def _capture_notify(c, channel, chat_id, text):
+            notifications.append(text)
+
+        with (
+            patch(_PATCH_CONSOLIDATE, return_value=""),
+            patch(_PATCH_NOTIFY, side_effect=_capture_notify),
+        ):
+            from src.services.daily_consolidation import run_daily_consolidation
+
+            result = await run_daily_consolidation(container)
+
+        # 空 summary 仍是成功路径,不计错误
+        assert result["sessions_processed"] == 1
+        assert result["errors"] == []
+        assert len(notifications) == 2
+        assert "dreaming" in notifications[0]
+        assert "nothing to consolidate" in notifications[1]
+        assert "failed" not in notifications[1]
+
 
 # ─── Summary counting ────────────────────────────────────────────────────────
 

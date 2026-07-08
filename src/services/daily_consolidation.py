@@ -1,13 +1,25 @@
 """Daily memory & skill consolidation.
 
-Called by ConsolidationScheduler at 03:00 every day.
-For each active session:
-  1. Send "dreaming" notification
-  2. Read all messages from the session
-  3. Extract memories + create/update skills via background review
-  4. Save a diary-style episodic summary of the session
-  5. Create a new session via SessionRegistry (old session preserved for /old)
-  6. Send "wake" notification with summary
+Called by ConsolidationScheduler at 03:00 every day. Three passes so
+notifications read "dreaming, dreaming, wake" instead of interleaved
+"dreaming, wake, dreaming, wake" per session:
+
+  Pass 1 — for each session passing all three gates (created < 24h ago,
+           >= min_messages total messages, >= 3 user messages): send a
+           "dreaming" notification and collect it as pending.
+  Pass 2 — consolidate each pending session silently: extract memories +
+           create/update skills via background review, and save a diary-style
+           episodic summary. set_memory_session is re-applied per entry
+           because the ContextVar would otherwise hold pass 1's last scope.
+  Pass 3 — send one "wake" per chat (once per chat, not per session), merging
+           only the summaries of sessions that succeeded with non-empty text.
+           A chat whose sessions all failed gets "consolidation failed"; one
+           that succeeded but produced no text gets "nothing to consolidate";
+           any failed sessions add a failure count to the message.
+
+Finally, open a new session via SessionRegistry for each consolidated
+legacy thread (old session preserved for /old) and invalidate the memory
+cache.
 """
 
 from __future__ import annotations
@@ -55,7 +67,20 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
     day_counter: dict[int, int] = defaultdict(int)
     consolidated_keys: set[str] = set()
 
+    # Three passes so notifications read "dreaming, dreaming, wake" instead of
+    # interleaved "dreaming, wake, dreaming, wake" per session:
+    #   pass 1 — filter candidates and send all dreaming (one per session)
+    #   pass 2 — consolidate each (silent, no notifications)
+    #   pass 3 — one wake per chat, merging every session's summary in that
+    #            chat into a single message (wake is once per chat, not per session)
+    # set_memory_session is re-applied per entry in pass 2 because the
+    # ContextVar would otherwise hold the last session's scope from pass 1.
+    from src.tools.memory_tools import set_memory_session
+
+    pending: list[dict[str, Any]] = []
+
     try:
+        # Pass 1: filter + announce dreaming
         for thread_id in thread_ids:
             try:
                 state = await state_store.load(thread_id)
@@ -67,8 +92,6 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
 
             chat_id = state.chat_id
             channel_name = state.channel
-
-            from src.tools.memory_tools import set_memory_session
 
             ct = getattr(state, "chat_type", "p2p")
             gid = chat_id if ct != "p2p" else ""
@@ -83,45 +106,74 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
             elif len([m for m in state.messages if m.get("role") == "user"]) < 3:
                 should_consolidate = False
 
-            summary = ""
-            if should_consolidate:
-                await _send_notification(container, channel_name, chat_id, "\U0001f4a4 dreaming...")
-                try:
-                    summary = await _consolidate_session(
-                        agent_loop=agent_loop,
-                        config=config,
-                        messages=state.messages,
-                    )
-                except Exception as e:
-                    logger.error("Consolidation failed for session %s: %s", thread_id, e, exc_info=True)
-                    result["errors"].append(f"{thread_id}: {e}")
-                    await _send_notification(
-                        container, channel_name, chat_id, "\u2600\ufe0f consolidation failed, session preserved"
-                    )
-                    summary = ""
-                else:
-                    result["sessions_processed"] += 1
-                    consolidated_keys.add(re.sub(r":s\d+$", "", thread_id))
-                    if summary:
-                        if "memory" in summary.lower() or "saved" in summary.lower():
-                            result["memories_saved"] += 1
-                        if "skill" in summary.lower() or "patched" in summary.lower() or "created" in summary.lower():
-                            result["skills_updated"] += 1
-
-                    # Save episodic summary (diary-style)
-                    try:
-                        await _save_session_summary(config, state.created_at, state.messages, day_counter)
-                    except Exception as e:
-                        logger.warning("Session summary failed for %s: %s", thread_id, e)
-
-                    wake_msg = (
-                        f"\u2600\ufe0f wake up! {summary}"
-                        if summary
-                        else "\u2600\ufe0f wake up! nothing to consolidate"
-                    )
-                    await _send_notification(container, channel_name, chat_id, wake_msg)
-            else:
+            if not should_consolidate:
                 result["sessions_skipped"] += 1
+                continue
+
+            await _send_notification(container, channel_name, chat_id, "\U0001f4a4 dreaming...")
+            pending.append({"thread_id": thread_id, "state": state, "summary": "", "failed": False})
+
+        # Pass 2: consolidate each (no notifications)
+        for entry in pending:
+            state = entry["state"]
+            thread_id = entry["thread_id"]
+            chat_id = state.chat_id
+            channel_name = state.channel
+
+            ct = getattr(state, "chat_type", "p2p")
+            gid = chat_id if ct != "p2p" else ""
+            set_memory_session(ct, gid)
+
+            try:
+                summary = await _consolidate_session(
+                    agent_loop=agent_loop,
+                    config=config,
+                    messages=state.messages,
+                )
+            except Exception as e:
+                logger.error("Consolidation failed for session %s: %s", thread_id, e, exc_info=True)
+                result["errors"].append(f"{thread_id}: {e}")
+                entry["failed"] = True
+                continue
+
+            result["sessions_processed"] += 1
+            consolidated_keys.add(re.sub(r":s\d+$", "", thread_id))
+            if summary:
+                if "memory" in summary.lower() or "saved" in summary.lower():
+                    result["memories_saved"] += 1
+                if "skill" in summary.lower() or "patched" in summary.lower() or "created" in summary.lower():
+                    result["skills_updated"] += 1
+
+            # Save episodic summary (diary-style)
+            try:
+                await _save_session_summary(config, state.created_at, state.messages, day_counter)
+            except Exception as e:
+                logger.warning("Session summary failed for %s: %s", thread_id, e)
+
+            entry["summary"] = summary or ""
+
+        # Pass 3: one wake per chat, merging its sessions' summaries
+        wake_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for entry in pending:
+            state = entry["state"]
+            wake_groups.setdefault((state.channel or "", state.chat_id or ""), []).append(entry)
+
+        for (channel_name, chat_id), entries in wake_groups.items():
+            if not chat_id:
+                continue
+            parts = [e["summary"] for e in entries if e["summary"] and not e["failed"]]
+            failed_n = sum(1 for e in entries if e["failed"])
+            if parts:
+                wake_msg = "\u2600\ufe0f wake up! " + " \u00b7 ".join(parts)
+            elif failed_n == len(entries):
+                # every session in this chat failed
+                wake_msg = "\u2600\ufe0f consolidation failed, sessions preserved"
+            else:
+                # succeeded but produced no summary text (possibly some failed too)
+                wake_msg = "\u2600\ufe0f wake up! nothing to consolidate"
+            if failed_n:
+                wake_msg += f" ({failed_n} \u4e2a\u4f1a\u8bdd\u6574\u7406\u5931\u8d25)"
+            await _send_notification(container, channel_name, chat_id, wake_msg)
     finally:
         registry = getattr(container, "session_registry", None)
         if registry is not None:
