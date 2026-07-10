@@ -17,7 +17,7 @@ class TestSetupMemoryArchive:
         app.config = SimpleNamespace(
             memory_store=SimpleNamespace(enabled=False, vector_enabled=True),
             model=SimpleNamespace(api_key="", base_url=""),
-            memory=SimpleNamespace(min_score=0.35, max_results=6),
+            memory=SimpleNamespace(max_results=6),
         )
         app.memory_archive_searchers = None
         await app._setup_memory_archive()

@@ -346,9 +346,10 @@ class MemoryConfig(BaseModel):
     db_path: str = "~/.flyclaw/data/memory.db"
     chunk_tokens: int = 400
     chunk_overlap: int = 80
-    min_score: float = 0.35
     max_results: int = 6
     fts_tokenizer: str = "unicode61"
+    semantic_min_score: float = 0.30
+    fts_min_score: float = 0.35
     api_key: str = ""
     extra_paths: list[str] = Field(default_factory=list)
     watch: bool = True

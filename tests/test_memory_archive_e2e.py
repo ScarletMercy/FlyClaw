@@ -201,19 +201,23 @@ class TestMigrationE2E:
         kv_keys = {m["key"] for m in await kv_store.list_all(limit=2000)}
         assert "old_redis_setup" not in kv_keys
 
-        # mode=past 召回 redis
-        result_json = await memory(action="list", query="redis", mode="past", verbose=True)
+        # mode=past 召回 redis（返回 [{key,source,content,category,updated_at,score}]）
+        result_json = await memory(action="list", query="redis", mode="past")
         data = json.loads(result_json)
         assert isinstance(data, list)
-        assert len(data) >= 1, f"expected mode=past to find redis, got {data}"
-        # 找到 redis 那条
-        redis_hits = [d for d in data if d["key"] == "old_redis_setup"]
-        assert len(redis_hits) == 1, f"expected 1 redis hit, got {redis_hits}"
-        hit = redis_hits[0]
+        assert any(d["key"] == "old_redis_setup" for d in data), f"expected mode=past to find redis, got {data}"
+        hit = next(d for d in data if d["key"] == "old_redis_setup")
         assert hit["category"] == "service"
         assert "redis" in hit["content"]
-        # updated_at 从 metadata.updated_ts 回填（300 天前的 epoch）
-        assert hit["updated_at"]  # 非空
+        assert hit["updated_at"]  # updated_ts 回填（300 天前 epoch）
+
+        # get 直接读归档（KV 已无此键，回退 archive 取回，shape 同 KV recall）
+        got = json.loads(await memory(action="get", key="old_redis_setup"))
+        assert "error" not in got, f"get 应回退归档取回，got {got}"
+        assert "redis" in got["content"]
+        assert got["category"] == "service"
+        assert got["updated_at"]  # updated_ts 回填
+        assert got["key"] == "old_redis_setup"
 
     @pytest.mark.asyncio
     async def test_idempotent_rerun(self, isolated_env):
@@ -683,11 +687,17 @@ class TestMigrationE2EFTS5Only:
         kv_keys = {m["key"] for m in await kv_store.list_all(limit=2000)}
         assert "old_redis" not in kv_keys
 
-        # mode=past FTS5 召回 redis
-        result_json = await memory(action="list", query="redis", mode="past", verbose=True)
+        # mode=past FTS5 召回 redis（返回 [{key,source,content,category,updated_at,score}]）
+        result_json = await memory(action="list", query="redis", mode="past")
         data = json.loads(result_json)
         assert isinstance(data, list)
-        redis_hits = [d for d in data if d["key"] == "old_redis"]
-        assert len(redis_hits) == 1, f"FTS5 should find redis, got {data}"
-        assert redis_hits[0]["category"] == "service"
-        assert "redis" in redis_hits[0]["content"]
+        assert any(d["key"] == "old_redis" for d in data), f"FTS5 should find redis, got {data}"
+        hit = next(d for d in data if d["key"] == "old_redis")
+        assert hit["category"] == "service"
+        assert "redis" in hit["content"]
+
+        # get 直接读 FTS5-only 归档（KV 已无此键）
+        got = json.loads(await memory(action="get", key="old_redis"))
+        assert "error" not in got, f"get 应回退 FTS5 归档取回，got {got}"
+        assert "redis" in got["content"]
+        assert got["category"] == "service"

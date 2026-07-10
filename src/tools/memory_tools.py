@@ -756,47 +756,88 @@ async def save_memory(content: str, key: str = "", category: str = "fact") -> st
 # ---------------------------------------------------------------------------
 
 
-async def _list_past(query: str, verbose: bool = False) -> str:
-    """mode=past: 搜向量归档库，回填 key/category/updated_at。
+async def _list_past(query: str) -> list[dict]:
+    """mode=past: 搜归档库，返回 [{key, source, content, category, updated_at, score}, ...]（不去重，semantic 在前）。
 
-    verbose=False（默认）只返回键名字符串数组（与 KV 命中 verbose=False 一致）；
-    verbose=True 返回完整对象数组。
+    语义路与 FTS5 路各自 top max_results=3，合并后不去重（同文档两路命中各保留一条，
+    source 区分 semantic/exact）。score: semantic=vec_score, exact=归一化 BM25。
+    group scope 空 group_id 或归档未启用时抛 ValueError。
     """
     chat_type, group_id = get_memory_scope()
     if chat_type == "group" and not group_id:
-        logger.error("memory mode=past: group scope 但 group_id 为空，阻断")
-        return json.dumps({"error": "group scope 下 group_id 为空"}, ensure_ascii=False)
+        raise ValueError("group scope 下 group_id 为空")
 
     searcher = await get_memory_archive_searcher(chat_type)
     if searcher is None:
-        return json.dumps({"error": "记忆归档未启用"}, ensure_ascii=False)
+        raise ValueError("记忆归档未启用")
 
     if not query.strip():
-        return json.dumps([], ensure_ascii=False)
+        return []
 
-    # 群检索：按 group_id 键值匹配（SQL/LanceDB 层过滤），不靠 path 前缀过滤
+    # 群检索:按 group_id 键值匹配(SQL/LanceDB 层过滤),不靠 path 前缀过滤
     search_group_id = group_id if chat_type == "group" else None
-    results = await searcher.search(query, max_results=20, min_score=0.2, group_id=search_group_id)
+    results = await searcher.search(query, max_results=3, group_id=search_group_id)
 
-    # 反解 key：用已知 scope 构造前缀截取，不靠 split（group_id 可能带冒号）
+    # 反解 key:用已知 scope 构造前缀截取,不靠 split(group_id 可能带冒号)
     prefix = f"kv:g:{group_id}:" if chat_type == "group" else "kv:"
-    formatted = []
-    for r in results[:6]:
+    out: list[dict] = []
+    for r in results:
         path = r.get("path", "")
         rkey = path[len(prefix) :] if path.startswith(prefix) else path
         meta = r.get("metadata") or {}
         updated_ts = meta.get("updated_ts", 0)
-        formatted.append(
+        out.append(
             {
                 "key": rkey,
+                "source": r.get("source", "semantic"),
                 "content": r.get("content", ""),
+                "score": r.get("score", 0),
                 "category": meta.get("category", "fact"),
                 "updated_at": datetime.fromtimestamp(updated_ts).isoformat() if updated_ts else "",
             }
         )
-    if verbose:
-        return json.dumps(formatted, ensure_ascii=False)
-    return json.dumps([f["key"] for f in formatted], ensure_ascii=False)
+    return out
+
+
+async def _extract_relevant_with_llm(query: str, candidates: list[dict]) -> str:
+    """用主模型按 query 从候选记忆提取相关内容，返回自然语言文。
+
+    无候选 -> 返回 []; 无主模型(get_container 未初始化 / agent_loop 缺失)或调用失败 -> 降级返回候选 JSON 列表。
+    主模型取 container.agent_loop._client（ChatClient / FallbackChain 均有 chat_simple）。
+    """
+    if not candidates:
+        return json.dumps([], ensure_ascii=False)
+    try:
+        from src._container import get_container
+
+        container = get_container()
+        client = container.agent_loop._client if container.agent_loop else None
+    except RuntimeError:
+        client = None
+    if client is None:
+        return json.dumps(candidates, ensure_ascii=False)  # 测试/无主模型:降级返回原始列表
+
+    lines = []
+    for i, m in enumerate(candidates, 1):
+        lines.append(
+            f"[{i}] key={m.get('key', '')} category={m.get('category', '')} updated={m.get('updated_at', '')}\n"
+            f"{m.get('content', '')}"
+        )
+    context = "\n\n".join(lines)
+    prompt = (
+        "你是记忆检索助手。根据用户问题，从候选记忆中提取相关内容。\n\n"
+        f"用户问题：{query}\n\n候选记忆：\n{context}\n\n"
+        "要求：\n"
+        "- 只提取与问题相关的记忆内容，按 [key] 要点 的形式简洁列出\n"
+        "- 严禁编造，严禁加入候选之外的任何信息\n"
+        "- 都不相关时只回复「无相关记忆」"
+    )
+    try:
+        result = await client.chat_simple([{"role": "user", "content": prompt}])
+        return result.strip() or json.dumps(candidates, ensure_ascii=False)
+    except Exception as e:
+        logger.warning("past 主模型提取失败，降级返回原始列表: %s", e)
+        return json.dumps(candidates, ensure_ascii=False)
 
 
 async def memory(
@@ -807,7 +848,6 @@ async def memory(
     query: str = "",
     keys: list[str] | None = None,
     mode: Literal["recent", "past"] = "recent",
-    verbose: bool = False,
 ) -> str:
     """管理持久记忆（跨会话保存）。用 action 参数指定操作。
 
@@ -820,10 +860,11 @@ async def memory(
     ACTIONS:
     - save: 保存记忆（自动去重）。需要 content，可选 key/category
     - get: 按键取回完整记忆内容。键名即记忆摘要，先用 list 查看键名
-    - list: 列出记忆。
+    - list: 列出记忆（详情用 get 取）。
         mode="recent"（默认）：搜最近保留区（KV，约最近 7 天/20 条内），关键词匹配；
-                      KV 无命中时自动 fallback 到 archive（past）
-        mode="past"：只搜已归档的旧记忆（archive，FTS5 + 向量 hybrid 或 FTS5-only）
+                      返回键名字符串数组；KV 无命中时自动 fallback 到 archive，fallback 同样返回键名（去重）
+        mode="past"：搜归档库候选，用主模型按 query 提取相关记忆，返回自然语言提取文
+                      （无主模型/失败时降级返回候选 JSON 列表）
         query 为空时 recent 返回全部键名（不 fallback）；past 返回空
     - delete: 删除指定记忆条目。需要 keys 数组
 
@@ -837,7 +878,6 @@ async def memory(
         query: list 用关键词过滤记忆
         keys: 要删除的记忆键名列表（delete 必填）
         mode: list 时的检索池。recent=KV 保留区，past=归档库
-        verbose: list 时是否同时返回完整内容。默认只返回键名
     """
     normalized = (action or "").strip().lower()
 
@@ -853,13 +893,41 @@ async def memory(
     if normalized == "get":
         if not key:
             return json.dumps({"error": "key is required for get action"}, ensure_ascii=False)
-        if is_group:
-            return await s.recall(key, group_id=group_id)
-        return await s.recall(key)
+        raw = await (s.recall(key, group_id=group_id) if is_group else s.recall(key))
+        # KV 未命中 -> 回退归档（迁移走的旧记忆）；取不到则原样返回 KV 错误
+        try:
+            kv_miss = "error" in json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            kv_miss = False
+        if kv_miss:
+            searcher = await get_memory_archive_searcher(chat_type)
+            store = getattr(searcher, "store", None) if searcher else None
+            if store is not None:
+                from src.services.memory_archive_migration import _path_for_kv
+
+                doc = await store.get_document_by_path(_path_for_kv(key, group_id=group_id, is_group=is_group))
+                if doc is not None:
+                    meta = doc.get("metadata") or {}
+                    updated_ts = meta.get("updated_ts", 0)
+                    return json.dumps(
+                        {
+                            "key": key,
+                            "content": doc.get("content", ""),
+                            "category": meta.get("category", "fact"),
+                            "created_at": doc.get("created_at", ""),
+                            "updated_at": datetime.fromtimestamp(updated_ts).isoformat() if updated_ts else "",
+                        },
+                        ensure_ascii=False,
+                    )
+        return raw
 
     if normalized == "list":
         if mode == "past":
-            return await _list_past(query, verbose=verbose)
+            try:
+                candidates = await _list_past(query)
+            except ValueError as e:
+                return json.dumps({"error": str(e)}, ensure_ascii=False)
+            return await _extract_relevant_with_llm(query, candidates)
         # mode="recent"（默认）：查 KV，空则自动 fallback 到 archive
         if is_group:
             items = await s.list_all(query, group_id=group_id)
@@ -867,11 +935,18 @@ async def memory(
             items = await s.list_all(query)
         if not items and query.strip():
             # KV 无命中 → 自动查 archive；archive 未启用则返回空（不报错，保持 recent 行为）
-            if await get_memory_archive_searcher(chat_type) is not None:
-                return await _list_past(query, verbose=verbose)
-            return json.dumps([], ensure_ascii=False)
-        if verbose:
-            return json.dumps(items, ensure_ascii=False)
+            try:
+                past = await _list_past(query)
+            except ValueError:
+                return json.dumps([], ensure_ascii=False)
+            keys: list[str] = []
+            seen: set[str] = set()
+            for r in past:
+                if r["key"] in seen:
+                    continue
+                seen.add(r["key"])
+                keys.append(r["key"])
+            return json.dumps(keys, ensure_ascii=False)
         return json.dumps([i["key"] for i in items], ensure_ascii=False)
 
     if normalized == "delete":

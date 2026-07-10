@@ -72,7 +72,7 @@ class EmbeddingProvider:
             return []
 
         all_embeddings: list[list[float]] = []
-        batch_size = 100
+        batch_size = 10  # doubao-embedding-vision 等限制单次 input ≤10；OpenAI 无副作用
         client = self._get_client()
 
         for i in range(0, len(texts), batch_size):

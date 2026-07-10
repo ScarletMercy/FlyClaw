@@ -1,9 +1,6 @@
 """Tests for src/memory/base.py — BaseMemoryStore, FTS5 search, score normalization, result merging."""
 
-import asyncio
-import tempfile
 from pathlib import Path
-from typing import Optional
 
 import pytest
 
@@ -84,28 +81,6 @@ class TestAddDocument:
         assert count >= 1
 
 
-class TestSearch:
-    @pytest.mark.asyncio
-    async def test_text_search_finds_match(self, store):
-        await store.add_document("doc1.md", "Python is a great programming language")
-        await store.add_document("doc2.md", "Java is also popular for enterprise")
-        results = await store.search(query_text="Python")
-        assert len(results) >= 1
-        assert any("Python" in r["content"] for r in results)
-
-    @pytest.mark.asyncio
-    async def test_text_search_no_match(self, store):
-        await store.add_document("doc1.md", "Hello world")
-        results = await store.search(query_text="xyzzy_not_found_12345")
-        assert len(results) == 0
-
-    @pytest.mark.asyncio
-    async def test_search_empty_query(self, store):
-        await store.add_document("doc1.md", "Some content")
-        results = await store.search(query_text="")
-        assert results == []
-
-
 class TestDeleteDocument:
     @pytest.mark.asyncio
     async def test_delete_removes_chunks(self, store):
@@ -178,48 +153,3 @@ class TestNormalizeFtsScores:
         out = BaseMemoryStore._normalize_fts_scores(results, min_score=0.99)
         # Only the best match should survive (if any)
         assert all(r["score"] >= 0.99 for r in out)
-
-
-# ── Result merging ─────────────────────────────────────────
-
-
-class TestMergeResults:
-    @pytest.mark.asyncio
-    async def test_merge_fts_only(self, store):
-        fts_results = [
-            {"id": 1, "fts_score": -5.0, "vec_score": 0.0, "content": "a"},
-            {"id": 2, "fts_score": -3.0, "vec_score": 0.0, "content": "b"},
-        ]
-        result = store._merge_results(fts_results, [], vector_weight=0.7, max_results=5, min_score=0.0)
-        assert len(result) == 2
-
-    @pytest.mark.asyncio
-    async def test_merge_vec_only(self, store):
-        vec_results = [
-            {"id": 1, "fts_score": 0.0, "vec_score": 0.9, "content": "a"},
-        ]
-        result = store._merge_results([], vec_results, vector_weight=0.7, max_results=5, min_score=0.0)
-        assert len(result) == 1
-
-    @pytest.mark.asyncio
-    async def test_merge_both(self, store):
-        fts_results = [
-            {"id": 1, "fts_score": -5.0, "vec_score": 0.0, "content": "a"},
-        ]
-        vec_results = [
-            {"id": 1, "fts_score": 0.0, "vec_score": 0.9, "content": "a"},
-            {"id": 2, "fts_score": 0.0, "vec_score": 0.5, "content": "b"},
-        ]
-        result = store._merge_results(fts_results, vec_results, vector_weight=0.7, max_results=5, min_score=0.0)
-        assert len(result) >= 1
-        # ID 1 should have highest score (both FTS + vec)
-        id1 = next(r for r in result if r["id"] == 1)
-        id2 = next((r for r in result if r["id"] == 2), None)
-        if id2:
-            assert id1["score"] > id2["score"]
-
-    @pytest.mark.asyncio
-    async def test_merge_respects_max_results(self, store):
-        fts = [{"id": i, "fts_score": -float(i), "vec_score": 0.0, "content": f"c{i}"} for i in range(10)]
-        result = store._merge_results(fts, [], max_results=3, min_score=0.0)
-        assert len(result) <= 3

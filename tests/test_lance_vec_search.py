@@ -26,6 +26,22 @@ class FakeEmbeddings:
         pass
 
 
+class ConfigurableEmbeddings:
+    """查询向量可配置--测 semantic_min_score 过滤需控制 vec_score 高低(FakeEmbeddings 固定)。"""
+
+    def __init__(self, query_vec: list[float]):
+        self._vec = query_vec
+
+    async def embed_query(self, text: str) -> list[float]:
+        return self._vec
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return [self._vec for _ in texts]
+
+    async def close(self):
+        pass
+
+
 @pytest.fixture
 async def store(tmp_path):
     s = LanceMemoryStore(
@@ -94,7 +110,7 @@ class TestLanceVecSearch:
         searcher = MemorySearcher(store, FakeEmbeddings(), MemoryConfig())
         # query_text="kappa" FTS 匹配不到任何 token，但 embed_query 返回的向量
         # 与存储的 [0.1,0.2,0.3,0.4] 完全相同 → 向量路径应召回
-        results = await searcher.search("kappa", min_score=0.0)
+        results = await searcher.search("kappa")
         assert len(results) >= 1, (
             "vector path should retrieve even when FTS misses — "
             "if empty, vector search is broken (check pandas/.to_list())"
@@ -195,3 +211,94 @@ class TestLanceVecSearch:
         assert len(hits) == 1, "向量应写入并检索到"
         assert hits[0]["metadata"] == {"category": "fact"}, f"metadata 应随向量写入 LanceDB，got {hits[0]['metadata']}"
         await store.close()
+
+    @pytest.mark.asyncio
+    async def test_search_results_carry_source_label(self, store):
+        """search() 返回带 source 标签(semantic/exact),语义组在前,同文档两路命中不去重。
+
+        回归守:source 是双路分离召回的新契约字段,标签打反/漏打都该被 catch。
+        """
+        await store.add_document(
+            "kv:k1", "redis 部署笔记", metadata={"category": "fact", "updated_ts": 1.0, "group_id": ""}, chunk=False
+        )
+        ids = await store.get_chunk_ids_for_path("kv:k1")
+        await store.add_embeddings([ids[0]], [[0.1, 0.2, 0.3, 0.4]])
+
+        # 查询向量与存储向量完全相同 -> vec_score=1.0; query="redis" FTS 也命中 -> 两路各召回同一条
+        searcher = MemorySearcher(store, FakeEmbeddings(), MemoryConfig())
+        results = await searcher.search("redis")
+        sources = [r["source"] for r in results]
+        assert "semantic" in sources and "exact" in sources, f"两路都应命中, got sources={sources}"
+        assert sources.index("semantic") < sources.index("exact"), "语义组应排在 exact 前"
+        # 不去重:同 path 两条, source 不同
+        assert len(results) == 2, f"同文档两路命中应各保留一条, got {len(results)}"
+        assert results[0]["path"] == results[1]["path"] == "kv:k1"
+
+    @pytest.mark.asyncio
+    async def test_search_exact_label_carries_fts_data_when_vector_filtered(self, store):
+        """向量被 semantic_min_score 过滤 + FTS 命中 -> 只剩 exact 标签, 证 exact 标签下是 FTS 数据。
+
+        与 test_hybrid_uses_vector_when_fts_misses 对称: 那个证「FTS miss 时 semantic 标签下是向量数据」,
+        这个证「向量 miss 时 exact 标签下是 FTS 数据」。两者合起来锁住 source 标签与数据的对应关系,
+        堵住「标签对、数据放反」的盲区。
+        """
+        await store.add_document(
+            "kv:k1", "redis 部署笔记", metadata={"category": "fact", "updated_ts": 1.0, "group_id": ""}, chunk=False
+        )
+        ids = await store.get_chunk_ids_for_path("kv:k1")
+        await store.add_embeddings([ids[0]], [[0.1, 0.2, 0.3, 0.4]])
+
+        # 查询向量不相似 -> vec_score=0.13 < 0.30(默认) 被 semantic 路过滤; query="redis" FTS 命中
+        searcher = MemorySearcher(store, ConfigurableEmbeddings([0.9, 0.9, 0.9, 0.9]), MemoryConfig())
+        results = await searcher.search("redis")
+        sources = [r["source"] for r in results]
+        assert sources == ["exact"], f"向量被滤应只剩 exact 路, got {sources}"
+        assert results[0]["path"] == "kv:k1"
+
+    @pytest.mark.asyncio
+    async def test_semantic_min_score_filters_low_similarity(self, store):
+        """semantic_min_score 真过滤:低相似度向量在高阈值下被滤,低阈值下保留(对称于 FTS 路)。
+
+        存 [0.1,0.2,0.3,0.4], 查 [0.9,0.9,0.9,0.9]:
+          L2²=0.8²+0.7²+0.6²+0.5²=1.74, vec_score=1-1.74/2≈0.13。
+        query="kappa" 让 FTS miss -> exact 路空, 只看 semantic 路过滤行为。
+        """
+        await store.add_document(
+            "kv:k1", "alpha beta gamma", metadata={"category": "fact", "updated_ts": 1.0, "group_id": ""}, chunk=False
+        )
+        ids = await store.get_chunk_ids_for_path("kv:k1")
+        await store.add_embeddings([ids[0]], [[0.1, 0.2, 0.3, 0.4]])
+
+        emb_low = ConfigurableEmbeddings([0.9, 0.9, 0.9, 0.9])  # vec_score≈0.13
+
+        # 阈值 0.0 -> 0.13 通过, semantic 路召回
+        r_low = await MemorySearcher(store, emb_low, MemoryConfig(semantic_min_score=0.0)).search("kappa")
+        assert any(r["source"] == "semantic" for r in r_low), f"阈值0.0应召回0.13分, got {r_low}"
+
+        # 阈值 0.30 -> 0.13 被滤, semantic 路空
+        r_high = await MemorySearcher(store, emb_low, MemoryConfig(semantic_min_score=0.30)).search("kappa")
+        assert all(r["source"] != "semantic" for r in r_high), f"阈值0.30应过滤0.13分, got {r_high}"
+
+    @pytest.mark.asyncio
+    async def test_semantic_min_score_boundary_inclusive(self, store):
+        """>= 边界: vec_score 恰等于阈值时召回(>= 而非 >)。
+
+        先从 _vec_search 取实际 vec_score 做阈值, 规避浮点手算偏差--阈值与分同一浮点值,
+        >= 必通过、严格大于必过滤。代码若把 >= 改成 >, 首条断言即失败。
+        """
+        await store.add_document(
+            "kv:k1", "alpha beta gamma", metadata={"category": "fact", "updated_ts": 1.0, "group_id": ""}, chunk=False
+        )
+        ids = await store.get_chunk_ids_for_path("kv:k1")
+        await store.add_embeddings([ids[0]], [[0.1, 0.2, 0.3, 0.4]])
+
+        emb = ConfigurableEmbeddings([0.9, 0.9, 0.9, 0.9])
+        actual = (await store._vec_search([0.9, 0.9, 0.9, 0.9], limit=5))[0]["vec_score"]
+
+        # 阈值 = 实际分 -> >= 通过, semantic 路召回
+        r_eq = await MemorySearcher(store, emb, MemoryConfig(semantic_min_score=actual)).search("kappa")
+        assert any(r["source"] == "semantic" for r in r_eq), f"分恰等于阈值应召回(>=), got {r_eq}"
+
+        # 阈值 = 实际分 + 0.001 -> 严格大于, 过滤
+        r_above = await MemorySearcher(store, emb, MemoryConfig(semantic_min_score=actual + 0.001)).search("kappa")
+        assert all(r["source"] != "semantic" for r in r_above), f"阈值略高于分应过滤, got {r_above}"

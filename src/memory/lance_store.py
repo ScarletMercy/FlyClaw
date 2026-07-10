@@ -127,7 +127,7 @@ class LanceMemoryStore(BaseMemoryStore):
                         "content": chunk["content"],
                         "metadata": meta,
                         "fts_score": 0.0,
-                        "vec_score": 1.0 - float(r.get("_distance", 1.0)),
+                        "vec_score": 1.0 - float(r.get("_distance", 2.0)) / 2.0,  # L2²→余弦: cos = 1 - L2²/2
                     }
                 )
             return results

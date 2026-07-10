@@ -153,33 +153,25 @@ class BaseMemoryStore(ABC):
         rows = await cursor.fetchall()
         return [row["id"] for row in rows]
 
-    async def search(
-        self,
-        query_embedding: Optional[list[float]] = None,
-        query_text: str = "",
-        max_results: int = 6,
-        vector_weight: float = 0.7,
-        min_score: float = 0.35,
-        group_id: Optional[str] = None,
-    ) -> list[dict]:
-        """Hybrid search: FTS5 BM25 + optional vector similarity.
+    async def get_document_by_path(self, path: str) -> Optional[dict]:
+        """取 path 的首个 chunk（KV 记忆归档时 chunk=False，每条单 chunk）。
 
-        group_id 非空时按群键值过滤（不再靠 path 前缀）。
+        返回 {content, metadata, created_at}；无则 None。供 get 按键回退归档用。
         """
-        fts_results = await self._fts_search(query_text, limit=max(20, max_results * 3), group_id=group_id)
-
-        if not query_embedding or not self._has_vector_support():
-            return self._normalize_fts_scores(fts_results[:max_results], min_score)
-
-        vec_results = await self._vec_search(query_embedding, limit=max(24, max_results * 4), group_id=group_id)
-
-        return self._merge_results(
-            fts_results,
-            vec_results,
-            vector_weight=vector_weight,
-            max_results=max_results,
-            min_score=min_score,
+        cursor = await self._conn.execute(
+            "SELECT content, metadata, created_at FROM chunks WHERE path = ? ORDER BY chunk_index LIMIT 1",
+            (path,),
         )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        meta = None
+        if row["metadata"]:
+            try:
+                meta = json.loads(row["metadata"])
+            except (json.JSONDecodeError, TypeError):
+                meta = None
+        return {"content": row["content"], "metadata": meta or {}, "created_at": row["created_at"]}
 
     async def delete_document(self, path: str) -> int:
         """Delete all chunks for a document path. Returns count deleted."""
@@ -288,54 +280,31 @@ class BaseMemoryStore(ABC):
         normalized.sort(key=lambda x: x["score"], reverse=True)
         return normalized
 
-    def _merge_results(
+    async def search_split(
         self,
-        fts_results: list[dict],
-        vec_results: list[dict],
-        vector_weight: float = 0.7,
+        query_embedding: Optional[list[float]] = None,
+        query_text: str = "",
         max_results: int = 6,
-        min_score: float = 0.35,
-    ) -> list[dict]:
-        """Merge FTS5 and vector results with weighted scoring."""
-        fts_map: dict[int, dict] = {r["id"]: r for r in fts_results}
-        combined: dict[int, dict] = {}
+        semantic_min_score: float = 0.30,
+        fts_min_score: float = 0.35,
+        group_id: Optional[str] = None,
+    ) -> dict[str, list[dict]]:
+        """两路分别召回+排序+过滤,返回 {"semantic": [...], "exact": [...]}。
 
-        for r in vec_results:
-            cid = r["id"]
-            combined[cid] = r.copy()
-            if cid in fts_map:
-                combined[cid]["fts_score"] = fts_map[cid]["fts_score"]
+        semantic: 向量余弦绝对值排序,过滤 < semantic_min_score,top max_results,每条 score=vec_score。
+        exact:    FTS5 BM25 归一化(_normalize_fts_scores),过滤 < fts_min_score,top max_results。
+        不去重(两路各自表达)。group_id 在 SQL/LanceDB 层先过滤再截断(守 bug #8)。
+        """
+        semantic: list[dict] = []
+        if query_embedding and self._has_vector_support():
+            vec = await self._vec_search(query_embedding, limit=max(24, max_results * 4), group_id=group_id)
+            semantic = [r for r in vec if r["vec_score"] >= semantic_min_score]
+            semantic.sort(key=lambda x: x["vec_score"], reverse=True)
+            semantic = semantic[:max_results]
+            for r in semantic:
+                r["score"] = r["vec_score"]
 
-        for r in fts_results:
-            if r["id"] not in combined:
-                combined[r["id"]] = r.copy()
+        fts_raw = await self._fts_search(query_text, limit=max(20, max_results * 3), group_id=group_id)
+        exact = self._normalize_fts_scores(fts_raw, min_score=fts_min_score)[:max_results]
 
-        # BM25 返回负值（越负 = 匹配越好），取 abs 后归一化
-        fts_scores = [abs(r["fts_score"]) for r in combined.values() if r["fts_score"] != 0]
-        vec_scores = [r["vec_score"] for r in combined.values() if r["vec_score"] != 0]
-
-        fts_min = min(fts_scores) if fts_scores else 0
-        fts_max = max(fts_scores) if fts_scores else 1
-        vec_min = min(vec_scores) if vec_scores else 0
-        vec_max = max(vec_scores) if vec_scores else 1
-        fts_range = fts_max - fts_min if fts_max != fts_min else 1
-        vec_range = vec_max - vec_min if vec_max != vec_min else 1
-
-        for r in combined.values():
-            if r["fts_score"]:
-                fts_norm = (
-                    1.0 if len(fts_scores) <= 1 or fts_max == fts_min else (abs(r["fts_score"]) - fts_min) / fts_range
-                )
-            else:
-                fts_norm = 0
-
-            if r["vec_score"]:
-                vec_norm = 1.0 if len(vec_scores) <= 1 or vec_max == vec_min else (r["vec_score"] - vec_min) / vec_range
-            else:
-                vec_norm = 0
-
-            r["score"] = vector_weight * vec_norm + (1 - vector_weight) * fts_norm
-
-        results = [r for r in combined.values() if r["score"] >= min_score]
-        results.sort(key=lambda x: x["score"], reverse=True)
-        return results[:max_results]
+        return {"semantic": semantic, "exact": exact}

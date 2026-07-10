@@ -632,11 +632,13 @@ dependencies = [
     { name = "edge-tts" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "lancedb" },
     { name = "markdownify" },
     { name = "openai" },
     { name = "pillow", marker = "sys_platform == 'win32'" },
     { name = "playwright" },
     { name = "playwright-stealth" },
+    { name = "pyarrow" },
     { name = "pyautogui", marker = "sys_platform == 'win32'" },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -657,10 +659,6 @@ dev = [
     { name = "ruff" },
     { name = "types-pyyaml" },
 ]
-memory-lancedb = [
-    { name = "lancedb" },
-    { name = "pyarrow" },
-]
 
 [package.metadata]
 requires-dist = [
@@ -673,13 +671,13 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.28" },
-    { name = "lancedb", marker = "extra == 'memory-lancedb'", specifier = ">=0.6" },
+    { name = "lancedb", specifier = ">=0.6" },
     { name = "markdownify", specifier = ">=0.14" },
     { name = "openai", specifier = ">=1.0" },
     { name = "pillow", marker = "sys_platform == 'win32'", specifier = ">=10.0" },
     { name = "playwright", specifier = ">=1.40" },
     { name = "playwright-stealth", specifier = ">=1.0" },
-    { name = "pyarrow", marker = "extra == 'memory-lancedb'" },
+    { name = "pyarrow" },
     { name = "pyautogui", marker = "sys_platform == 'win32'", specifier = ">=0.9.54" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
@@ -695,7 +693,7 @@ requires-dist = [
     { name = "watchfiles", specifier = ">=1.0" },
     { name = "websockets", specifier = ">=13.0" },
 ]
-provides-extras = ["memory-lancedb", "dev"]
+provides-extras = ["dev"]
 
 [[package]]
 name = "frozenlist"

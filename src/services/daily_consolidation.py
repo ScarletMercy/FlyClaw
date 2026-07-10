@@ -81,6 +81,12 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
 
     try:
         # Pass 1: filter + announce dreaming
+        logger.info(
+            "Consolidation Pass1: 扫描 %d 个 thread, cutoff=%s, min_messages=%d",
+            len(thread_ids),
+            datetime.datetime.fromtimestamp(cutoff_ts).isoformat(),
+            min_messages,
+        )
         for thread_id in thread_ids:
             try:
                 state = await state_store.load(thread_id)
@@ -110,10 +116,14 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
                 result["sessions_skipped"] += 1
                 continue
 
+            logger.info("💤 dreaming 通知 -> thread=%s chat=%s channel=%s", thread_id, chat_id, channel_name)
             await _send_notification(container, channel_name, chat_id, "\U0001f4a4 dreaming...")
             pending.append({"thread_id": thread_id, "state": state, "summary": "", "failed": False})
 
+        logger.info("Consolidation Pass1 完成: %d 个会话过 gate", len(pending))
+
         # Pass 2: consolidate each (no notifications)
+        logger.info("Consolidation Pass2: 整理 %d 个 pending 会话", len(pending))
         for entry in pending:
             state = entry["state"]
             thread_id = entry["thread_id"]
@@ -124,6 +134,7 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
             gid = chat_id if ct != "p2p" else ""
             set_memory_session(ct, gid)
 
+            logger.info("会话整理开始: thread=%s (%d 条消息)", thread_id, len(state.messages))
             try:
                 summary = await _consolidate_session(
                     agent_loop=agent_loop,
@@ -135,6 +146,8 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
                 result["errors"].append(f"{thread_id}: {e}")
                 entry["failed"] = True
                 continue
+
+            logger.info("会话整理完成: thread=%s summary=%s", thread_id, (summary or "")[:80])
 
             result["sessions_processed"] += 1
             consolidated_keys.add(re.sub(r":s\d+$", "", thread_id))
@@ -173,6 +186,14 @@ async def run_daily_consolidation(container: Any) -> dict[str, Any]:
                 wake_msg = "\u2600\ufe0f wake up! nothing to consolidate"
             if failed_n:
                 wake_msg += f" ({failed_n} \u4e2a\u4f1a\u8bdd\u6574\u7406\u5931\u8d25)"
+            logger.info(
+                "\u2600\ufe0f wake \u901a\u77e5 -> chat=%s channel=%s failed=%d/%d msg=%s",
+                chat_id,
+                channel_name,
+                failed_n,
+                len(entries),
+                wake_msg[:80],
+            )
             await _send_notification(container, channel_name, chat_id, wake_msg)
     finally:
         registry = getattr(container, "session_registry", None)

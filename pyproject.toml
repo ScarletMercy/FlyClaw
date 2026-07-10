@@ -27,10 +27,11 @@ dependencies = [
     "playwright>=1.40",
     "playwright-stealth>=1.0",
     "aiofiles>=25.1.0",
+    "lancedb>=0.6",
+    "pyarrow",
 ]
 
 [project.optional-dependencies]
-memory-lancedb = ["lancedb>=0.6", "pyarrow"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.24", "pytest-cov>=6.0", "pytest-timeout>=2.3", "ruff>=0.8", "httpx>=0.28", "types-PyYAML>=6.0"]
 
 [tool.ruff]

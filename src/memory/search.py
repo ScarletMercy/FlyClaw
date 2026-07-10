@@ -24,16 +24,15 @@ class MemorySearcher:
         self,
         query: str,
         max_results: Optional[int] = None,
-        min_score: Optional[float] = None,
         group_id: Optional[str] = None,
     ) -> list[dict]:
-        """Search memory for relevant chunks.
+        """Search memory for relevant chunks. 两路分别返回,带 source 标签。
 
-        Returns list of dicts with keys: content, path, score, chunk_index, metadata.
+        Returns list of dicts: content, path, score, chunk_index, metadata, source
+        (source="semantic" 向量召回 / "exact" FTS5 精准命中)。语义组在前,不去重。
         group_id 非空时按群键值过滤（archive 群检索用）。
         """
         max_results = max_results or self.config.max_results
-        effective_min_score = min_score if min_score is not None else self.config.min_score
 
         query_embedding = None
         if self.embeddings is not None and self.store.dimensions > 0:
@@ -42,27 +41,29 @@ class MemorySearcher:
             except Exception as e:
                 logger.warning("Query embedding failed, using FTS5-only: %s", e)
 
-        results = await self.store.search(
+        split = await self.store.search_split(
             query_embedding=query_embedding,
             query_text=query,
             max_results=max_results,
-            vector_weight=getattr(self.config, "vector_weight", 0.7),
-            min_score=effective_min_score,
+            semantic_min_score=getattr(self.config, "semantic_min_score", 0.30),
+            fts_min_score=getattr(self.config, "fts_min_score", 0.35),
             group_id=group_id,
         )
 
-        formatted = []
-        for r in results:
-            formatted.append(
-                {
-                    "content": r["content"],
-                    "path": r["path"],
-                    "score": round(r.get("score", 0), 3),
-                    "chunk_index": r.get("chunk_index", 0),
-                    "metadata": r.get("metadata"),
-                }
-            )
-        return formatted
+        out = []
+        for source, group in (("semantic", split["semantic"]), ("exact", split["exact"])):
+            for r in group:
+                out.append(
+                    {
+                        "content": r["content"],
+                        "path": r["path"],
+                        "score": round(r.get("score", 0), 3),
+                        "chunk_index": r.get("chunk_index", 0),
+                        "metadata": r.get("metadata"),
+                        "source": source,
+                    }
+                )
+        return out
 
     async def close(self) -> None:
         """Close the underlying store and the embedding provider's connection pool."""

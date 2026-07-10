@@ -1,8 +1,6 @@
 """Tests for memory store (SQLite + FTS5)."""
 
 import asyncio
-import os
-import sys
 
 import pytest
 
@@ -26,7 +24,7 @@ def _run(coro):
 class TestMemoryStore:
     def test_add_and_search(self, store):
         _run(store.add_document("doc1", "Python is a programming language. It is versatile.", {"source": "test"}))
-        results = _run(store.search(query_text="Python programming"))
+        results = _run(store.search_split(query_text="Python programming"))["exact"]
         assert len(results) > 0
         assert "Python" in results[0]["content"]
 
@@ -35,19 +33,10 @@ class TestMemoryStore:
         count = _run(store.add_document("doc1", long_text))
         assert count >= 1
 
-    def test_search_empty_query(self, store):
-        _run(store.add_document("doc1", "Some content here"))
-        results = _run(store.search(query_text=""))
-        assert results == []
-
-    def test_search_no_results(self, store):
-        results = _run(store.search(query_text="nonexistent_topic_xyz"))
-        assert results == []
-
     def test_delete_document(self, store):
         _run(store.add_document("doc1", "Unique content about quantum computing."))
         _run(store.delete_document("doc1"))
-        results = _run(store.search(query_text="quantum computing"))
+        results = _run(store.search_split(query_text="quantum computing"))["exact"]
         assert results == []
 
     def test_delete_nonexistent(self, store):
@@ -88,7 +77,7 @@ class TestMemoryStore:
     def test_overwrite_document(self, store):
         _run(store.add_document("doc1", "Original content about algorithms."))
         _run(store.add_document("doc1", "Updated content about data structures."))
-        results = _run(store.search(query_text="data structures"))
+        results = _run(store.search_split(query_text="data structures"))["exact"]
         assert len(results) > 0
         # Should find the updated content
         found = any("data structures" in r["content"] for r in results)
