@@ -82,10 +82,15 @@ class TestSqliteVecSearch:
         ids = await store.get_chunk_ids_for_path("kv:k1")
         await store.add_embeddings([ids[0]], [[0.1, 0.2, 0.3, 0.4]])
 
-        # L2²=1.74 -> vec_score≈0.13
+        # L2²=1.74 -> vec_score = 1 - L2²/2 = 0.13。钉死绝对值,防公式回归:
+        # 若误把 sqlite-vec 的 L2 当 L2²(改成 1 - distance/2)会得 0.34;
+        # 若 sqlite-vec 改返回 L2² 而代码仍 1 - distance²/2 会得 -0.51。
+        # 两者都偏离 0.13 -> 被抓。(sqlite-vec 实测返回 L2,非 L2²。)
         hits = await store._vec_search([0.9, 0.9, 0.9, 0.9], limit=5)
         assert len(hits) == 1
-        assert hits[0]["vec_score"] < 0.5, f"dissimilar should have low vec_score, got {hits[0]['vec_score']}"
+        assert hits[0]["vec_score"] == pytest.approx(0.13, abs=0.01), (
+            f"vec_score 应钉在 1-L2²/2=0.13, got {hits[0]['vec_score']}"
+        )
 
     @pytest.mark.asyncio
     async def test_hybrid_uses_vector_when_fts_misses(self, store):

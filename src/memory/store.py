@@ -1,9 +1,9 @@
 """SQLite-backed memory store with FTS5 (BM25) search.
 
-Pure FTS5-only —— 向量搜索/存储/删除能力由 LanceMemoryStore 承担。
+Pure FTS5-only —— 向量搜索/存储/删除能力由向量后端承担(默认 SqliteVecMemoryStore,可选 LanceMemoryStore)。
 BaseMemoryStore 的四个向量钩子（_has_vector_support / _vec_search /
 _store_embeddings / _delete_vectors）在此类沿用基类空实现
-（FTS5-only store 不支持向量）；真实实现见 LanceMemoryStore。
+（FTS5-only store 不支持向量）；默认实现见 SqliteVecMemoryStore。
 """
 
 from __future__ import annotations

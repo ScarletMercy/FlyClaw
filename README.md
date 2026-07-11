@@ -1,6 +1,6 @@
 # FlyClaw
 
-轻量级多渠道 AI 助手框架。运行时仅 ~100MB 内存，39 个工具（含浏览器/画布/桌面控制等可选扩展），支持 QQ/微信渠道接入。事件驱动架构，全异步设计。
+轻量级多渠道 AI 助手框架。运行时仅 ~100MB 内存，39 个工具（含浏览器/桌面控制等可选扩展），支持 QQ/微信渠道接入。事件驱动架构，全异步设计。
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![GitHub](https://img.shields.io/badge/GitHub-ScarletMercy%2FFlyClaw-blue?logo=github)](https://github.com/ScarletMercy/FlyClaw)
@@ -96,7 +96,7 @@ tools:
 
 memory:
   enabled: true
-  backend: "sqlite"              # sqlite | lancedb
+  backend: "sqlite"              # sqlite | sqlite_vec | lancedb
 ```
 
 ### 环境变量
@@ -174,7 +174,7 @@ WebSocket 断线**永不放弃重连**（backoff 1→2→5→10→30→60s 封�
 
 **记忆**
 
-- `memory` — KV 记忆存储（save/get/list/delete），SQLite + FTS5 全文搜索，自动检测用户记忆意图
+- `memory` — KV 记忆存储（save/get/list/delete；mode=past 可从归档库语义召回并提取），SQLite + FTS5 全文搜索，自动检测用户记忆意图
 
 **定时任务**
 
@@ -207,10 +207,6 @@ WebSocket 断线**永不放弃重连**（backoff 1→2→5→10→30→60s 封�
 - `browser_navigate` / `browser_snapshot` / `browser_click` / `browser_type` / `browser_scroll` / `browser_back` / `browser_press` / `browser_screenshot` / `browser_console` / `browser_close`
 - Accessibility Tree 快照 + 元素引用（@e1, @e2...），反检测注入
 
-**Canvas 画布**（`canvas.enabled`）
-
-- `canvas_render` / `canvas_navigate` / `canvas_eval` — AI 生成 HTML 并实时预览
-
 **Windows 桌面控制**（仅 Windows，`tools.windows_use.enabled`）
 
 - `windows_screenshot` / `windows_press` / `windows_hotkey` — 截图、按键、组合键
@@ -230,7 +226,7 @@ WebSocket 断线**永不放弃重连**（backoff 1→2→5→10→30→60s 封�
 记忆系统采用混合架构，同时支持关键词搜索和语义搜索：
 
 - **FTS5 全文搜索** — 基于 SQLite FTS5（unicode61 分词），开箱即用
-- **向量语义搜索**（可选） — 基于 LanceDB 后端
+- **向量语义搜索**（可选） — 默认 sqlite-vec 后端，可选 LanceDB
 - **自动记忆提取** — 通过正则模式匹配识别对话中的记忆意图，自动提取并存储值得记忆的事实片段
 - **Markdown 感知分块** — 按 Markdown 结构智能分块，保留语义完整性
 - **自动索引** — 配置 `memory.extra_paths` 可自动索引外部文件
@@ -291,6 +287,13 @@ Gateway 提供 OpenAI 兼容接口，任何支持 OpenAI API 的客户端均可�
 | `/auto` | 自动任务模式 |
 | `/compress` | 手动压缩上下文 |
 | `/rounds` | 查看当前轮次 |
+| `/approval` | 查看/切换命令审批模式 |
+| `/progress` | 工具进度通知开关 |
+| `/interrupt` | 中断当前任务 |
+| `/steer` | 向忙碌中的代理发送引导消息 |
+| `/timezone` | 设置时区 |
+| `/lang` | 切换界面语言 |
+| `/restart` | 重启服务 |
 
 ### 数据目录
 
