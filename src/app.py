@@ -216,25 +216,26 @@ class ServiceContainer:
 
             backend = getattr(self.config.memory, "backend", "sqlite")
             dimensions = getattr(self.config.memory, "embedding_dimensions", 1536)
-            if backend == "lancedb":
-                from src.memory.lance_store import LanceMemoryStore
-
-                lancedb_uri = getattr(
-                    self.config.memory, "lancedb_uri", str(_get_flyclaw_data_dir() / "memory_lancedb")
-                )
-                store = LanceMemoryStore(
-                    self.config.memory.db_path,
-                    dimensions=dimensions,
-                    fts_tokenizer=self.config.memory.fts_tokenizer,
-                    lancedb_uri=lancedb_uri,
-                )
-            else:
+            if backend == "sqlite":
                 from src.memory.store import MemoryStore
 
                 store = MemoryStore(
                     self.config.memory.db_path,
                     dimensions=dimensions,
                     fts_tokenizer=self.config.memory.fts_tokenizer,
+                )
+            else:
+                from src.memory.factory import make_vector_store
+
+                lancedb_uri = getattr(
+                    self.config.memory, "lancedb_uri", str(_get_flyclaw_data_dir() / "memory_lancedb")
+                )
+                store = make_vector_store(
+                    backend=backend,
+                    db_path=self.config.memory.db_path,
+                    dimensions=dimensions,
+                    fts_tokenizer=self.config.memory.fts_tokenizer,
+                    lancedb_uri=lancedb_uri,
                 )
             await store.initialize()
 
@@ -283,10 +284,15 @@ class ServiceContainer:
 
             def _make_searcher(db_path: str, lance_uri: str):
                 if vector_on:
-                    from src.memory.lance_store import LanceMemoryStore
+                    from src.memory.factory import make_vector_store
                     from src.memory.embeddings import EmbeddingProvider
 
-                    store = LanceMemoryStore(db_path=db_path, dimensions=dims, lancedb_uri=lance_uri)
+                    store = make_vector_store(
+                        backend=getattr(ms, "vector_backend", "sqlite_vec"),
+                        db_path=db_path,
+                        dimensions=dims,
+                        lancedb_uri=lance_uri,
+                    )
                     emb = EmbeddingProvider.from_vector_config(ms, self.config.model)
                 else:
                     from src.memory.store import MemoryStore

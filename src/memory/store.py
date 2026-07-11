@@ -2,7 +2,8 @@
 
 Pure FTS5-only —— 向量搜索/存储/删除能力由 LanceMemoryStore 承担。
 BaseMemoryStore 的四个向量钩子（_has_vector_support / _vec_search /
-_store_embeddings / _delete_vectors）在此类用默认空实现，不接入 sqlite-vec。
+_store_embeddings / _delete_vectors）在此类沿用基类空实现
+（FTS5-only store 不支持向量）；真实实现见 LanceMemoryStore。
 """
 
 from __future__ import annotations

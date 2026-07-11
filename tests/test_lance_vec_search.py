@@ -8,6 +8,9 @@ from __future__ import annotations
 
 import pytest
 
+# lancedb 现为可选后端(默认 sqlite-vec);未装时跳过 LanceDB 路径测试
+pytest.importorskip("lancedb")
+
 from src.config import MemoryConfig
 from src.memory.lance_store import LanceMemoryStore
 from src.memory.search import MemorySearcher

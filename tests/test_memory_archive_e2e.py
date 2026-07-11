@@ -9,7 +9,7 @@
   3. KV 只留保留区（近期 + top20 并集），旧记忆进 vec archive
   4. memory(action=list, mode=past) 能召回已归档旧记忆，回填 key/category/updated_at
 
-vec 后端用 src.memory.lance_store.LanceMemoryStore（生产真实后端，lancedb + FTS5 hybrid）。
+vec 后端用 src.memory.sqlitevec_store.SqliteVecMemoryStore（生产真实后端，sqlite-vec + FTS5 hybrid）。
 fake embeddings 的向量会真实写入 LanceDB，search 走 hybrid（FTS5 BM25 + 向量相似）。
 本测试验证的是流程正确性，不是向量相似质量——embeddings 用固定向量，FTS 主导召回。
 """
@@ -23,8 +23,8 @@ from types import SimpleNamespace
 import pytest
 
 from src.config import MemoryConfig, MemoryStoreConfig
-from src.memory.lance_store import LanceMemoryStore
 from src.memory.search import MemorySearcher
+from src.memory.sqlitevec_store import SqliteVecMemoryStore
 from src.memory.store import MemoryStore as VecMemoryStore
 from src.services.memory_archive_migration import migrate_kv_to_archive
 from src.tools import memory_tools
@@ -58,11 +58,10 @@ async def isolated_env(tmp_path, monkeypatch):
     kv_store = KVMemoryStore(db_path=str(tmp_path / "kv.db"))
     await kv_store.initialize()
 
-    # Vec archive store (chunk + FTS5 + LanceDB 向量，生产真实后端)
-    vec_store = LanceMemoryStore(
+    # Vec archive store (chunk + FTS5 + sqlite-vec 向量,默认后端)
+    vec_store = SqliteVecMemoryStore(
         db_path=str(tmp_path / "vec.db"),
         dimensions=4,
-        lancedb_uri=str(tmp_path / "vec.lance"),
     )
     await vec_store.initialize()
 
@@ -379,9 +378,7 @@ class TestMigrationE2E:
         group_kv = GroupMemoryStore(db_path=str(tmp_path / "kv_group.db"))
         await group_kv.initialize()
 
-        dm_vec = LanceMemoryStore(
-            db_path=str(tmp_path / "dm_vec.db"), dimensions=4, lancedb_uri=str(tmp_path / "dm_vec.lance")
-        )
+        dm_vec = SqliteVecMemoryStore(db_path=str(tmp_path / "dm_vec.db"), dimensions=4)
         await dm_vec.initialize()
 
         cfg = SimpleNamespace(
@@ -494,10 +491,9 @@ class TestMigrationE2EGroup:
         group_kv = GroupMemoryStore(db_path=str(tmp_path / "kv_group.db"))
         await group_kv.initialize()
 
-        group_vec_store = LanceMemoryStore(
+        group_vec_store = SqliteVecMemoryStore(
             db_path=str(tmp_path / "vec_group.db"),
             dimensions=4,
-            lancedb_uri=str(tmp_path / "vec_group.lance"),
         )
         await group_vec_store.initialize()
 
@@ -521,10 +517,9 @@ class TestMigrationE2EGroup:
 
         group_searcher = MemorySearcher(group_vec_store, FakeEmbeddings(), cfg.memory)
         dm_searcher = MemorySearcher(
-            LanceMemoryStore(
+            SqliteVecMemoryStore(
                 db_path=str(tmp_path / "dm_vec.db"),
                 dimensions=4,
-                lancedb_uri=str(tmp_path / "dm_vec.lance"),
             ),
             FakeEmbeddings(),
             cfg.memory,
@@ -591,7 +586,7 @@ async def isolated_env_fts5_only(tmp_path, monkeypatch):
     kv_store = KVMemoryStore(db_path=str(tmp_path / "kv_fts5.db"))
     await kv_store.initialize()
 
-    # archive store = MemoryStore（sqlite-vec 没装 → FTS5-only），不用 LanceMemoryStore
+    # archive store = MemoryStore（FTS5-only，无向量后端），不用 LanceMemoryStore
     archive_store = VecMemoryStore(
         db_path=str(tmp_path / "archive_fts5.db"),
         dimensions=4,

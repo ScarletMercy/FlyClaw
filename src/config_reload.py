@@ -191,25 +191,26 @@ class ReloadExecutor:
             backend = getattr(config.memory, "backend", "sqlite")
             dimensions = getattr(config.memory, "embedding_dimensions", 1536)
 
-            if backend == "lancedb":
-                from src.memory.lance_store import LanceMemoryStore
-
-                from src.instance import data_dir
-
-                lancedb_uri = getattr(config.memory, "lancedb_uri", str(data_dir() / "memory_lancedb"))
-                store = LanceMemoryStore(
-                    config.memory.db_path,
-                    dimensions=dimensions,
-                    fts_tokenizer=config.memory.fts_tokenizer,
-                    lancedb_uri=lancedb_uri,
-                )
-            else:
+            if backend == "sqlite":
                 from src.memory.store import MemoryStore
 
                 store = MemoryStore(
                     config.memory.db_path,
                     dimensions=dimensions,
                     fts_tokenizer=config.memory.fts_tokenizer,
+                )
+            else:
+                from src.memory.factory import make_vector_store
+
+                from src.instance import data_dir
+
+                lancedb_uri = getattr(config.memory, "lancedb_uri", str(data_dir() / "memory_lancedb"))
+                store = make_vector_store(
+                    backend=backend,
+                    db_path=config.memory.db_path,
+                    dimensions=dimensions,
+                    fts_tokenizer=config.memory.fts_tokenizer,
+                    lancedb_uri=lancedb_uri,
                 )
             await store.initialize()
 

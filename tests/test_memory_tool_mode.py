@@ -488,7 +488,7 @@ class TestMemoryModeGroupScope:
         关键词返回空，反之亦然。
         """
         from src.config import MemoryConfig
-        from src.memory.lance_store import LanceMemoryStore
+        from src.memory.sqlitevec_store import SqliteVecMemoryStore
         from src.memory.search import MemorySearcher
 
         class _FakeEmb:
@@ -502,9 +502,7 @@ class TestMemoryModeGroupScope:
                 pass
 
         # DM vec store —— 只有 DM 数据（关键词 redis）
-        dm_store = LanceMemoryStore(
-            db_path=str(tmp_path / "dm.db"), dimensions=4, lancedb_uri=str(tmp_path / "dm.lance")
-        )
+        dm_store = SqliteVecMemoryStore(db_path=str(tmp_path / "dm.db"), dimensions=4)
         await dm_store.initialize()
         await dm_store.add_document(
             "kv:dm_redis",
@@ -514,9 +512,7 @@ class TestMemoryModeGroupScope:
         )
 
         # Group vec store —— 只有 group 数据（关键词 mysql）
-        group_store = LanceMemoryStore(
-            db_path=str(tmp_path / "grp.db"), dimensions=4, lancedb_uri=str(tmp_path / "grp.lance")
-        )
+        group_store = SqliteVecMemoryStore(db_path=str(tmp_path / "grp.db"), dimensions=4)
         await group_store.initialize()
         await group_store.add_document(
             "kv:g:groupA:mysql_secret",

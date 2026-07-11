@@ -28,7 +28,7 @@ class TestSetupMemoryArchive:
         """vector_enabled=True → LanceMemoryStore + EmbeddingProvider，构造 DM + group searcher。"""
         from src.config import MemoryStoreConfig, MemoryConfig
         from src.tools.memory_tools import reset_memory_archive_searcher, get_memory_archive_searcher
-        from src.memory.lance_store import LanceMemoryStore
+        from src.memory.sqlitevec_store import SqliteVecMemoryStore
         from src.memory.search import MemorySearcher
         import src.instance
 
@@ -60,7 +60,7 @@ class TestSetupMemoryArchive:
         assert isinstance(dm, MemorySearcher)
         assert isinstance(group, MemorySearcher)
         # vector on → LanceMemoryStore + embeddings 非 None
-        assert isinstance(dm.store, LanceMemoryStore)
+        assert isinstance(dm.store, SqliteVecMemoryStore)
         assert dm.embeddings is not None
         # 模块单例已注册
         assert await get_memory_archive_searcher("p2p") is dm
@@ -77,7 +77,7 @@ class TestSetupMemoryArchive:
         from src.config import MemoryStoreConfig, MemoryConfig
         from src.tools.memory_tools import reset_memory_archive_searcher, get_memory_archive_searcher
         from src.memory.store import MemoryStore
-        from src.memory.lance_store import LanceMemoryStore
+        from src.memory.sqlitevec_store import SqliteVecMemoryStore
         from src.memory.search import MemorySearcher
         import src.instance
 
@@ -104,7 +104,7 @@ class TestSetupMemoryArchive:
         dm, group = app.memory_archive_searchers
         # vector off → MemoryStore（不是 LanceMemoryStore），embeddings=None
         assert isinstance(dm.store, MemoryStore), f"expected MemoryStore, got {type(dm.store)}"
-        assert not isinstance(dm.store, LanceMemoryStore)
+        assert not isinstance(dm.store, SqliteVecMemoryStore)
         assert dm.embeddings is None, "vector off should have no embeddings"
         assert group.embeddings is None
 

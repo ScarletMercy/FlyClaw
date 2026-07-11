@@ -342,7 +342,7 @@ class PluginsConfig(BaseModel):
 
 class MemoryConfig(BaseModel):
     enabled: bool = True
-    backend: Literal["sqlite", "lancedb"] = "sqlite"
+    backend: Literal["sqlite", "sqlite_vec", "lancedb"] = "sqlite"
     db_path: str = "~/.flyclaw/data/memory.db"
     chunk_tokens: int = 400
     chunk_overlap: int = 80
@@ -364,6 +364,7 @@ class MemoryStoreConfig(BaseModel):
 
     # 向量归档（KV → LanceDB）；启用时 vector_model/base_url/api_key 必填
     vector_enabled: bool = False
+    vector_backend: Literal["sqlite_vec", "lancedb"] = "sqlite_vec"
     vector_model: str = "text-embedding-3-small"
     vector_base_url: str = ""
     vector_api_key: str = ""
