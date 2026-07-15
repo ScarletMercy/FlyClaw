@@ -39,6 +39,9 @@ class CronService:
         self._last_failure_alert: dict[str, float] = {}
         self._running_jobs: set[str] = set()
         self._running_tasks: dict[str, asyncio.Task] = {}
+        # start() 崩溃恢复扫描收集的"被中断"任务,由 app 在 channel 就绪后
+        # 调 flush_crash_alerts() 发提醒(start() 早于 channel 启动,不能当场发)。
+        self._pending_crash_alerts: list[CronJob] = []
         # Incremented on every stop/reschedule so stale finally-blocks from
         # cancelled tasks know not to mutate the new state.
         self._epoch: int = 0
@@ -126,6 +129,7 @@ class CronService:
                 job.last_error = f"Process crashed while running (stale {stale_seconds:.0f}s)"
                 job.consecutive_errors += 1
                 await self.store.save_job(job)
+                self._pending_crash_alerts.append(job)
                 recovered += 1
         if recovered:
             logger.info("Crash recovery: reset %d stale jobs", recovered)
@@ -142,6 +146,37 @@ class CronService:
             len(jobs),
             sum(1 for j in jobs if j.enabled),
         )
+
+    def drain_pending_crash_alerts(self) -> list[CronJob]:
+        """返回并清空崩溃恢复收集的任务列表(检查/测试用)。"""
+        alerts = self._pending_crash_alerts
+        self._pending_crash_alerts = []
+        return alerts
+
+    async def flush_crash_alerts(self, send_timeout: float = 10.0) -> None:
+        """发送 start() 崩溃恢复扫描收集的任务崩溃提醒。
+
+        在 channel 就绪后由 app 调用(start() 早于 _start_channels,当场发不出去)。
+        走 job.delivery 目标;delivery=none 的仅记日志(方案 A 盲区:程序化建的后台任务)。
+        """
+        for job in self.drain_pending_crash_alerts():
+            text = f"系统提示：{job.name} 任务崩溃了"
+            delivery = job.delivery
+            # 与 _deliver_result/_send_failure_alert 一致:to-or-channel 解析目标,
+            # 否则仅设了 channel 的 announce job 会漏发崩溃提醒。
+            target = delivery.to or delivery.channel
+            if delivery.mode != "announce" or not target or not self._channel:
+                logger.warning("Crash alert skipped (no delivery target): job='%s'", job.name)
+                continue
+            try:
+                # wait_for 防 channel.send_text 挂死拖垮启动(Win 上 httpx 对部分
+                # TLS 接口永久挂死、timeout 不触发,见 project_windows-async-httpx-hang)。
+                await asyncio.wait_for(self._channel.send_text(target, text), timeout=send_timeout)
+                logger.info("Crash alert sent: job='%s' -> %s", job.name, target)
+            except asyncio.TimeoutError:
+                logger.warning("Crash alert send timed out (10s): job='%s'", job.name)
+            except Exception as e:
+                logger.warning("Crash alert send failed: job='%s' %s", job.name, e)
 
     async def stop(self):
         # 1. Stop the scheduler (prevents new job submissions)
@@ -281,6 +316,14 @@ class CronService:
 
         self._running_jobs.add(job_id)
         job.running_at = time.time()
+        # 落盘 running_at:硬崩溃(kill/断电)时内存丢失,重启后 start() 恢复扫描
+        # 靠 DB 里的 running_at 识别被中断的任务。否则只有优雅关闭那条路会存。
+        # save 失败仅降级(这次 run 不被崩溃检测覆盖):必须吞掉——318 在 try 外,
+        # 异常不进 finally,_running_jobs 不 discard → job 永久卡死(下次 skip)。
+        try:
+            await self.store.save_job(job)
+        except Exception as e:
+            logger.warning("_run_job: persist running_at failed, crash-detection blind for this run: %s", e)
         try:
             logger.info("Executing cron job '%s' (id=%s)", job.name, job.id)
             started_at = time.time()
@@ -389,8 +432,16 @@ class CronService:
                     self._unschedule_job(job.id)
 
             job.last_run_at = started_at
-            job.running_at = None  # persist cleared state — avoid false-positive crash recovery
-            await self.store.save_job(job)
+            job.running_at = None  # 清内存标记;此 save 落盘成功即无 false-positive
+            # 守护此 save 不抛:抛了会越过下方收尾(依赖触发、at 任务的 remove_job)
+            # ——at 任务漏删会被恢复扫描重新调度,真·多跑一轮。
+            # 已知降级:save 持续失败时 DB 残留 stale running_at,recurring 任务若恰在
+            # 那几分钟窗口内重启,会多一条假"崩溃了"提醒(下次跑自愈,consecutive_errors
+            # 一次成功即归零,无害)。不治本,但优于让异常传出 _run_job。
+            try:
+                await self.store.save_job(job)
+            except Exception as e:
+                logger.warning("_run_job: failed to persist cleared running_at: %s", e)
 
             # Trigger downstream jobs that depend on this one.
             # delivery_failed is included because the job *executed* successfully —
@@ -401,12 +452,19 @@ class CronService:
             if job.schedule.kind == "at" and job.delete_after_run:
                 await self.remove_job(job.id)
         finally:
-            # Guard against finally running after an early exception:
-            # if save_job succeeded, running_at is already None and persisted.
-            # If we never reached save_job (exception before line 360),
-            # running_at was set at line 259 but never persisted — just clear memory.
+            # 兜底清盘:正常路径(except Exception)已 save 清 running_at,此分支不进。
+            # 仅 BaseException(CancelledError 等)绕过 except 时进入,见下 if 内注释。
             if job.running_at is not None:
                 job.running_at = None
+                # 开头已落盘 running_at,清盘必须对称 save:BaseException
+                # (CancelledError/KeyboardInterrupt)绕过 except Exception,
+                # 只清内存会留 stale running_at -> 下次 start() 误报崩溃。
+                # 守卫 _jobs:执行期间被 remove 则不 save,避免复活已删 job。
+                if job.id in self._jobs:
+                    try:
+                        await self.store.save_job(job)
+                    except Exception as e:
+                        logger.warning("_run_job finally: failed to persist cleared running_at: %s", e)
             # Only discard from the shared set if we're still in the same epoch.
             # Otherwise this is a stale task from before a drain/reschedule and
             # _running_jobs now belongs to the new scheduler incarnation.
@@ -491,10 +549,24 @@ class CronService:
         epoch = self._epoch
         self._running_jobs.add(job_id)
         job.running_at = time.time()
+        # save 失败仅降级(见 _run_job 同处注释):吞掉,避免 _running_jobs 残留卡死。
+        try:
+            await self.store.save_job(job)
+        except Exception as e:
+            logger.warning("run_job_now: persist running_at failed, crash-detection blind for this run: %s", e)
         try:
             return await self.execute_fn(job)
         finally:
             job.running_at = None
+            # 落盘清掉 running_at:开头落盘了执行中状态,此处必须 save 清掉,
+            # 否则进程崩溃后 start() 会把这个已完成的 job 误判为"崩溃中"。
+            # 守卫 _jobs:执行期间若被 remove_job 删掉(_jobs 移除+DB 删行),
+            # 不再 save,避免把已删的 job 又 INSERT 回去(复活)。
+            if job.id in self._jobs:
+                try:
+                    await self.store.save_job(job)
+                except Exception as e:
+                    logger.warning("run_job_now: failed to persist cleared running_at: %s", e)
             # Only discard if we're still in the same epoch — reschedule()
             # clears _running_jobs for the new incarnation.
             if self._epoch == epoch:

@@ -95,6 +95,9 @@ class ReloadExecutor:
 
             app.cron_service = CronService(store, cron_execute, config=app.config, channel=app.qq)
             await app.cron_service.start()
+            # reload full-restart 也收集崩溃遗留的 stale job(channel 已就绪=app.qq),
+            # 与 on_startup 对称 flush,避免提醒丢失或 _pending_crash_alerts 残留。
+            await app.cron_service.flush_crash_alerts()
 
     async def _do_reload_tools(self):
         from src.tools.exec import reset_config_cache

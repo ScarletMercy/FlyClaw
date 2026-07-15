@@ -772,6 +772,13 @@ class ServiceContainer:
         await self._start_memory_watcher()
         await self._start_channels()
 
+        # 崩溃恢复:channel 就绪后发送 start() 收集的崩溃任务提醒。
+        # _channel 在正常启动路径下为 None(只有 reload 时赋值),这里一并补上,
+        # 顺带让 _send_failure_alert 在正常运行期也能发出去。
+        if self.cron_service:
+            self.cron_service._channel = self.qq or self.weixin
+            await self.cron_service.flush_crash_alerts()
+
         from src.config_watcher import ConfigWatcher
         from src.config_reload import ReloadExecutor
 
