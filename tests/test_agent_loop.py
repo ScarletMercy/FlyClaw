@@ -13,6 +13,7 @@ from src.agent.client import ChatResponse
 from src.agent.loop import AgentLoop, ApprovalPending
 from src.agent.state import AgentState, MemoryStateStore
 from src.agent.tooldef import ToolDef
+from src.tools.memory_tools import MemorySaveNeedsApproval
 
 
 def _make_tool(name: str, fn=None):
@@ -1536,3 +1537,506 @@ class TestUsageAccumulation:
         assert result.total_usage["prompt_tokens"] == 50
         assert result.total_usage["completion_tokens"] == 25
         assert result.total_usage["cached_tokens"] == 0
+
+
+class TestMemorySaveApprovalRouting:
+    """memory(save) 自检 reject → MemorySaveNeedsApproval 路由到审批，且 owner 不可绕过。"""
+
+    @pytest.mark.asyncio
+    async def test_routes_to_handle_approval(self, store, config):
+        async def boom(**kwargs):
+            raise MemorySaveNeedsApproval(content="臆测内容", source_context="来源原文")
+
+        tool = _make_tool("memory", boom)
+        tc = _make_tc("memory", {"action": "save", "content": "臆测内容"})
+        loop = _make_loop(store, config, tools=[tool])
+
+        state = AgentState(messages=[{"role": "user", "content": "hi"}])
+        with patch(
+            "src.agent.loop.AgentLoop._handle_approval",
+            new=AsyncMock(return_value="[pending]"),
+        ) as mock_handle:
+            result = await loop._execute_tool(tc, state, "t1")
+
+        assert result == "[pending]"  # 走审批分支，而非 [error]
+        mock_handle.assert_awaited_once()
+        err = mock_handle.call_args.args[0]
+        assert isinstance(err, MemorySaveNeedsApproval)
+
+    @pytest.mark.asyncio
+    async def test_owner_cannot_bypass_save(self, store, config, monkeypatch):
+        """owner（rbac 允许 approval_bypass）也不能绕过 save 审批：内容把关不可跳过。"""
+        exec_count = {"n": 0}
+
+        async def boom(**kwargs):
+            exec_count["n"] += 1
+            raise MemorySaveNeedsApproval(content="臆测", source_context="来源原文")
+
+        tool = _make_tool("memory", boom)
+        tc = _make_tc("memory", {"action": "save", "content": "臆测"})
+        loop = _make_loop(store, config, tools=[tool])
+
+        owner = MagicMock()
+        owner.user_id = "u1"
+        owner.role.value = "owner"
+        monkeypatch.setattr(loop, "_resolve_user", AsyncMock(return_value=owner))
+
+        rbac = MagicMock()
+        rbac.check_approval_bypass = MagicMock(return_value=True)
+        monkeypatch.setattr("src.auth.rbac.get_rbac", MagicMock(return_value=rbac))
+
+        state = AgentState(messages=[{"role": "user", "content": "hi"}])
+        with patch(
+            "src.agent.loop.AgentLoop._handle_approval",
+            new=AsyncMock(return_value="[pending]"),
+        ) as mock_handle:
+            result = await loop._execute_tool(tc, state, "t1")
+
+        # 走审批，未被 owner 绕过；tool 只执行一次（抛异常那次），bypass 未重执行
+        mock_handle.assert_awaited_once()
+        assert exec_count["n"] == 1
+        assert result == "[pending]"
+
+    def test_approval_pending_carries_source_context(self):
+        """ApprovalPending 携带来源原文，供 message 文案展示。"""
+        exc = ApprovalPending("t1", "r1", "memory_save", "content", tc_id="", source_context="来源原文")
+        assert exc.source_context == "来源原文"
+
+    def test_approval_pending_source_context_defaults_empty(self):
+        exc = ApprovalPending("t1", "r1", "exec", "cmd", tc_id="")
+        assert exc.source_context == ""
+
+    def test_approval_pending_carries_memory_save_mode(self):
+        """ApprovalPending 携带 memory_save_mode，供 message 文案区分 model/manual。"""
+        exc = ApprovalPending("t1", "r1", "memory_save", "c", tc_id="", memory_save_mode="manual")
+        assert exc.memory_save_mode == "manual"
+
+    def test_approval_pending_memory_save_mode_defaults_empty(self):
+        exc = ApprovalPending("t1", "r1", "exec", "cmd", tc_id="")
+        assert exc.memory_save_mode == ""
+
+    @pytest.mark.asyncio
+    async def test_resume_deny_save_reexecutes_other_saves(self, store, config):
+        """deny 一个 memory_save，同批其余 save 重新执行（不 associated denial）——逐条审批。"""
+        client = AsyncMock()
+        client.chat.return_value = ChatResponse(content="done", tool_calls=[])
+        tool = _make_tool("memory")
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        state = AgentState(
+            messages=[
+                {"role": "user", "content": "存几条"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "tc_s1",
+                            "type": "function",
+                            "function": {"name": "memory", "arguments": '{"action":"save","content":"A"}'},
+                        },
+                        {
+                            "id": "tc_s2",
+                            "type": "function",
+                            "function": {"name": "memory", "arguments": '{"action":"save","content":"B"}'},
+                        },
+                    ],
+                },
+            ],
+            pending_approval={
+                "request_id": "r1",
+                "tool_call_id": "tc_s1",
+                "tool_name": "memory_save",
+                "command_preview": "A",
+            },
+        )
+        await store.save("t_b2", state)
+
+        result = await loop.resume("t_b2", "deny")
+        tool_msgs = {m["tool_call_id"]: m["content"] for m in result.messages if m.get("role") == "tool"}
+
+        # save1 denied
+        assert "denied" in tool_msgs.get("tc_s1", "").lower()
+        # save2 不被 associated deny，而是重新执行（默认 fn 返 "memory result"）
+        assert "Skipped due to associated" not in tool_msgs.get("tc_s2", ""), (
+            f"save2 不应被 associated deny: {tool_msgs.get('tc_s2')!r}"
+        )
+        assert tool_msgs.get("tc_s2") == "memory result", f"save2 应被重新执行: {tool_msgs.get('tc_s2')!r}"
+
+    @pytest.mark.asyncio
+    async def test_resume_deny_save_skips_sibling_delete(self, store, config):
+        """混合批次：deny 一个 memory_save，兄弟 memory(delete) 不该被重执，走 associated skip。
+
+        门控按 action 区分：只有兄弟是 save 才逐条重执；delete 不该因兄弟 save 被否
+        而连带重执（弹删除审批）。
+        """
+        client = AsyncMock()
+        client.chat.return_value = ChatResponse(content="done", tool_calls=[])
+        tool = _make_tool("memory")
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        state = AgentState(
+            messages=[
+                {"role": "user", "content": "存一条并删一条"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "tc_s1",
+                            "type": "function",
+                            "function": {"name": "memory", "arguments": '{"action":"save","content":"A"}'},
+                        },
+                        {
+                            "id": "tc_d1",
+                            "type": "function",
+                            "function": {"name": "memory", "arguments": '{"action":"delete","keys":["k1"]}'},
+                        },
+                    ],
+                },
+            ],
+            pending_approval={
+                "request_id": "r1",
+                "tool_call_id": "tc_s1",
+                "tool_name": "memory_save",
+                "command_preview": "A",
+            },
+        )
+        await store.save("t_mix1", state)
+
+        result = await loop.resume("t_mix1", "deny")
+        tool_msgs = {m["tool_call_id"]: m["content"] for m in result.messages if m.get("role") == "tool"}
+
+        # save denied
+        assert "denied" in tool_msgs.get("tc_s1", "").lower()
+        # 兄弟 delete 不被重执（不返回 "memory result"），而是 associated skip
+        assert tool_msgs.get("tc_d1") != "memory result", (
+            f"delete 不该因兄弟 save 被否而重执: {tool_msgs.get('tc_d1')!r}"
+        )
+        assert "Skipped due to associated" in tool_msgs.get("tc_d1", ""), (
+            f"delete 应走 associated skip: {tool_msgs.get('tc_d1')!r}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_resume_deny_delete_reexecutes_sibling_save(self, store, config):
+        """混合批次：deny 一个 memory_delete，兄弟 memory(save) 不该被 associated skip 静默丢弃，应重执。
+
+        反向对称：pending 是 delete 时，兄弟 save 仍逐条独立重执（不连带跳过）。
+        """
+        client = AsyncMock()
+        client.chat.return_value = ChatResponse(content="done", tool_calls=[])
+        tool = _make_tool("memory")
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        state = AgentState(
+            messages=[
+                {"role": "user", "content": "删一条并存一条"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "tc_s1",
+                            "type": "function",
+                            "function": {"name": "memory", "arguments": '{"action":"save","content":"A"}'},
+                        },
+                        {
+                            "id": "tc_d1",
+                            "type": "function",
+                            "function": {"name": "memory", "arguments": '{"action":"delete","keys":["k1"]}'},
+                        },
+                    ],
+                },
+            ],
+            pending_approval={
+                "request_id": "r1",
+                "tool_call_id": "tc_d1",
+                "tool_name": "memory_delete",
+                "command_preview": "- [k1]: ...",
+            },
+        )
+        await store.save("t_mix2", state)
+
+        result = await loop.resume("t_mix2", "deny")
+        tool_msgs = {m["tool_call_id"]: m["content"] for m in result.messages if m.get("role") == "tool"}
+
+        # delete denied
+        assert "denied" in tool_msgs.get("tc_d1", "").lower()
+        # 兄弟 save 不被 associated skip，而是重执（默认 fn 返 "memory result"）
+        assert "Skipped due to associated" not in tool_msgs.get("tc_s1", ""), (
+            f"save 不该因兄弟 delete 被否而 associated skip: {tool_msgs.get('tc_s1')!r}"
+        )
+        assert tool_msgs.get("tc_s1") == "memory result", f"save 应被重新执行: {tool_msgs.get('tc_s1')!r}"
+
+    @pytest.mark.asyncio
+    async def test_resume_deny_save_reexecutes_sibling_get(self, store, config):
+        """混合批次：deny 一个 memory_save，兄弟 memory(get) 是纯读，必须重执返回结果，不能 associated skip。
+
+        回归守护：门控应收窄到"仅 delete 跳过"，否则 get/list 这类只读查询会被连带取消，
+        模型拿不到它要的记忆列表。
+        """
+        client = AsyncMock()
+        client.chat.return_value = ChatResponse(content="done", tool_calls=[])
+        tool = _make_tool("memory")
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        state = AgentState(
+            messages=[
+                {"role": "user", "content": "存一条并列一下"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "tc_s1",
+                            "type": "function",
+                            "function": {"name": "memory", "arguments": '{"action":"save","content":"A"}'},
+                        },
+                        {
+                            "id": "tc_g1",
+                            "type": "function",
+                            "function": {"name": "memory", "arguments": '{"action":"list","mode":"recent"}'},
+                        },
+                    ],
+                },
+            ],
+            pending_approval={
+                "request_id": "r1",
+                "tool_call_id": "tc_s1",
+                "tool_name": "memory_save",
+                "command_preview": "A",
+            },
+        )
+        await store.save("t_mix_get", state)
+
+        result = await loop.resume("t_mix_get", "deny")
+        tool_msgs = {m["tool_call_id"]: m["content"] for m in result.messages if m.get("role") == "tool"}
+
+        # save denied
+        assert "denied" in tool_msgs.get("tc_s1", "").lower()
+        # 兄弟 list 是纯读，必须重执返回结果，而非 associated skip
+        assert "Skipped due to associated" not in tool_msgs.get("tc_g1", ""), (
+            f"get/list 不该因兄弟 save 被否而 associated skip: {tool_msgs.get('tc_g1')!r}"
+        )
+        assert tool_msgs.get("tc_g1") == "memory result", f"get/list 应被重执: {tool_msgs.get('tc_g1')!r}"
+
+    @pytest.mark.asyncio
+    async def test_resume_deny_delete_real_save_raises_approval(self, store, config, monkeypatch):
+        """真实 memory()（非 mock）：deny delete → 兄弟 save 重执走 manual 审批完整链路。
+
+        填补 mock 盲区：假工具不抛异常，测不到重执 save 时 MemorySaveNeedsApproval
+        → _handle_approval → ApprovalPending 中断 + pending 切到 save 的真实副作用。
+        """
+        import src._container as _c
+        from src.config import MemoryStoreConfig
+        from src.tools import memory_tools
+        from src.tools.approval import ApprovalManager
+        from src.tools.memory_tools import get_tools, set_memory_dialog_context, set_memory_session
+
+        set_memory_session("p2p", "")
+        set_memory_dialog_context("来源")
+
+        # 真实 approval manager（request_approval 返真实 ApprovalRequest）+ manual 模式
+        real_mgr = ApprovalManager()
+        _ms_cfg = MemoryStoreConfig(save_approval_mode="manual")
+
+        class _AgentLoop:
+            _client = None  # manual 不自检，主模型不会被调
+
+        class _Container:
+            agent_loop = _AgentLoop()
+            approval_manager = real_mgr
+
+        _Container.config = MagicMock()
+        _Container.config.memory_store = _ms_cfg
+        monkeypatch.setattr(_c, "get_container", lambda: _Container())
+        monkeypatch.setattr("src.tools.approval.get_approval_manager", lambda: real_mgr)
+
+        # spy store：manual save 抛审批前不落库
+        saved: dict = {}
+
+        class _Store:
+            async def remember(self, content, key="", category="fact", group_id=""):
+                saved["content"] = content
+                return json.dumps({"ok": True, "key": key or "k"})
+
+        monkeypatch.setattr(memory_tools, "get_memory_store", AsyncMock(return_value=_Store()))
+
+        tool = get_tools()[0]  # 真实 memory 工具
+        client = AsyncMock()
+        client.chat.return_value = ChatResponse(content="done", tool_calls=[])
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        state = AgentState(
+            messages=[
+                {"role": "user", "content": "删一条存一条"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "tc_s1",
+                            "type": "function",
+                            "function": {"name": "memory", "arguments": '{"action":"save","content":"A"}'},
+                        },
+                        {
+                            "id": "tc_d1",
+                            "type": "function",
+                            "function": {"name": "memory", "arguments": '{"action":"delete","keys":["k1"]}'},
+                        },
+                    ],
+                },
+            ],
+            pending_approval={
+                "request_id": "r1",
+                "tool_call_id": "tc_d1",
+                "tool_name": "memory_delete",
+                "command_preview": "- [k1]: x",
+            },
+        )
+        await store.save("t_real", state)
+
+        # deny delete → 重执兄弟 save → manual 抛审批 → 冒泡成 ApprovalPending
+        with pytest.raises(ApprovalPending) as ei:
+            await loop.resume("t_real", "deny")
+
+        # pending 切到 save（重执 save 的审批挂起）
+        assert ei.value.tool_name == "memory_save"
+        saved_state = await store.load("t_real")
+        assert saved_state.pending_approval["tool_name"] == "memory_save"
+        # delete 已 deny；save 未落库（待审批）
+        tool_msgs = {m["tool_call_id"]: m["content"] for m in saved_state.messages if m.get("role") == "tool"}
+        assert "denied" in tool_msgs.get("tc_d1", "").lower()
+        assert saved == {}, "manual save 待审批，不应落库"
+
+    @pytest.mark.asyncio
+    async def test_resume_deny_without_pending_tc_id_no_crash(self, store, config):
+        """pending_approval 缺 tool_call_id 时 deny 不该 UnboundLocalError。
+
+        回归守护：deny 分支里 pending_tool 仅在 ``if pending_tc_id:`` 内赋值，
+        兄弟循环无条件引用——pending_tc_id 为空且有 memory 兄弟时，旧代码崩。
+        """
+        client = AsyncMock()
+        client.chat.return_value = ChatResponse(content="done", tool_calls=[])
+        tool = _make_tool("memory")
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        state = AgentState(
+            messages=[
+                {"role": "user", "content": "存"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "tc_s1",
+                            "type": "function",
+                            "function": {"name": "memory", "arguments": '{"action":"save","content":"A"}'},
+                        },
+                    ],
+                },
+            ],
+            pending_approval={
+                "request_id": "r1",
+                "tool_name": "memory_save",  # 故意缺 tool_call_id
+                "command_preview": "A",
+            },
+        )
+        await store.save("t_noid", state)
+
+        result = await loop.resume("t_noid", "deny")
+        tool_msgs = {m["tool_call_id"]: m["content"] for m in result.messages if m.get("role") == "tool"}
+        # 不崩；兄弟 save 仍被重执（pending_tool 从 pending.tool_name 兜底）
+        assert tool_msgs.get("tc_s1") == "memory result"
+
+    @pytest.mark.asyncio
+    async def test_resume_deny_memory_save_uses_save_denied_msg(self, store, config):
+        """memory_save deny 的 tool result 用'记忆保存已取消'，非通用 Command 文案。"""
+        client = AsyncMock()
+        client.chat.return_value = ChatResponse(content="done", tool_calls=[])
+        tool = _make_tool("memory")
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        state = AgentState(
+            messages=[
+                {"role": "user", "content": "存"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "tc_s1",
+                            "type": "function",
+                            "function": {"name": "memory", "arguments": '{"action":"save","content":"A"}'},
+                        },
+                    ],
+                },
+            ],
+            pending_approval={
+                "request_id": "r1",
+                "tool_call_id": "tc_s1",
+                "tool_name": "memory_save",
+                "command_preview": "A",
+            },
+        )
+        await store.save("t_dmsg", state)
+
+        result = await loop.resume("t_dmsg", "deny")
+        tool_msgs = {m["tool_call_id"]: m["content"] for m in result.messages if m.get("role") == "tool"}
+        assert "记忆保存" in tool_msgs["tc_s1"], f"应提示记忆保存已取消: {tool_msgs.get('tc_s1')!r}"
+        assert "Command execution" not in tool_msgs["tc_s1"]
+
+    @pytest.mark.asyncio
+    async def test_execute_tool_injects_dialog_context(self, store, config):
+        """_execute_tool 执行工具时把最近对话注入 contextvar，供 save 自检对照来源。
+
+        接线守门：若 _execute_tool 漏 set contextvar，spy 读到的 ctx 为空。
+        """
+        from src.tools.memory_tools import get_memory_dialog_context, build_dialog_context
+
+        captured = {}
+
+        async def spy_fn(**kwargs):
+            captured["ctx"] = get_memory_dialog_context()
+            return "ok"
+
+        tool = _make_tool("spy", spy_fn)
+        tc = _make_tc("spy", {})
+        loop = _make_loop(store, config, tools=[tool])
+
+        messages = [
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "你好啊"},
+            {"role": "user", "content": "我用 Python 3.13"},
+        ]
+        state = AgentState(messages=messages)
+        await loop._execute_tool(tc, state, "t1")
+
+        assert captured.get("ctx") == build_dialog_context(messages)
+        assert "Python 3.13" in captured.get("ctx", "")
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_propagates_source_and_mode(self, store, config, monkeypatch):
+        """_handle_approval 把 error 的 source_context/mode 传给 ApprovalPending。
+
+        接线守门：若漏传，ApprovalPending 字段为空。
+        """
+        from src.tools.memory_tools import MemorySaveNeedsApproval
+
+        loop = _make_loop(store, config)
+
+        fake_req = MagicMock()
+        fake_req.id = "r1"
+        fake_mgr = MagicMock()
+        fake_mgr.request_approval.return_value = fake_req
+        monkeypatch.setattr("src.tools.approval.get_approval_manager", lambda: fake_mgr)
+
+        error = MemorySaveNeedsApproval(content="内容", source_context="来源原文", mode="manual")
+        tc = _make_tc("memory", {"action": "save", "content": "内容"})
+        state = AgentState(messages=[{"role": "user", "content": "x"}])
+
+        with pytest.raises(ApprovalPending) as ei:
+            await loop._handle_approval(error, tc, state, "t1")
+
+        assert ei.value.source_context == "来源原文"
+        assert ei.value.memory_save_mode == "manual"

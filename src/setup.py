@@ -660,12 +660,14 @@ def _step_memory_store(config: dict) -> None:
     print()
     print("  [7/8] 记忆存储（可选）")
     print("  ─────────────────────────")
-    print("  启用后，AI 可以记住你的偏好、身份等信息。")
-    print("  记忆数据保存在本地，启用后自动从对话中提取并保存要点。")
+    print("  启用后每轮用正则从对话自动提取偏好/身份等存库。")
+    print("  记忆数据保存在本地；关闭后 AI 仍可主动存取记忆。")
 
     ms = _section(config, "memory_store")
 
-    enabled = _ask_yn("  启用记忆存储？", default=ms.get("enabled", True))
+    _configure_save_approval(ms)
+
+    enabled = _ask_yn("  启用自动记忆提取？", default=ms.get("enabled", True))
     ms["enabled"] = enabled
 
     if enabled:
@@ -711,6 +713,20 @@ def _configure_vector_memory(ms: dict) -> None:
             ms["vector_enabled"] = False
             print("  已放弃向量记忆配置。")
             return
+
+
+def _configure_save_approval(ms: dict) -> None:
+    """向导子步骤：配置记忆保存审批模式（记忆配置第一项，无论是否启用都问）。"""
+    print()
+    print("  记忆保存审批模式：")
+    print("    model  = 模型自检（仅可疑转人工，默认；高效，偶有抖动）")
+    print("    manual = 全部人工审批（每条都问你；可靠，绕过模型）")
+    choice = _ask_choice(
+        "  选择审批模式",
+        ["model", "manual"],
+        default=ms.get("save_approval_mode", "model"),
+    )
+    ms["save_approval_mode"] = choice
 
 
 def _step_summary(config: dict) -> None:

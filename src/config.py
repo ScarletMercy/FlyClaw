@@ -362,6 +362,9 @@ class MemoryStoreConfig(BaseModel):
     enabled: bool = False
     db_path: str = "~/.flyclaw/data/memories.db"
 
+    # memory(save) 审批模式：model=模型自检（仅可疑转人工）；manual=全部人工审批（跳过自检）
+    save_approval_mode: Literal["model", "manual"] = "model"
+
     # 向量归档（KV → LanceDB）；启用时 vector_model/base_url/api_key 必填
     vector_enabled: bool = False
     vector_backend: Literal["sqlite_vec", "lancedb"] = "sqlite_vec"

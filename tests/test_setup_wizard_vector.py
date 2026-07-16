@@ -13,8 +13,8 @@ from src.setup import _step_memory_store
 class TestWizardVector:
     def test_disabled_skips_vector(self, monkeypatch):
         config = {"memory_store": {"enabled": True}}
-        # 启用记忆存储=yes(已enabled), 启用向量=no
-        inputs = iter(["yes", "no"])
+        # save审批模式=model, 启用记忆存储=yes(已enabled), 启用向量=no
+        inputs = iter(["model", "yes", "no"])
         monkeypatch.setattr(builtins, "input", lambda *a, **k: next(inputs))
         _step_memory_store(config)
         assert config["memory_store"]["vector_enabled"] is False
@@ -23,6 +23,7 @@ class TestWizardVector:
         config = {"memory_store": {"enabled": True}}
         inputs = iter(
             [
+                "model",  # save审批模式
                 "yes",  # 启用记忆存储
                 "yes",  # 启用向量
                 "text-embedding-3-small",  # model
@@ -49,6 +50,7 @@ class TestWizardVector:
         config = {"memory_store": {"enabled": True}}
         inputs = iter(
             [
+                "model",  # save审批模式
                 "yes",  # 启用记忆存储
                 "yes",  # 启用向量
                 "text-embedding-3-small",

@@ -36,6 +36,29 @@ class MemoryDeleteNeedsApproval(Exception):
         super().__init__(f"记忆删除需要审批: {len(keys)} 条")
 
 
+class MemorySaveNeedsApproval(Exception):
+    """Raised by memory(save) when pre-validation flags content as unsupported by source.
+
+    保存前自检判定候选记忆疑似臆测/曲解，转人工审批：用户确认后才落库。
+    """
+
+    def __init__(self, content: str, source_context: str = "", reason: str = "", mode: str = "model"):
+        self.content = content
+        self.source_context = source_context
+        self.reason = reason
+        self.mode = mode
+        self.command_preview = content[:500]
+        self.tool_name = "memory_save"
+        self.timeout = 120
+        self.auto_deny = True
+        self.request_id = ""
+        self.denylisted = False
+        self.approval_key = "memory_save"
+        self.thread_id = ""
+        self.keys: list[str] = []
+        super().__init__(f"记忆保存需审批(疑似臆测): {content[:60]}")
+
+
 _MEMORY_PATTERNS: list[tuple[str, re.Pattern]] = [
     (
         "preference",
@@ -139,6 +162,8 @@ async def reset_memory_archive_searcher() -> None:
 
 _current_chat_type: ContextVar[str] = ContextVar("_current_chat_type", default="p2p")
 _current_group_id: ContextVar[str] = ContextVar("_current_group_id", default="")
+# 当前对话上下文（最近几轮原文），agent loop 执行工具时注入，供 save 自检对照来源
+_current_dialog_context: ContextVar[str] = ContextVar("_current_dialog_context", default="")
 
 
 class MemoryStore:
@@ -667,6 +692,63 @@ def get_memory_scope() -> tuple[str, str]:
     return _current_chat_type.get(), _current_group_id.get()
 
 
+def set_memory_dialog_context(ctx: str) -> None:
+    """设置当前对话上下文（agent loop 执行工具时注入，供 save 自检对照来源原文）。"""
+    _current_dialog_context.set(ctx)
+
+
+def get_memory_dialog_context() -> str:
+    """读取当前对话上下文（save 自检用）。"""
+    return _current_dialog_context.get()
+
+
+def build_dialog_context(messages: list[dict], max_turns: int = 6, max_chars: int = 2000) -> str:
+    """从 messages 拼接最近几轮对话原文，供 save 自检对照来源。
+
+    取最近 max_turns 条非空 content，截断到 max_chars。agent loop 执行工具时
+    用它构造 source 注入 _current_dialog_context。
+    """
+    recent = messages[-max_turns:] if len(messages) > max_turns else messages
+    lines: list[str] = []
+    for m in recent:
+        content = m.get("content") or ""
+        if not content.strip():
+            continue
+        role = m.get("role", "")
+        lines.append(f"{role}: {content}")
+    return "\n".join(lines)[:max_chars]
+
+
+def _memory_save_approval_text(
+    content: str, source_context: str, timeout: int, zh: bool, model_mode: bool = True
+) -> str:
+    """构造 memory_save 审批文案：展示候选记忆 + 来源原文，供用户核对是否保存。
+
+    model_mode=True（模型自检 reject）：措辞提示"疑似臆测"。
+    model_mode=False（manual 模式）：措辞用"确认保存"（无模型判断）。
+    无来源上下文时省略来源行（降级，不阻断审批流程）。
+    """
+    src = (source_context or "").strip()
+    if src:
+        src_line = f"来源原文：\n{src[:300]}\n\n" if zh else f"Source:\n{src[:300]}\n\n"
+    else:
+        src_line = ""
+    if zh:
+        header = "📝 这条记忆疑似臆测，确认是否保存：" if model_mode else "📝 确认是否保存这条记忆："
+        return f"{header}\n\n{content}\n\n{src_line}发送 /y 确认保存，其它消息自动取消（{timeout}秒超时）"
+    header = "📝 This memory looks speculative. Confirm saving:" if model_mode else "📝 Confirm saving this memory:"
+    return f"{header}\n\n{content}\n\n{src_line}Send /y to save, any other message cancels ({timeout}s timeout)"
+
+
+def _deny_counts_toward_abort(tool_name: str) -> bool:
+    """该工具的 deny 是否计入 consecutive_denies 终止计数。
+
+    memory_save 逐条审批：连续 deny 是用户对不同 content 逐条把关，非死循环重试，不计入。
+    其他工具（exec/memory_delete）的连续 deny 视为潜在死循环重试，计入。
+    """
+    return tool_name != "memory_save"
+
+
 # ---------------------------------------------------------------------------
 # Auto-extract memory from conversation
 # ---------------------------------------------------------------------------
@@ -840,6 +922,47 @@ async def _extract_relevant_with_llm(query: str, candidates: list[dict]) -> str:
         return json.dumps(candidates, ensure_ascii=False)
 
 
+async def _validate_memory(content: str, source_context: str = "") -> tuple[str, str]:
+    """保存前自检：判断 content 是否被 source_context 支持，防止臆测/曲解写入记忆库。
+
+    返回 (decision, reason)，decision ∈ {"allow", "reject"}。
+    用主模型对照来源原文判断候选记忆是否有据可循。
+    fail-open：无来源 / 无主模型 / 调用失败 → 放行，不阻断记忆系统。
+    """
+    # 无来源上下文 → 无法核对，放行（同时省一次主模型调用）
+    if not (source_context or "").strip():
+        return ("allow", "no source context, fail-open")
+
+    try:
+        from src._container import get_container
+
+        container = get_container()
+        client = container.agent_loop._client if container.agent_loop else None
+    except RuntimeError:
+        return ("allow", "no llm client, fail-open")
+    if client is None:
+        return ("allow", "no llm client, fail-open")
+
+    prompt = (
+        "你是记忆审核员。判断「候选记忆」是否能被「来源原文」支持。\n\n"
+        f"候选记忆：{content}\n"
+        f"来源原文：{source_context}\n\n"
+        "判断标准：\n"
+        "- 候选记忆必须能从来源原文中找到依据（用户明确说过或可合理提取）\n"
+        "- 臆测、推断、曲解、或截断导致语义反转（如丢否定词）→ reject\n"
+        "以 allow 或 reject 开头回复，后跟简短理由。"
+    )
+    try:
+        result = await client.chat_simple([{"role": "user", "content": prompt}])
+    except Exception as e:
+        logger.warning("memory validation call failed, fail-open: %s", e)
+        return ("allow", "validation call failed, fail-open")
+    text = (result or "").strip().lower()
+    if text.startswith("reject"):
+        return ("reject", (result or "").strip())
+    return ("allow", (result or "").strip())
+
+
 async def memory(
     action: Literal["save", "get", "list", "delete"],
     content: str = "",
@@ -884,6 +1007,37 @@ async def memory(
     if normalized == "save":
         if not content:
             return json.dumps({"error": "content is required for save action"}, ensure_ascii=False)
+        # 保存前自检：对照来源原文，可疑（臆测/曲解）转人工审批。
+        # 仅入口1（memory 工具）：dashboard/auto-extract/日记都直接调 save_memory，不经此处。
+        # 先查 session 短路（对齐 delete）：已授权的 args 直接存，避免 resume 重复自检。
+        # approval manager 不可用时（container 未初始化，如部分集成测试）跳过短路、走自检。
+        _approved = False
+        _mode = "model"
+        try:
+            from src._container import get_container
+            from src.tools.approval import get_approval_manager
+            from src.tools.exec import _current_thread_id
+
+            _container = get_container()
+            _mode = getattr(_container.config.memory_store, "save_approval_mode", "model")
+            _mgr = get_approval_manager()
+            _args_preview = content[:200]
+            _tid = _current_thread_id.get("")
+            _approved = _mgr.has_session_approval(_tid, "memory_save", _args_preview)
+        except RuntimeError:
+            _approved = False
+        if not _approved:
+            _source = get_memory_dialog_context()
+            if _mode == "manual":
+                # 人工批准模式：跳过自检，直接转人工审批
+                raise MemorySaveNeedsApproval(
+                    content, source_context=_source, reason="manual approval mode", mode=_mode
+                )
+            # model 模式：模型自检把关。reject 直接丢弃（错误信息挡在库外），不弹审批。
+            _decision, _reason = await _validate_memory(content, _source)
+            if _decision == "reject":
+                logger.info("memory save rejected by self-check: %.80s", content)
+                return json.dumps({"ok": False, "rejected": True, "reason": _reason}, ensure_ascii=False)
         return await save_memory(content, key, category)
 
     chat_type, group_id = get_memory_scope()
@@ -973,18 +1127,17 @@ async def memory(
         if not previews:
             return json.dumps({"error": "None of the specified keys exist"}, ensure_ascii=False)
 
-        # Check session/durable approval before raising (same pattern as exec_command)
+        # Check session approval before raising (same pattern as exec_command)
         from src.tools.approval import get_approval_manager
         from src.tools.exec import _current_thread_id
 
         _mgr = get_approval_manager()
         _args_preview = "\n".join(previews)[:200]
         _tid = _current_thread_id.get("")
-        if not _mgr.has_durable_approval("memory_delete", _args_preview):
-            if not _mgr.has_session_approval(_tid, "memory_delete", _args_preview):
-                raise MemoryDeleteNeedsApproval(found_keys, previews)
+        if not _mgr.has_session_approval(_tid, "memory_delete", _args_preview):
+            raise MemoryDeleteNeedsApproval(found_keys, previews)
 
-        # Approved via session/durable — execute delete directly
+        # Approved via session — execute delete directly
         deleted = []
         for k in found_keys:
             if is_group:

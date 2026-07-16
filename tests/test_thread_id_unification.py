@@ -70,7 +70,7 @@ class TestMemoryDeleteUsesCurrentThreadId:
         await store.initialize()
         await store.remember(content="my secret value", key="K1", category="fact")
 
-        mgr = ApprovalManager(data_dir=str(tmp_path / "appr"))
+        mgr = ApprovalManager()
         # Grant a session approval for the exact args-preview memory() will compute.
         mgr.approve_session("T1", "memory_delete", "- [K1]: my secret value")
 

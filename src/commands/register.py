@@ -138,6 +138,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                     "/model [list|switch|temp|name]  — 查看/设置模型",
                     "/sandbox on|off                 — sandbox 开关",
                     "/approval off|ask|always        — 审批模式",
+                    "/memory-approval model|manual   — 记忆保存审批模式",
                     "/rounds <n>                     — 最大工具轮数",
                     "/compress on|off                — 压缩开关",
                     "/progress on|off                — 工具进度通知开关",
@@ -160,6 +161,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                     "/model [list|switch|temp|name]  — View/set model",
                     "/sandbox on|off                 — Sandbox toggle",
                     "/approval off|ask|always        — Approval mode",
+                    "/memory-approval model|manual   — Memory save approval mode",
                     "/rounds <n>                     — Max tool rounds",
                     "/compress on|off                — Compression toggle",
                     "/progress on|off                — Tool progress notifications toggle",
@@ -676,6 +678,25 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         return f"Approval mode: {current}\nUsage: /approval off|ask|on_denylist_miss|always|clear"
 
     dispatcher.register_builtin("approval", cmd_approval)
+
+    async def cmd_memory_approval(args: str, ctx: dict) -> str:
+        zh = container.config.agents.language == "zh"
+        cfg = container.config
+        arg = args.strip().lower()
+
+        valid = ("model", "manual")
+        if arg in valid:
+            cfg.memory_store.save_approval_mode = arg
+            _save_config()
+            if zh:
+                return f"记忆保存审批模式已设为: {arg}"
+            return f"Memory save approval mode set to: {arg}"
+        current = getattr(cfg.memory_store, "save_approval_mode", "model")
+        if zh:
+            return f"记忆保存审批模式: {current}\n用法: /memory-approval model|manual"
+        return f"Memory save approval mode: {current}\nUsage: /memory-approval model|manual"
+
+    dispatcher.register_builtin("memory-approval", cmd_memory_approval)
 
     async def cmd_rounds(args: str, ctx: dict) -> str:
         zh = container.config.agents.language == "zh"

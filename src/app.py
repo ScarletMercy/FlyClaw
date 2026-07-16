@@ -362,7 +362,7 @@ class ServiceContainer:
         from src.tools.approval import ApprovalManager
 
         self.tool_registry = ToolRegistry()
-        self.approval_manager = ApprovalManager(data_dir=str(_get_flyclaw_data_dir()))
+        self.approval_manager = ApprovalManager()
 
     def _setup_media_understanding(self):
         if not self.config.tools.media_understanding.enabled:

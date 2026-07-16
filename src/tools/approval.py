@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
-import os
 import time
 import uuid
-from pathlib import Path
 from typing import Optional
 
-from pydantic import BaseModel, Field, RootModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger("flyclaw.approval")
 
@@ -29,10 +26,6 @@ class ApprovalRequest(BaseModel):
     approval_key: str = ""  # Pattern-level key for "always allow" (e.g. "del ", "rm ")
 
 
-class ApprovalData(RootModel[dict[str, list[str]]]):
-    """Pydantic model for validating the approvals.json file structure."""
-
-
 class _PendingApproval:
     def __init__(self, request: ApprovalRequest):
         self.request = request
@@ -42,50 +35,10 @@ class _PendingApproval:
 
 
 class ApprovalManager:
-    def __init__(self, data_dir: str | None = None):
-        if data_dir is None:
-            from src.instance import data_dir as _dd
-
-            data_dir = str(_dd())
-        self._data_dir = Path(data_dir).expanduser().resolve()
+    def __init__(self):
         self._pending: dict[str, _PendingApproval] = {}
-        self._durable: dict[str, list[str]] = {}
         self._session_approved: dict[str, set[str]] = {}
         self._session_pattern_approved: dict[str, set[str]] = {}  # thread_id → set of approval_keys
-        self._durable_path = self._data_dir / "approvals.json"
-        self._load_durable()
-
-    def _load_durable(self):
-        if self._durable_path.exists():
-            try:
-                raw_data = json.loads(self._durable_path.read_text(encoding="utf-8"))
-                # Validate with Pydantic model
-                validated = ApprovalData.model_validate(raw_data if isinstance(raw_data, dict) else {})
-                self._durable = validated.root
-            except Exception as e:
-                logger.warning("Failed to load approvals.json: %s", e)
-                self._durable = {}
-
-    def _save_durable(self):
-        try:
-            self._data_dir.mkdir(parents=True, exist_ok=True)
-            import tempfile
-
-            fd, tmp_path = tempfile.mkstemp(dir=str(self._data_dir), suffix=".tmp")
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    json.dump(self._durable, f, indent=2, ensure_ascii=False)
-                    f.flush()
-                    os.fsync(f.fileno())
-                os.replace(tmp_path, str(self._durable_path))
-            except BaseException:
-                try:
-                    os.unlink(tmp_path)
-                except OSError:
-                    pass
-                raise
-        except OSError as e:
-            logger.error("Failed to save durable approvals: %s", e)
 
     @staticmethod
     def _make_digest(tool_name: str, args_preview: str) -> str:
@@ -99,11 +52,6 @@ class ApprovalManager:
         if approval_mode == "on_denylist_miss":
             return denylisted
         return False
-
-    def has_durable_approval(self, tool_name: str, args: str) -> bool:
-        digest = self._make_digest(tool_name, args[:200])
-        entries = self._durable.get(tool_name, [])
-        return digest in entries
 
     def approve_session(self, thread_id: str, tool_name: str, args: str):
         digest = self._make_digest(tool_name, args[:200])

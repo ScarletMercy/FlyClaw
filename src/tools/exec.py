@@ -657,18 +657,15 @@ async def exec_command(
             from src.tools.approval import get_approval_manager
 
             mgr = get_approval_manager()
-            if not mgr.has_durable_approval("exec_command", command):
-                if not mgr.has_session_approval(_current_thread_id.get(""), "exec_command", command):
-                    logger.info(
-                        "[exec-audit] Delete operation requires approval ('%s'): %.200s", delete_pattern, command
-                    )
-                    raise ApprovalNeededError(
-                        command,
-                        False,
-                        timeout=30,
-                        auto_deny=True,
-                        approval_key=delete_pattern,
-                    )
+            if not mgr.has_session_approval(_current_thread_id.get(""), "exec_command", command):
+                logger.info("[exec-audit] Delete operation requires approval ('%s'): %.200s", delete_pattern, command)
+                raise ApprovalNeededError(
+                    command,
+                    False,
+                    timeout=30,
+                    auto_deny=True,
+                    approval_key=delete_pattern,
+                )
 
     # Unparseable shell constructs ($(), backticks, | sh, | bash) — always blocked.
     # These cannot be statically analyzed and are the primary vector for bypass attacks.
@@ -689,23 +686,21 @@ async def exec_command(
         from src.tools.approval import get_approval_manager
 
         mgr = get_approval_manager()
-        if not mgr.has_durable_approval("exec_command", command):
-            if not mgr.has_session_approval(_current_thread_id.get(""), "exec_command", command):
-                logger.info(
-                    "[exec-audit] Shell executor ('%s'), requiring approval: %.200s",
-                    executor_detail,
-                    command,
-                )
-                raise ApprovalNeededError(command, False)
+        if not mgr.has_session_approval(_current_thread_id.get(""), "exec_command", command):
+            logger.info(
+                "[exec-audit] Shell executor ('%s'), requiring approval: %.200s",
+                executor_detail,
+                command,
+            )
+            raise ApprovalNeededError(command, False)
 
     if approval_mode not in ("off", ""):
         from src.tools.approval import get_approval_manager
 
         mgr = get_approval_manager()
         needs = mgr.needs_approval("exec_command", command, approval_mode, blocked)
-        if needs and not mgr.has_durable_approval("exec_command", command):
-            if not mgr.has_session_approval(_current_thread_id.get(""), "exec_command", command):
-                raise ApprovalNeededError(command, blocked)
+        if needs and not mgr.has_session_approval(_current_thread_id.get(""), "exec_command", command):
+            raise ApprovalNeededError(command, blocked)
 
     start = time.monotonic()
     exit_code = -1

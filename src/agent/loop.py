@@ -60,6 +60,8 @@ class ApprovalPending(Exception):
         auto_deny: bool = False,
         keys: list[str] | None = None,
         partial_results: list[tuple[str, str]] | None = None,
+        source_context: str = "",
+        memory_save_mode: str = "",
     ):
         self.thread_id = thread_id
         self.request_id = request_id
@@ -70,6 +72,8 @@ class ApprovalPending(Exception):
         self.timeout = timeout
         self.auto_deny = auto_deny
         self.keys = keys or []
+        self.source_context = source_context
+        self.memory_save_mode = memory_save_mode
         self.partial_results: list[tuple[str, str]] = list(partial_results) if partial_results else []
         super().__init__(f"需要审批: {tool_name} — {command_preview[:80]}")
 
@@ -592,11 +596,13 @@ class AgentLoop:
             finally:
                 _current_thread_id.reset(_tid_token)
         else:
+            pending_tool = pending.get("tool_name", "exec_command")
             if pending_tc_id:
-                pending_tool = pending.get("tool_name", "exec_command")
                 deny_msg = (
                     "[denied] 记忆删除已取消。"
                     if pending_tool in ("memory_delete", "memory")
+                    else "[denied] 记忆保存已取消。"
+                    if pending_tool == "memory_save"
                     else "[denied] Command execution was denied by user."
                 )
                 state.append_message(
@@ -608,19 +614,43 @@ class AgentLoop:
                 )
                 existing_results.add(pending_tc_id)
 
-            # Deny remaining unexecuted tool calls too
+            # Deny remaining unexecuted tool calls too (associated denial)
             if assistant_msg_idx is not None:
                 assistant_msg = state.messages[assistant_msg_idx]
                 for tc in assistant_msg["tool_calls"]:
                     tc_id = tc.get("id", "")
                     if tc_id and tc_id not in existing_results:
-                        state.append_message(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc_id,
-                                "content": "[denied] Skipped due to associated denial.",
-                            }
-                        )
+                        tc_func = tc.get("function", {})
+                        tc_name = tc_func.get("name", "")
+                        # memory 的 save/delete/get/list 共用工具名 "memory"，靠 arguments 的 action 区分
+                        try:
+                            tc_action = json.loads(tc_func.get("arguments", "") or "{}").get("action", "")
+                        except (json.JSONDecodeError, TypeError):
+                            tc_action = ""
+                        # memory 逐条审批：deny 一条 memory(save/delete) 时，仅兄弟 delete 走 associated skip；
+                        # save/get/list 独立重执——get/list 是纯读必须返回结果，save 走各自自检/审批。
+                        if (
+                            tc_name == "memory"
+                            and pending_tool in ("memory_save", "memory_delete")
+                            and tc_action != "delete"
+                        ):
+                            try:
+                                result = await self._execute_tool(tc, state, thread_id)
+                            except ApprovalPending as ap:
+                                state.pending_approval = ap.to_pending_data()
+                                await self._store.save(thread_id, state)
+                                raise
+                            if not result:
+                                result = "[interrupted] 工具执行被打断"
+                            state.append_message({"role": "tool", "tool_call_id": tc_id, "content": result})
+                        else:
+                            state.append_message(
+                                {
+                                    "role": "tool",
+                                    "tool_call_id": tc_id,
+                                    "content": "[denied] Skipped due to associated denial.",
+                                }
+                            )
                         existing_results.add(tc_id)
 
         state.pending_approval = None
@@ -1072,6 +1102,7 @@ class AgentLoop:
         )
 
         from src.tools.exec import _current_agent_context, _current_thread_id
+        from src.tools.memory_tools import _current_dialog_context, build_dialog_context
 
         _ctx_token = _current_agent_context.set(
             {
@@ -1086,6 +1117,8 @@ class AgentLoop:
         # same value on every path — including gateway/OpenAI-API, where no
         # inbound handler sets it. Without this the two tools disagreed.
         _tid_token = _current_thread_id.set(thread_id)
+        # 注入最近对话原文，供 memory(save) 自检对照来源
+        _dialog_token = _current_dialog_context.set(build_dialog_context(state.messages))
         try:
             logger.info(
                 "[tool] start: %s timeout=%ds args=%.150s",
@@ -1114,11 +1147,11 @@ class AgentLoop:
             duration_ms = (_time.monotonic() - start) * 1000
             from src.tools.exec import ApprovalNeededError
             from src.tools.exceptions import ToolExecutionError
-            from src.tools.memory_tools import MemoryDeleteNeedsApproval
+            from src.tools.memory_tools import MemoryDeleteNeedsApproval, MemorySaveNeedsApproval
 
-            if isinstance(e, (ApprovalNeededError, MemoryDeleteNeedsApproval)):
-                # ── 记忆删除：不可逆操作，始终需要审批 ──
-                if not isinstance(e, MemoryDeleteNeedsApproval):
+            if isinstance(e, (ApprovalNeededError, MemoryDeleteNeedsApproval, MemorySaveNeedsApproval)):
+                # ── 记忆删除/保存：不可绕过审批（delete 不可逆；save 需内容把关）──
+                if not isinstance(e, (MemoryDeleteNeedsApproval, MemorySaveNeedsApproval)):
                     # ── 审批绕过检查：owner 等高权限用户可跳过审批（仅 exec_command 等命令执行类） ──
                     # try/except 仅包裹绕过资格判定（resolve_user / RBAC /
                     # approve_session），工具实际执行放在 try/except 之外，
@@ -1199,6 +1232,7 @@ class AgentLoop:
         finally:
             _current_agent_context.reset(_ctx_token)
             _current_thread_id.reset(_tid_token)
+            _current_dialog_context.reset(_dialog_token)
 
     async def _record_tool_success(
         self,
@@ -1367,5 +1401,7 @@ class AgentLoop:
             timeout=getattr(error, "timeout", None),
             auto_deny=getattr(error, "auto_deny", False),
             keys=getattr(error, "keys", None),
+            source_context=getattr(error, "source_context", ""),
+            memory_save_mode=getattr(error, "mode", ""),
             tc_id=tc_id,
         )

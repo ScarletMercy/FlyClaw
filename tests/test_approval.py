@@ -1,9 +1,6 @@
-"""Tests for src/tools/approval.py — ApprovalManager, durable approvals, session approvals."""
+"""Tests for src/tools/approval.py — ApprovalManager, session approvals."""
 
 import asyncio
-import json
-import tempfile
-from pathlib import Path
 
 import pytest
 
@@ -11,13 +8,8 @@ from src.tools.approval import ApprovalManager, ApprovalRequest
 
 
 @pytest.fixture
-def approval_dir(tmp_path):
-    return str(tmp_path / "approval_data")
-
-
-@pytest.fixture
-def mgr(approval_dir):
-    return ApprovalManager(data_dir=approval_dir)
+def mgr():
+    return ApprovalManager()
 
 
 # ── needs_approval ─────────────────────────────────────────
@@ -38,28 +30,6 @@ class TestNeedsApproval:
 
     def test_unknown_mode(self, mgr):
         assert mgr.needs_approval("exec", "ls", "unknown", True) is False
-
-
-# ── durable approvals ──────────────────────────────────────
-
-
-class TestDurableApproval:
-    def test_no_initial_durable(self, mgr):
-        assert mgr.has_durable_approval("exec", "ls") is False
-
-    def test_save_and_load_durable(self, approval_dir):
-        m1 = ApprovalManager(data_dir=approval_dir)
-        # Manually add a durable entry
-        m1._durable["exec"] = [m1._make_digest("exec", "rm -rf /")]
-        m1._save_durable()
-
-        # Load fresh
-        m2 = ApprovalManager(data_dir=approval_dir)
-        assert m2.has_durable_approval("exec", "rm -rf /") is True
-
-    def test_durable_not_matching(self, mgr):
-        mgr._durable["exec"] = [mgr._make_digest("exec", "rm -rf /")]
-        assert mgr.has_durable_approval("exec", "ls -la") is False
 
 
 # ── session approvals ──────────────────────────────────────
@@ -225,31 +195,3 @@ class TestMakeDigest:
         # Both truncated to 200 before hashing — digests differ because
         # the first 200 chars are same but digest also includes the full first 200
         assert isinstance(d1, str) and len(d1) == 16
-
-
-# ── durable save/load edge cases ───────────────────────────
-
-
-class TestDurablePersistence:
-    def test_load_corrupt_file(self, tmp_path):
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        (data_dir / "approvals.json").write_text("NOT JSON!!!", encoding="utf-8")
-        mgr = ApprovalManager(data_dir=str(data_dir))
-        # Should not crash, durable dict should be empty
-        assert mgr._durable == {}
-
-    def test_load_empty_dict(self, tmp_path):
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        (data_dir / "approvals.json").write_text("{}", encoding="utf-8")
-        mgr = ApprovalManager(data_dir=str(data_dir))
-        assert mgr._durable == {}
-
-    def test_load_valid_data(self, tmp_path):
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        data = {"exec": ["abc123"]}
-        (data_dir / "approvals.json").write_text(json.dumps(data), encoding="utf-8")
-        mgr = ApprovalManager(data_dir=str(data_dir))
-        assert mgr._durable == data

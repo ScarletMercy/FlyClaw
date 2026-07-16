@@ -953,6 +953,8 @@ class MessageHandler:
                 # ApprovalPending 异常不携带 approval_key,只能从命令文本判断。
                 if tool_name in ("memory_delete", "memory"):
                     _action_tag = "（删除记忆）" if zh else " (Delete Memory)"
+                elif tool_name == "memory_save":
+                    _action_tag = "（保存记忆）" if zh else " (Save Memory)"
                 elif is_delete_command(getattr(current_exc, "command_preview", "")):
                     _action_tag = "（删除文件）" if zh else " (Delete File)"
                 else:
@@ -969,6 +971,16 @@ class MessageHandler:
                         f"🗑️ 以下 {len(keys)} 条记忆将被删除：\n\n"
                         f"{preview}\n\n"
                         f"发送 /y 确认，其它任何消息自动取消（{approval_timeout}秒超时）"
+                    )
+                elif tool_name == "memory_save":
+                    from src.tools.memory_tools import _memory_save_approval_text
+
+                    msg_text = _memory_save_approval_text(
+                        current_exc.command_preview,
+                        getattr(current_exc, "source_context", ""),
+                        approval_timeout,
+                        zh,
+                        model_mode=getattr(current_exc, "memory_save_mode", "") != "manual",
                     )
                 else:
                     if zh:
@@ -1016,7 +1028,10 @@ class MessageHandler:
                     decision = "deny"
 
                 if decision == "deny":
-                    consecutive_denies += 1
+                    from src.tools.memory_tools import _deny_counts_toward_abort
+
+                    if _deny_counts_toward_abort(tool_name):
+                        consecutive_denies += 1
                 else:
                     consecutive_denies = 0
 
