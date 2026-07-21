@@ -833,6 +833,48 @@ async def save_memory(content: str, key: str = "", category: str = "fact") -> st
     return await s.remember(content, key, category)
 
 
+async def _gate_memory_save(content: str) -> Optional[str]:
+    """入口1（memory save 工具）的保存前置关卡。
+
+    三种出口：
+    - 返回 None：放行，调用方继续 save_memory。
+    - 返回 JSON 字符串：已处理（model 自检判定 reject），调用方直接返回该串。
+    - raise MemorySaveNeedsApproval：转人工审批（manual 模式），由 agent loop 接管。
+
+    仅入口1 调用。dashboard / auto-extract / 日记 / 整理都直接调 save_memory，不经此关卡
+    ——审批协议依赖 agent 工具循环 + 在线交互通道 + thread 上下文，只有入口1 同时具备。
+    """
+    # session 短路（对齐 delete）：已授权的 args 直接放行，避免 resume 重复自检。
+    # approval manager 不可用时（container 未初始化，如部分集成测试）跳过短路、走自检。
+    approved = False
+    mode = "model"
+    try:
+        from src._container import get_container
+        from src.tools.approval import get_approval_manager
+        from src.tools.exec import _current_thread_id
+
+        container = get_container()
+        mode = getattr(container.config.memory_store, "save_approval_mode", "model")
+        mgr = get_approval_manager()
+        approved = mgr.has_session_approval(_current_thread_id.get(""), "memory_save", content[:200])
+    except RuntimeError:
+        approved = False
+
+    if approved:
+        return None
+
+    source = get_memory_dialog_context()
+    if mode == "manual":
+        # 人工批准模式：跳过自检，直接转人工审批
+        raise MemorySaveNeedsApproval(content, source_context=source, reason="manual approval mode", mode=mode)
+    # model 模式：模型自检把关。reject 直接丢弃（错误信息挡在库外），不弹审批。
+    decision, reason = await _validate_memory(content, source)
+    if decision == "reject":
+        logger.info("memory save rejected by self-check: %.80s", content)
+        return json.dumps({"ok": False, "rejected": True, "reason": reason}, ensure_ascii=False)
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Unified memory tool (single tool with action parameter)
 # ---------------------------------------------------------------------------
@@ -1007,37 +1049,9 @@ async def memory(
     if normalized == "save":
         if not content:
             return json.dumps({"error": "content is required for save action"}, ensure_ascii=False)
-        # 保存前自检：对照来源原文，可疑（臆测/曲解）转人工审批。
-        # 仅入口1（memory 工具）：dashboard/auto-extract/日记都直接调 save_memory，不经此处。
-        # 先查 session 短路（对齐 delete）：已授权的 args 直接存，避免 resume 重复自检。
-        # approval manager 不可用时（container 未初始化，如部分集成测试）跳过短路、走自检。
-        _approved = False
-        _mode = "model"
-        try:
-            from src._container import get_container
-            from src.tools.approval import get_approval_manager
-            from src.tools.exec import _current_thread_id
-
-            _container = get_container()
-            _mode = getattr(_container.config.memory_store, "save_approval_mode", "model")
-            _mgr = get_approval_manager()
-            _args_preview = content[:200]
-            _tid = _current_thread_id.get("")
-            _approved = _mgr.has_session_approval(_tid, "memory_save", _args_preview)
-        except RuntimeError:
-            _approved = False
-        if not _approved:
-            _source = get_memory_dialog_context()
-            if _mode == "manual":
-                # 人工批准模式：跳过自检，直接转人工审批
-                raise MemorySaveNeedsApproval(
-                    content, source_context=_source, reason="manual approval mode", mode=_mode
-                )
-            # model 模式：模型自检把关。reject 直接丢弃（错误信息挡在库外），不弹审批。
-            _decision, _reason = await _validate_memory(content, _source)
-            if _decision == "reject":
-                logger.info("memory save rejected by self-check: %.80s", content)
-                return json.dumps({"ok": False, "rejected": True, "reason": _reason}, ensure_ascii=False)
+        rejection = await _gate_memory_save(content)
+        if rejection is not None:
+            return rejection
         return await save_memory(content, key, category)
 
     chat_type, group_id = get_memory_scope()
