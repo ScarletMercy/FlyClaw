@@ -875,6 +875,45 @@ async def _gate_memory_save(content: str) -> Optional[str]:
     return None
 
 
+async def _gate_auto_extract(content: str, source_context: str = "") -> tuple[str, str]:
+    """入口2（auto_extract 正则提取）的保存前置关卡。
+
+    与入口1（_gate_memory_save）复用同一套 model/manual 审批语义，但不抛异常、
+    不依赖 agent 工具循环——auto_extract 在消息回复后触发，无 ApprovalPending 槽位，
+    由调用方（message.py）用 detached 后台 task 实现程序式审批（不阻塞主回合）。
+
+    返回 (decision, reason)，decision ∈ {"allow", "reject", "manual"}：
+    - allow:  放行，调用方 save_memory
+    - reject: model 自检判臆测/曲解，静默丢弃（错误信息挡在库外）
+    - manual: 需人工审批（model 模式可疑 / manual 模式全部），调用方起 detached 后台 task
+    fail-open：无主模型/调用失败 → allow（不阻断 auto_extract）。
+    """
+    # 会话级授权短路：本会话已批准该内容 → 不再问（对齐 save 关卡，防重复轰炸）
+    try:
+        from src._container import get_container
+        from src.tools.approval import get_approval_manager
+        from src.tools.exec import _current_thread_id
+
+        container = get_container()
+        mode = getattr(container.config.memory_store, "save_approval_mode", "model")
+        mgr = get_approval_manager()
+        if mgr.has_session_approval(_current_thread_id.get(""), "auto_extract", content[:200]):
+            return ("allow", "session approved")
+    except RuntimeError:
+        # container 未初始化（部分集成测试）→ fail-open
+        return ("allow", "no container, fail-open")
+
+    if mode == "manual":
+        # 人工批准模式：跳过自检，全部转 detached 后台审批
+        return ("manual", "manual approval mode")
+    # model 模式：模型自检把关。reject 静默丢弃，allow 放行；可疑（allow 但需复核）不在此层处理。
+    # 注：_validate_memory 只返回 allow/reject 两态；model 模式下"可疑转人工"由 manual 模式承担。
+    decision, reason = await _validate_memory(content, source_context)
+    if decision == "reject":
+        logger.info("auto_extract rejected by self-check: %.80s", content)
+    return (decision, reason)
+
+
 # ---------------------------------------------------------------------------
 # Unified memory tool (single tool with action parameter)
 # ---------------------------------------------------------------------------

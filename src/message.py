@@ -108,6 +108,7 @@ _SILENT_TOOLS = frozenset(
 
 _MAX_INTERRUPT_DEPTH = 5
 _MAX_PENDING_QUEUE = 10
+_AUTO_EXTRACT_TIMEOUT = 120  # auto_extract detached 后台审批 task 超时（秒），超时 auto-deny
 
 
 class _DrainContext:
@@ -279,9 +280,12 @@ class MessageHandler:
                             ):
                                 resumed_threads.add(req.thread_id)
                                 asyncio.create_task(self._resume_and_reply(req.thread_id, "allow_once", chat_id))
-                        has_mem = any(r.tool_name in ("memory_delete", "memory") for r in unresolved)
+                        has_mem = any(
+                            r.tool_name in ("memory_delete", "memory", "memory_save", "auto_extract")
+                            for r in unresolved
+                        )
                         if has_mem:
-                            await reply_fn("✅ 已确认删除记忆")
+                            await reply_fn("✅ 已批准记忆操作" if zh else "✅ Memory operation approved")
                         else:
                             await reply_fn("✅ Approved." if not zh else "✅ 已批准执行。")
                         return
@@ -801,16 +805,32 @@ class MessageHandler:
 
             if getattr(self._container.config, "memory_store", None) and self._container.config.memory_store.enabled:
                 try:
-                    from src.tools.memory_tools import auto_extract_memory, save_memory
+                    from src.tools.memory_tools import _gate_auto_extract, auto_extract_memory, save_memory
 
                     clean_text = _MEDIA_MARKER_RE.sub("", original_text).strip()
                     extracted = auto_extract_memory(clean_text, display_text)
                     if extracted:
                         content, category = extracted
-                        await save_memory(content, category=category)
-                        if self._container.agent_loop:
-                            self._container.agent_loop.invalidate_memory_cache()
-                        await reply_fn(f"\U0001f4be update memory: {content[:50]}")
+                        decision, _reason = await _gate_auto_extract(content, source_context=clean_text)
+                        if decision == "allow":
+                            await save_memory(content, category=category)
+                            if self._container.agent_loop:
+                                self._container.agent_loop.invalidate_memory_cache()
+                            await reply_fn(f"\U0001f4be update memory: {content[:50]}")
+                        elif decision == "reject":
+                            # model 自检判臆测/曲解：静默丢弃（错误信息挡在库外，不通知用户）
+                            logger.info("auto_extract rejected by self-check: %.80s", content)
+                        else:  # "manual"：model 可疑 / manual 全部 → detached 后台 task 审批（不阻塞主回合）
+                            asyncio.create_task(
+                                self._auto_extract_approval_task(
+                                    content=content,
+                                    category=category,
+                                    source=clean_text,
+                                    thread_id=thread_id,
+                                    chat_id=chat_id,
+                                    reply_fn=reply_fn,
+                                )
+                            )
                 except Exception:
                     pass
 
@@ -1096,6 +1116,99 @@ class MessageHandler:
                     system_prompt=drain_ctx.system_prompt,
                     depth=drain_ctx.depth,
                 )
+
+    async def _auto_extract_approval_task(
+        self,
+        content: str,
+        category: str,
+        source: str,
+        thread_id: str,
+        chat_id: str,
+        reply_fn,
+    ):
+        """auto_extract 的异步审批 task：发审批 → 等 /y 或超时 → allow 才存。
+
+        detached 后台 task：调用方 create_task 后立即返回，不 await、不持有引用、
+        不阻塞主回合。task 仍通过 reply_fn 向同一对话发消息（审批提示/确认），并注册
+        全局 pending 请求与 /y 路由耦合——故"detached"指主回合不阻塞，非完全无副作用。
+        复用 ApprovalManager 底层（request_approval/await_approval/resolve），
+        不碰 agent_loop 的 ApprovalPending 机制——auto_extract 不写 state.pending_approval，
+        故 /y 路由触发的 _resume_and_reply 会因 pending_approval 为空而 no-op（安全）。
+
+        - allow_once：approve_session（本会话同内容不再问）+ save_memory + 二次确认
+        - deny：取消提示，不落库
+        - timeout：超时提示，不落库
+        整体 try/except：detached task 的异常不会被调用方捕获，
+        需自行兜底，避免 "Task exception was never retrieved" 静默告警 + 孤儿 pending 请求。
+        """
+        from src.tools.approval import get_approval_manager
+
+        req = None
+        try:
+            from src.tools.memory_tools import _memory_save_approval_text, save_memory
+
+            zh = self._container.config.agents.language == "zh"
+            mgr = get_approval_manager()
+            timeout = _AUTO_EXTRACT_TIMEOUT
+
+            # 读取审批模式，决定文案措辞（manual=无模型判断，model=疑似臆测）
+            mode = getattr(self._container.config.memory_store, "save_approval_mode", "model")
+            model_mode = mode != "manual"
+
+            req = mgr.request_approval(
+                tool_name="auto_extract",
+                args=content[:300],
+                thread_id=thread_id,
+                chat_id=chat_id,
+                timeout_seconds=timeout,
+                approval_key="auto_extract",
+            )
+            # 发审批消息：优先交互按钮键盘（QQ C2C/group），不支持则回退纯文本。
+            # 对齐现有 memory_save/delete 审批的发送路径（message.py 的 _handle_approval_pending）。
+            msg_text = _memory_save_approval_text(content, source, timeout, zh, model_mode=model_mode)
+            action_note = "（保存记忆）" if zh else " (Save Memory)"
+            sent_keyboard = False
+            ch = self._get_channel_for_chat_id(chat_id)
+            if ch is not None and hasattr(ch, "send_approval_keyboard"):
+                try:
+                    result = await ch.send_approval_keyboard(
+                        chat_id=chat_id,
+                        request_id=req.id,
+                        command_preview=content,
+                        is_dangerous=False,
+                        timeout_seconds=timeout,
+                        zh=zh,
+                        action_note=action_note,
+                    )
+                    sent_keyboard = result is not None
+                except Exception as e:
+                    logger.debug("auto_extract keyboard approval failed, falling back to text: %s", e)
+            if not sent_keyboard:
+                await reply_fn(msg_text)
+
+            decision, _ = await mgr.await_approval(req.id, timeout=timeout)
+            if decision == "allow_once":
+                # 会话级授权：本会话内同内容不再弹审批（防重复轰炸）。
+                # 注：用户点 keyboard 的"⭐ 始终允许"按钮时，_handle_interaction 已按 pattern
+                # 授权（approval_key == tool_name == "auto_extract"），gate 的 has_session_approval
+                # 走 pattern 分支命中；这里再 approve_session 精确授权是幂等的（allow_once 也会走到）。
+                mgr.approve_session(thread_id, "auto_extract", content[:200])
+                await save_memory(content, category=category)
+                if self._container.agent_loop:
+                    self._container.agent_loop.invalidate_memory_cache()
+                await reply_fn("💾 已保存到记忆" if zh else "💾 Saved to memory")
+            elif decision == "deny":
+                await reply_fn("🚫 记忆保存已取消" if zh else "🚫 Memory save cancelled")
+            else:  # timeout
+                await reply_fn("⏰ 记忆保存审批超时，已自动取消" if zh else "⏰ Memory approval timed out, cancelled")
+        except Exception as e:
+            logger.warning("auto_extract approval task failed: %s", e)
+            # 兜底清理孤儿 pending 请求（避免 /y 路由永久看到无法 resolve 的请求）
+            if req is not None:
+                try:
+                    get_approval_manager().cancel_pending(req.id)
+                except Exception:
+                    pass
 
     async def _resume_and_reply(self, thread_id: str, decision: str, chat_id: str):
         """Fallback resume when _handle_approval_pending is not running.
