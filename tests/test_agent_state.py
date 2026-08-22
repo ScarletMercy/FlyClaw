@@ -175,7 +175,7 @@ class TestStateStore:
             conn = await store._get_conn()
             # Old-style row: frozen_system_prompt inside metadata JSON, new column is ''
             await conn.execute(
-                "INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     "t1",
                     json.dumps([{"role": "user", "content": "hi"}]),
@@ -195,12 +195,14 @@ class TestStateStore:
                     "",  # frozen_system_prompt column empty
                     0.0,  # created_at
                     0.0,  # updated_at
+                    0,  # organized
                 ),
             )
             await conn.commit()
             loaded = await store.load("t1")
             assert loaded is not None
             assert loaded.frozen_system_prompt == "old frozen prompt from JSON"
+            assert loaded.organized is False
             await store.close()
 
         asyncio.run(_test())
@@ -245,7 +247,7 @@ class TestStateStore:
             conn = await store._get_conn()
             # Manually insert metadata with an extra key
             await conn.execute(
-                "INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT OR REPLACE INTO sessions VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     "t1",
                     json.dumps([{"role": "user", "content": "hi"}]),
@@ -265,6 +267,7 @@ class TestStateStore:
                     "",
                     0.0,  # created_at
                     0.0,  # updated_at
+                    0,  # organized
                 ),
             )
             await conn.commit()
@@ -355,3 +358,205 @@ class TestConcurrencyLocks:
         asyncio.run(run())
         # A and B must not overlap
         assert order == ["A-start", "A-end", "B-start", "B-end"] or order == ["B-start", "B-end", "A-start", "A-end"]
+
+
+# ---------------------------------------------------------------------------
+# organized column + mark_organized
+# ---------------------------------------------------------------------------
+
+
+class TestOrganizedColumn:
+    def test_save_does_not_write_organized_column(self, tmp_path):
+        """save() 不写 organized 列（仅 mark_organized 可置 1）；新行 organized 默认 0。
+        即便 AgentState.organized=True，save 后 load 仍为 False——organized 由 mark_organized 独占管理。"""
+
+        async def _test():
+            store = StateStore(str(tmp_path / "test.db"))
+            state = AgentState(
+                messages=[{"role": "user", "content": "hi"}],
+                organized=True,
+            )
+            await store.save("t1", state)
+            loaded = await store.load("t1")
+            assert loaded is not None
+            assert loaded.organized is False  # save() 不写 organized 列
+            await store.close()
+
+        asyncio.run(_test())
+
+    def test_mark_organized_sets_flag(self, tmp_path):
+        """mark_organized sets organized=1; load reflects it."""
+
+        async def _test():
+            store = StateStore(str(tmp_path / "test.db"))
+            state = AgentState(messages=[{"role": "user", "content": "hi"}])
+            await store.save("t1", state)
+            loaded = await store.load("t1")
+            assert loaded.organized is False
+
+            changed = await store.mark_organized("t1")
+            assert changed is True
+
+            loaded2 = await store.load("t1")
+            assert loaded2.organized is True
+            await store.close()
+
+        asyncio.run(_test())
+
+    def test_mark_organized_unknown_thread(self, tmp_path):
+        """mark_organized on non-existent thread returns False."""
+
+        async def _test():
+            store = StateStore(str(tmp_path / "test.db"))
+            changed = await store.mark_organized("nonexistent")
+            assert changed is False
+            await store.close()
+
+        asyncio.run(_test())
+
+    def test_save_preserves_organized(self, tmp_path):
+        """ON CONFLICT save() preserves organized column (doesn't reset to 0)."""
+
+        async def _test():
+            store = StateStore(str(tmp_path / "test.db"))
+            state = AgentState(messages=[{"role": "user", "content": "hi"}])
+            await store.save("t1", state)
+            await store.mark_organized("t1")
+
+            # Simulate handler save (fresh AgentState, organized=False)
+            state2 = AgentState(messages=[{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}])
+            await store.save("t1", state2)
+
+            # organized should survive the save
+            loaded = await store.load("t1")
+            assert loaded.organized is True
+            assert len(loaded.messages) == 2
+            await store.close()
+
+        asyncio.run(_test())
+
+    def test_save_preserves_created_at(self, tmp_path):
+        """ON CONFLICT save() preserves created_at (replaces old COALESCE)."""
+
+        async def _test():
+            store = StateStore(str(tmp_path / "test.db"))
+            state = AgentState(messages=[{"role": "user", "content": "first"}])
+            await store.save("t1", state)
+            original = await store.load("t1")
+            original_ts = original.created_at
+
+            await asyncio.sleep(0.05)
+
+            state2 = AgentState(messages=[{"role": "user", "content": "second"}])
+            await store.save("t1", state2)
+            loaded = await store.load("t1")
+            assert loaded.created_at == original_ts  # preserved, not overwritten
+            await store.close()
+
+        asyncio.run(_test())
+
+    def test_list_threads_since(self, tmp_path):
+        """list_threads_since returns only threads with created_at >= since_ts."""
+
+        async def _test():
+            import time as _time
+
+            store = StateStore(str(tmp_path / "test.db"))
+
+            old_ts = _time.time() - 100000
+            new_ts = _time.time()
+
+            old_state = AgentState(messages=[{"role": "user", "content": "old"}])
+            new_state = AgentState(messages=[{"role": "user", "content": "new"}])
+
+            # Manually set created_at via raw insert for old thread
+            conn = await store._get_conn()
+            await conn.execute(
+                "INSERT INTO sessions (thread_id, messages, metadata, frozen_system_prompt, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("old_thread", "[]", "{}", "", old_ts, old_ts),
+            )
+            await conn.commit()
+            await store.save("new_thread", new_state)
+
+            cutoff = _time.time() - 3600
+            threads = await store.list_threads_since(cutoff)
+            assert "new_thread" in threads
+            assert "old_thread" not in threads
+            await store.close()
+
+        asyncio.run(_test())
+
+    def test_list_threads_since_excludes_organized(self, tmp_path):
+        """list_threads_since 在 SQL 层排除 organized=1 的会话（避免失败重扫时 O(n) 退化）。"""
+
+        async def _test():
+            import time as _time
+
+            store = StateStore(str(tmp_path / "test.db"))
+
+            done_state = AgentState(messages=[{"role": "user", "content": "done"}])
+            pending_state = AgentState(messages=[{"role": "user", "content": "pending"}])
+            await store.save("done_thread", done_state)
+            await store.save("pending_thread", pending_state)
+            # 标记 done_thread 已整理
+            await store.mark_organized("done_thread")
+
+            cutoff = _time.time() - 3600
+            threads = await store.list_threads_since(cutoff)
+            assert "pending_thread" in threads
+            assert "done_thread" not in threads  # SQL 层已过滤
+
+            # 整理 pending_thread 后，它也从结果中消失
+            await store.mark_organized("pending_thread")
+            threads2 = await store.list_threads_since(cutoff)
+            assert threads2 == []
+            await store.close()
+
+        asyncio.run(_test())
+
+    def test_migration_from_pre_created_at_schema(self, tmp_path):
+        """最老 schema（无 frozen_system_prompt/created_at/organized）经 _get_conn 迁移成功。
+
+        回归：idx_sessions_created 若放在 _SCHEMA（executescript 先于 ALTER 执行），
+        老库会抛 no such column: created_at 导致 StateStore 初始化失败。
+        """
+        import json
+
+        import aiosqlite
+
+        db_path = str(tmp_path / "old.db")
+        row_updated = 1700000000.0
+
+        async def _test():
+            async with aiosqlite.connect(db_path) as conn:
+                await conn.execute(
+                    "CREATE TABLE sessions ("
+                    "thread_id TEXT PRIMARY KEY, messages TEXT NOT NULL, "
+                    "metadata TEXT NOT NULL, updated_at REAL NOT NULL)"
+                )
+                await conn.execute(
+                    "INSERT INTO sessions VALUES (?, ?, ?, ?)",
+                    ("old_thread", json.dumps([{"role": "user", "content": "hi"}]), "{}", row_updated),
+                )
+                await conn.commit()
+
+            store = StateStore(db_path)
+            # 老库迁移不抛错（no such column 回归）
+            conn = await store._get_conn()
+            async with conn.execute("PRAGMA table_info(sessions)") as cur:
+                cols = {r[1] for r in await cur.fetchall()}
+            assert {"frozen_system_prompt", "created_at", "organized"} <= cols
+            async with conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_sessions_created'"
+            ) as cur:
+                assert await cur.fetchone() is not None
+
+            # backfill: created_at 从 updated_at 补齐；save/load 正常
+            loaded = await store.load("old_thread")
+            assert loaded is not None
+            assert loaded.created_at == row_updated
+            assert loaded.organized is False
+            await store.close()
+
+        asyncio.run(_test())

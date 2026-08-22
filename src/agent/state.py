@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     metadata TEXT NOT NULL,
     frozen_system_prompt TEXT NOT NULL DEFAULT '',
     created_at REAL NOT NULL DEFAULT 0,
-    updated_at REAL NOT NULL
+    updated_at REAL NOT NULL,
+    organized INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_updated ON sessions(updated_at);
 """
@@ -39,6 +40,10 @@ _MIGRATIONS = [
     "ALTER TABLE sessions ADD COLUMN frozen_system_prompt TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE sessions ADD COLUMN created_at REAL NOT NULL DEFAULT 0",
     "UPDATE sessions SET created_at = updated_at WHERE created_at = 0",
+    "ALTER TABLE sessions ADD COLUMN organized INTEGER NOT NULL DEFAULT 0",
+    # idx_sessions_created 必须在 migrations 里建而非 _SCHEMA：老库尚无 created_at 列，
+    # executescript(_SCHEMA) 先于 ALTER 执行会直接抛 no such column 导致初始化失败。
+    "CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at)",
 ]
 
 
@@ -59,6 +64,9 @@ class AgentState(BaseModel):
     frozen_system_prompt: str = ""
     created_at: float = 0
     total_usage: dict[str, Any] | None = None
+
+    # 是否已被会话整理（凌晨/手动命令）处理过；成功整理后置 True，跳过后续重复整理
+    organized: bool = False
 
     @field_validator("messages", mode="after")
     @classmethod
@@ -88,6 +96,8 @@ class AgentState(BaseModel):
             "channel": self.channel,
             "pending_approval": self.pending_approval,
             "created_at": self.created_at,
+            # organized 不入 metadata JSON：它由 DB 列独占管理（mark_organized 原子写，
+            # load() 用列值覆盖），写进 metadata 永远是 False 且从不被读取。
         }
 
     def append_message(self, msg: dict[str, Any]) -> None:
@@ -149,18 +159,20 @@ class StateStore:
         conn = await self._get_conn()
         now = time.time()
         await conn.execute(
-            """INSERT OR REPLACE INTO sessions
-               (thread_id, messages, metadata, frozen_system_prompt, updated_at, created_at)
-               VALUES (?, ?, ?, ?, ?, COALESCE(
-                   (SELECT created_at FROM sessions WHERE thread_id = ?), ?
-               ))""",
+            """INSERT INTO sessions
+               (thread_id, messages, metadata, frozen_system_prompt, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(thread_id) DO UPDATE SET
+               messages=excluded.messages,
+               metadata=excluded.metadata,
+               frozen_system_prompt=excluded.frozen_system_prompt,
+               updated_at=excluded.updated_at""",
             (
                 thread_id,
                 json.dumps(state.messages, ensure_ascii=False),
                 json.dumps(state.meta_dict(), ensure_ascii=False),
                 state.frozen_system_prompt,
                 now,
-                thread_id,
                 now,
             ),
         )
@@ -169,7 +181,7 @@ class StateStore:
     async def load(self, thread_id: str) -> AgentState | None:
         conn = await self._get_conn()
         async with conn.execute(
-            "SELECT messages, metadata, frozen_system_prompt, created_at FROM sessions WHERE thread_id = ?",
+            "SELECT messages, metadata, frozen_system_prompt, created_at, organized FROM sessions WHERE thread_id = ?",
             (thread_id,),
         ) as cursor:
             row = await cursor.fetchone()
@@ -180,6 +192,7 @@ class StateStore:
         meta["messages"] = messages
         meta["frozen_system_prompt"] = row[2] if row[2] else meta.get("frozen_system_prompt", "")
         meta["created_at"] = row[3] if row[3] else 0
+        meta["organized"] = bool(row[4])
         return AgentState.model_validate(meta)
 
     async def delete(self, thread_id: str) -> bool:
@@ -193,6 +206,31 @@ class StateStore:
         async with conn.execute("SELECT thread_id FROM sessions ORDER BY updated_at DESC") as cursor:
             rows = await cursor.fetchall()
         return [r[0] for r in rows]
+
+    async def list_threads_since(self, since_ts: float) -> list[str]:
+        """返回 created_at >= since_ts 且未整理(organized=0)的 thread_id。
+
+        SQL 层直接排除已整理会话：当 last_session_organize_at 因失败长期不推进、
+        反复重扫同一区间时，已整理项不会回到 Python 层逐个跳过，避免 O(n) 退化。
+        所有调用方拿到 organized 会话本就只会跳过，语义不变。
+        """
+        conn = await self._get_conn()
+        async with conn.execute(
+            "SELECT thread_id FROM sessions WHERE created_at >= ? AND organized = 0 ORDER BY updated_at DESC",
+            (since_ts,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [r[0] for r in rows]
+
+    async def mark_organized(self, thread_id: str) -> bool:
+        """原子标记会话已整理（仅更新 organized 列，不碰 messages/metadata，避免覆盖并发写入）。"""
+        conn = await self._get_conn()
+        cursor = await conn.execute(
+            "UPDATE sessions SET organized = 1 WHERE thread_id = ?",
+            (thread_id,),
+        )
+        await conn.commit()
+        return cursor.rowcount > 0
 
     async def close(self) -> None:
         if self._conn is not None:

@@ -37,8 +37,8 @@ class TestSchedulerMigration:
         # 2026-06-14 是周日
         with (
             patch("asyncio.sleep", side_effect=_sleep_then_cancel),
-            patch("src.services.daily_consolidation.run_daily_consolidation", daily_mock),
-            patch("src.services.memory_consolidation.run_memory_consolidation", memory_mock),
+            patch("src.services.consolidation_state.run_session_organize", daily_mock),
+            patch("src.services.consolidation_state.run_memory_organize", memory_mock),
             patch("src.services.memory_archive_migration.migrate_kv_to_archive", migrate_mock),
             patch(
                 "src.services.consolidation_scheduler._next_occurrence",
@@ -75,8 +75,8 @@ class TestSchedulerMigration:
         # 2026-06-15 是周一
         with (
             patch("asyncio.sleep", side_effect=_sleep_then_cancel),
-            patch("src.services.daily_consolidation.run_daily_consolidation", daily_mock),
-            patch("src.services.memory_consolidation.run_memory_consolidation", memory_mock),
+            patch("src.services.consolidation_state.run_session_organize", daily_mock),
+            patch("src.services.consolidation_state.run_memory_organize", memory_mock),
             patch("src.services.memory_archive_migration.migrate_kv_to_archive", migrate_mock),
             patch(
                 "src.services.consolidation_scheduler._next_occurrence",

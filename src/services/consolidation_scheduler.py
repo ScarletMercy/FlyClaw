@@ -60,18 +60,18 @@ class ConsolidationScheduler:
             is_sunday = next_run.weekday() == 6
 
             try:
-                from src.services.daily_consolidation import run_daily_consolidation
+                from src.services.consolidation_state import run_session_organize
 
-                await run_daily_consolidation(container)
+                await run_session_organize(container)
             except Exception as e:
                 logger.error("Daily consolidation failed: %s", e, exc_info=True)
 
             if is_sunday:
                 logger.info("Sunday consolidation: running memory cleanup after daily extraction")
                 try:
-                    from src.services.memory_consolidation import run_memory_consolidation
+                    from src.services.consolidation_state import run_memory_organize
 
-                    await run_memory_consolidation(container)
+                    await run_memory_organize(container)
                 except Exception as e:
                     logger.error("Sunday memory consolidation failed: %s", e, exc_info=True)
 

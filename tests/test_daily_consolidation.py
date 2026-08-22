@@ -90,6 +90,7 @@ class TestGuardConditions:
         result = await run_daily_consolidation(container)
         assert result["sessions_processed"] == 0
         assert result["sessions_skipped"] == 0
+        assert result["errors"] == []  # 配置缺失不算 error，游标正常推进
 
     @pytest.mark.asyncio
     async def test_no_agent_loop_returns_empty(self):
@@ -99,11 +100,12 @@ class TestGuardConditions:
 
         result = await run_daily_consolidation(container)
         assert result["sessions_processed"] == 0
+        assert result["errors"] == []  # 配置缺失不算 error，游标正常推进
 
     @pytest.mark.asyncio
     async def test_empty_threads_returns_empty(self):
         store = MagicMock()
-        store.list_threads = AsyncMock(return_value=[])
+        store.list_threads_since = AsyncMock(return_value=[])
         container = _make_container(state_store=store, agent_loop=MagicMock())
         from src.services.daily_consolidation import run_daily_consolidation
 
@@ -120,8 +122,9 @@ class TestSessionFiltering:
     async def test_skip_below_min_messages(self):
         store = MagicMock()
         state = _make_state(_make_messages(2, 2))
-        store.list_threads = AsyncMock(return_value=["t1"])
+        store.list_threads_since = AsyncMock(return_value=["t1"])
         store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock()
 
         container = _make_container(state_store=store, agent_loop=MagicMock(), min_messages=10)
         from src.services.daily_consolidation import run_daily_consolidation
@@ -135,8 +138,9 @@ class TestSessionFiltering:
         store = MagicMock()
         msgs = _make_messages(2, 20)
         state = _make_state(msgs)
-        store.list_threads = AsyncMock(return_value=["t1"])
+        store.list_threads_since = AsyncMock(return_value=["t1"])
         store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock()
 
         container = _make_container(state_store=store, agent_loop=MagicMock(), min_messages=10)
         from src.services.daily_consolidation import run_daily_consolidation
@@ -149,8 +153,9 @@ class TestSessionFiltering:
         """所有线程被跳过时,不给任何 session 开新会话。"""
         store = MagicMock()
         state = _make_state(_make_messages(2, 2))  # < min_messages → skipped
-        store.list_threads = AsyncMock(return_value=["t1"])
+        store.list_threads_since = AsyncMock(return_value=["t1"])
         store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock()
 
         registry = MagicMock()
         registry.new_session = AsyncMock(return_value="s1")
@@ -168,8 +173,9 @@ class TestSessionFiltering:
     @pytest.mark.asyncio
     async def test_skip_none_state(self):
         store = MagicMock()
-        store.list_threads = AsyncMock(return_value=["t1"])
+        store.list_threads_since = AsyncMock(return_value=["t1"])
         store.load = AsyncMock(return_value=None)
+        store.mark_organized = AsyncMock()
 
         container = _make_container(state_store=store, agent_loop=MagicMock())
         from src.services.daily_consolidation import run_daily_consolidation
@@ -188,8 +194,9 @@ class TestNormalFlow:
         store = MagicMock()
         msgs = _make_messages(5, 10)
         state = _make_state(msgs)
-        store.list_threads = AsyncMock(return_value=["qq:group:abc"])
+        store.list_threads_since = AsyncMock(return_value=["qq:group:abc"])
         store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock()
 
         agent_loop = MagicMock()
         agent_loop.invalidate_memory_cache = MagicMock()
@@ -211,8 +218,9 @@ class TestNormalFlow:
         store = MagicMock()
         msgs = _make_messages(5, 10)
         state = _make_state(msgs)
-        store.list_threads = AsyncMock(return_value=["qq:group:abc"])
+        store.list_threads_since = AsyncMock(return_value=["qq:group:abc"])
         store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock()
 
         registry = MagicMock()
         registry.new_session = AsyncMock(return_value="new_session_id")
@@ -237,8 +245,9 @@ class TestNormalFlow:
         store = MagicMock()
         msgs = _make_messages(5, 10)
         state = _make_state(msgs)
-        store.list_threads = AsyncMock(return_value=["qq:group:abc"])
+        store.list_threads_since = AsyncMock(return_value=["qq:group:abc"])
         store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock()
 
         agent_loop = MagicMock()
         agent_loop.invalidate_memory_cache = MagicMock()
@@ -292,8 +301,9 @@ class TestNotifications:
         store = MagicMock()
         msgs = _make_messages(5, 10)
         state = _make_state(msgs, chat_id="chat_abc", channel="qq")
-        store.list_threads = AsyncMock(return_value=["qq:group:abc"])
+        store.list_threads_since = AsyncMock(return_value=["qq:group:abc"])
         store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock()
 
         agent_loop = MagicMock()
         agent_loop.invalidate_memory_cache = MagicMock()
@@ -323,8 +333,9 @@ class TestNotifications:
         store = MagicMock()
         msgs = _make_messages(5, 10)
         state = _make_state(msgs, chat_id="", channel="qq")
-        store.list_threads = AsyncMock(return_value=["qq:group:abc"])
+        store.list_threads_since = AsyncMock(return_value=["qq:group:abc"])
         store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock()
 
         agent_loop = MagicMock()
         agent_loop.invalidate_memory_cache = MagicMock()
@@ -348,8 +359,9 @@ class TestNotifications:
         store = MagicMock()
         msgs = _make_messages(5, 10)
         state = _make_state(msgs, chat_id="chat_abc", channel="qq")
-        store.list_threads = AsyncMock(return_value=["qq:group:abc"])
+        store.list_threads_since = AsyncMock(return_value=["qq:group:abc"])
         store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock()
 
         agent_loop = MagicMock()
         container = _make_container(state_store=store, agent_loop=agent_loop)
@@ -383,8 +395,9 @@ class TestNotifications:
         store = MagicMock()
         msgs = _make_messages(5, 10)
         state = _make_state(msgs, chat_id="chat_abc", channel="qq")
-        store.list_threads = AsyncMock(return_value=["qq:group:abc"])
+        store.list_threads_since = AsyncMock(return_value=["qq:group:abc"])
         store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock()
 
         agent_loop = MagicMock()
         agent_loop.invalidate_memory_cache = MagicMock()
@@ -421,8 +434,9 @@ class TestSummaryCounting:
         store = MagicMock()
         msgs = _make_messages(5, 10)
         state = _make_state(msgs)
-        store.list_threads = AsyncMock(return_value=["qq:group:abc"])
+        store.list_threads_since = AsyncMock(return_value=["qq:group:abc"])
         store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock()
 
         agent_loop = MagicMock()
         agent_loop.invalidate_memory_cache = MagicMock()
@@ -445,8 +459,9 @@ class TestSummaryCounting:
         store = MagicMock()
         msgs = _make_messages(5, 10)
         state = _make_state(msgs)
-        store.list_threads = AsyncMock(return_value=["qq:group:abc"])
+        store.list_threads_since = AsyncMock(return_value=["qq:group:abc"])
         store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock()
 
         agent_loop = MagicMock()
         agent_loop.invalidate_memory_cache = MagicMock()
@@ -470,25 +485,27 @@ class TestSummaryCounting:
 
 class TestAgeFiltering:
     @pytest.mark.asyncio
-    async def test_skip_session_older_than_24h(self):
+    async def test_sql_filters_old_sessions(self):
+        """旧会话由 list_threads_since SQL 过滤（不再有 Python created_at 门）。
+        mock 返回空列表（模拟 SQL 已过滤），无会话处理。"""
         store = MagicMock()
-        state = _make_state(_make_messages(5, 10), created_at=time.time() - 48 * 3600)
-        store.list_threads = AsyncMock(return_value=["old_session"])
-        store.load = AsyncMock(return_value=state)
+        store.list_threads_since = AsyncMock(return_value=[])
+        store.mark_organized = AsyncMock()
 
         container = _make_container(state_store=store, agent_loop=MagicMock())
         from src.services.daily_consolidation import run_daily_consolidation
 
         result = await run_daily_consolidation(container)
-        assert result["sessions_skipped"] == 1
+        assert result["sessions_skipped"] == 0
         assert result["sessions_processed"] == 0
 
     @pytest.mark.asyncio
     async def test_process_session_within_24h(self):
         store = MagicMock()
         state = _make_state(_make_messages(5, 10), created_at=time.time() - 3600)
-        store.list_threads = AsyncMock(return_value=["qq:group:abc"])
+        store.list_threads_since = AsyncMock(return_value=["qq:group:abc"])
         store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock()
 
         agent_loop = MagicMock()
         agent_loop.invalidate_memory_cache = MagicMock()
@@ -654,3 +671,131 @@ class TestDiaryKeyUniqueness:
         assert len(set(keys)) == 2, f"Diary keys collided: {keys}"
 
         await store.close()
+
+
+# ─── organized 标记 + since_ts 区间 ──────────────────────────────────────
+
+
+class TestOrganizedFlagAndSince:
+    @pytest.mark.asyncio
+    async def test_session_marked_organized_after_success(self):
+        """整理成功后会话被标记 organized=True 并存盘。"""
+        from src.services.daily_consolidation import run_daily_consolidation
+
+        store = MagicMock()
+        state = _make_state(_consolidation_msgs(), created_at=time.time())
+        assert state.organized is False
+        store.list_threads_since = AsyncMock(return_value=["t1"])
+        store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock()
+
+        agent_loop = MagicMock()
+        agent_loop.invalidate_memory_cache = MagicMock()
+        container = _make_container(state_store=store, agent_loop=agent_loop)
+
+        with (
+            patch(_PATCH_CONSOLIDATE, AsyncMock(return_value="summary")),
+            patch(_PATCH_NOTIFY, new_callable=AsyncMock),
+            patch(_PATCH_SAVE_SUMMARY, new_callable=AsyncMock),
+        ):
+            await run_daily_consolidation(container, since_ts=0)
+
+        # mark_organized 被调用（原子 UPDATE，不再整行 save）
+        store.mark_organized.assert_awaited_with("t1")
+
+    @pytest.mark.asyncio
+    async def test_failed_session_not_marked_organized(self):
+        """整理失败的会话保持 organized=False。"""
+        from src.services.daily_consolidation import run_daily_consolidation
+
+        store = MagicMock()
+        state = _make_state(_consolidation_msgs(), created_at=time.time())
+        store.list_threads_since = AsyncMock(return_value=["t1"])
+        store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock()
+
+        agent_loop = MagicMock()
+        agent_loop.invalidate_memory_cache = MagicMock()
+        container = _make_container(state_store=store, agent_loop=agent_loop)
+
+        with (
+            patch(_PATCH_CONSOLIDATE, AsyncMock(side_effect=RuntimeError("LLM down"))),
+            patch(_PATCH_NOTIFY, new_callable=AsyncMock),
+            patch(_PATCH_SAVE_SUMMARY, new_callable=AsyncMock),
+        ):
+            result = await run_daily_consolidation(container, since_ts=0)
+        # 失败会话不得被标记 organized（应走 DB 层 mark_organized，而非内存字段）
+        store.mark_organized.assert_not_awaited()
+        assert result["errors"]
+
+    @pytest.mark.asyncio
+    async def test_mark_organized_failure_blocks_cursor(self):
+        """mark_organized 失败记入 errors：游标不推进，下轮重扫重试该会话。"""
+        from src.services.daily_consolidation import run_daily_consolidation
+
+        store = MagicMock()
+        state = _make_state(_consolidation_msgs(), created_at=time.time())
+        store.list_threads_since = AsyncMock(return_value=["t1"])
+        store.load = AsyncMock(return_value=state)
+        store.mark_organized = AsyncMock(side_effect=RuntimeError("db locked"))
+
+        agent_loop = MagicMock()
+        agent_loop.invalidate_memory_cache = MagicMock()
+        container = _make_container(state_store=store, agent_loop=agent_loop)
+
+        with (
+            patch(_PATCH_CONSOLIDATE, AsyncMock(return_value="summary")),
+            patch(_PATCH_NOTIFY, new_callable=AsyncMock),
+            patch(_PATCH_SAVE_SUMMARY, new_callable=AsyncMock),
+        ):
+            result = await run_daily_consolidation(container, since_ts=0)
+        assert result["sessions_processed"] == 1
+        assert any("mark_organized" in e for e in result["errors"])
+
+    @pytest.mark.asyncio
+    async def test_since_ts_filters_old_sessions(self):
+        """list_threads_since(since_ts) 只返回区间内线程（SQL 过滤）；区间内线程被整理。"""
+        from src.services.daily_consolidation import run_daily_consolidation
+
+        store = MagicMock()
+        now = time.time()
+        new_state = _make_state(_consolidation_msgs(), created_at=now)  # 今天
+        # SQL 已过滤旧线程，只返回新区间内的线程
+        store.list_threads_since = AsyncMock(return_value=["new"])
+        store.load = AsyncMock(return_value=new_state)
+        store.mark_organized = AsyncMock()
+
+        agent_loop = MagicMock()
+        agent_loop.invalidate_memory_cache = MagicMock()
+        container = _make_container(state_store=store, agent_loop=agent_loop)
+
+        consolidate = AsyncMock(return_value="summary")
+        with (
+            patch(_PATCH_CONSOLIDATE, consolidate),
+            patch(_PATCH_NOTIFY, new_callable=AsyncMock),
+            patch(_PATCH_SAVE_SUMMARY, new_callable=AsyncMock),
+        ):
+            result = await run_daily_consolidation(container, since_ts=now - 3600)
+        assert result["sessions_processed"] == 1
+        assert consolidate.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_list_threads_since_called_with_since(self):
+        """确认调用 list_threads_since(since)，而非 list_threads。"""
+        from src.services.daily_consolidation import run_daily_consolidation
+
+        store = MagicMock()
+        store.list_threads_since = AsyncMock(return_value=[])
+        store.load = AsyncMock()
+        store.mark_organized = AsyncMock()
+        agent_loop = MagicMock()
+        agent_loop.invalidate_memory_cache = MagicMock()
+        container = _make_container(state_store=store, agent_loop=agent_loop)
+
+        with (
+            patch(_PATCH_CONSOLIDATE, AsyncMock()),
+            patch(_PATCH_NOTIFY, new_callable=AsyncMock),
+            patch(_PATCH_SAVE_SUMMARY, new_callable=AsyncMock),
+        ):
+            await run_daily_consolidation(container, since_ts=12345.0)
+        store.list_threads_since.assert_awaited_with(12345.0)

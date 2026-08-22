@@ -105,7 +105,8 @@ async def _consolidate_store(
         by_category[cat].append(mem)
 
     for category, cat_memories in by_category.items():
-        if len(cat_memories) < 2:
+        # 触发条件：分类内存在未整理(organized=0)的条目才审查整类；全已整理则跳过零调用
+        if all(m.get("organized") for m in cat_memories):
             continue
 
         category_label = _CATEGORY_LABELS.get(category, category)
@@ -144,6 +145,8 @@ async def _consolidate_store(
         if not isinstance(keep_keys, list):
             keep_keys = []
 
+        merged_new_keys: list[str] = []
+        op_failures = 0
         for op in merge_ops:
             if not isinstance(op, dict):
                 continue
@@ -159,6 +162,7 @@ async def _consolidate_store(
                     result_json = await store.remember(to_content, key="", category=to_category)
                 parsed = json.loads(result_json)
                 if "error" in parsed:
+                    op_failures += 1
                     logger.warning(
                         "Merge rejected for keys %s: remember returned %s",
                         from_keys,
@@ -166,6 +170,8 @@ async def _consolidate_store(
                     )
                     continue
                 new_key = parsed.get("key", "")
+                if new_key:
+                    merged_new_keys.append(new_key)
                 for fk in from_keys:
                     if fk == new_key:
                         logger.warning("Merge: auto-key '%s' collides with from_key, skipping forget", fk)
@@ -176,6 +182,7 @@ async def _consolidate_store(
                         await store.forget(fk)
                 result["merged"] += 1
             except Exception as e:
+                op_failures += 1
                 logger.warning("Merge failed for keys %s: %s", from_keys, e)
 
         for dk in delete_keys:
@@ -188,10 +195,21 @@ async def _consolidate_store(
                     await store.forget(dk)
                 result["deleted"] += 1
             except Exception as e:
+                op_failures += 1
                 logger.warning("Delete failed for key %s: %s", dk, e)
 
         result["kept"] += len(keep_keys)
         result["categories_processed"] += 1
+
+        # 审查成功且无单项失败 → 整类标记 organized（原 key + 合并新 key；已 forget 的
+        # UPDATE 不匹配，无害）。有单项失败则不标记，下次重审失败的合并/删除。
+        if op_failures:
+            continue
+        try:
+            mark_keys = [m["key"] for m in cat_memories] + merged_new_keys
+            await store.mark_organized(mark_keys, group_id=group_id)
+        except Exception as e:
+            logger.warning("mark_organized failed for category %s: %s", category, e)
 
 
 async def run_memory_consolidation(container: Any) -> dict[str, Any]:

@@ -601,15 +601,9 @@ class TestMetric_RecallPrecisionScore:
 
 # ─── Test 7: Long conversation with real session data ────────────────────────
 
-_REAL_DB = "C:/Users/86198/.myclaw/data/session_index.db"
-# Sessions to test: diverse channels, sizes, and content
-_REAL_SESSIONS = [
-    # (label, thread_id, min_chars)
-    ("qq:s1/98k", "qq:s1:1097C11341995ACED68981D1786676B7", 50_000),
-    ("qq:user/129k", "qq:user:1097C11341995ACED68981D1786676B7", 50_000),
-    ("qq:s2/48k", "qq:s2:1097C11341995ACED68981D1786676B7", 10_000),
-    ("feishu:user/63k", "feishu:user:ou_bebd12fb70fcc8fc0ee6583f9d45fd1b", 10_000),
-]
+# Real session DB resolved from config (was hard-coded to a wrong/absent path,
+# so this test silently skipped). Threads are discovered dynamically below.
+_REAL_DB = _config.session_search.index_path
 
 
 def _load_real_session(db_path: str, thread_id: str) -> list[dict]:
@@ -619,7 +613,7 @@ def _load_real_session(db_path: str, thread_id: str) -> list[dict]:
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute(
-        "SELECT role, content FROM messages WHERE thread_id=? ORDER BY id",
+        "SELECT role, content FROM messages WHERE thread_id=? ORDER BY timestamp",
         (thread_id,),
     )
     messages = []
@@ -653,22 +647,39 @@ class TestLongConversation_RealSession:
 
         results = []
 
-        for label, thread_id, min_chars in _REAL_SESSIONS:
+        # Dynamically discover real sessions that are likely to contain
+        # extractable user facts (many 'human' turns) and are small enough
+        # to review within a test timeout. Self-heals as sessions rotate.
+        import sqlite3
+
+        conn = sqlite3.connect(_REAL_DB)
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT thread_id, SUM(LENGTH(content)) AS chars, COUNT(*) AS msgs "
+            "FROM messages GROUP BY thread_id "
+            "HAVING chars BETWEEN 15000 AND 80000 AND msgs <= 500 "
+            "AND SUM(CASE WHEN role='human' THEN 1 ELSE 0 END) >= 15 "
+            "ORDER BY msgs ASC LIMIT 3"
+        )
+        candidates = cur.fetchall()
+        conn.close()
+
+        for thread_id, _chars, _msgs in candidates:
             messages = _load_real_session(_REAL_DB, thread_id)
             total_chars = sum(len(m["content"]) for m in messages)
             total_msgs = len(messages)
 
-            if total_chars < min_chars:
-                print(f"\n  SKIP {label}: {total_chars / 1000:.0f}k < {min_chars / 1000:.0f}k min")
+            if total_chars < 1000:
+                print(f"\n  SKIP {thread_id[:24]}: {total_chars // 1000}k < 1k min")
                 continue
 
-            # Show user message summary
+            label = f"{thread_id[:20]}/{total_chars // 1000}k"
             user_msgs = [m["content"] for m in messages if m["role"] == "user"]
             print(f"\n{'=' * 60}")
             print(f"  {label}: {total_msgs} msgs, {total_chars / 1000:.0f}k chars, {len(user_msgs)} user msgs")
 
             # Run extraction with a fresh store per session
-            session_store = MemoryStore(db_path=str(tmp_path / f"{label.replace('/', '_')}.db"))
+            session_store = MemoryStore(db_path=str(tmp_path / f"{label.replace('/', '_').replace(':', '_')}.db"))
             await session_store.initialize()
 
             summary = await _run_review(session_store, client, messages)
@@ -705,6 +716,11 @@ class TestLongConversation_RealSession:
 
         # Sanity: all sessions should complete without error
         assert len(results) >= 1, "No sessions were tested"
+        total_memories = sum(r["memories"] for r in results)
+        assert total_memories >= 1, (
+            f"Extraction produced 0 memories across {len(results)} real session(s); "
+            "review pipeline extracted nothing from real data"
+        )
         for r in results:
             for content in r["memory_contents"]:
                 assert len(content) > 2, f"Empty memory in {r['label']}"

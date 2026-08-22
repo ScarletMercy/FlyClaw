@@ -195,6 +195,7 @@ class MemoryStore:
         await self._ensure_fts()
         await self._migrate_category_prefix()
         await self._migrate_add_updated_ts()
+        await self._migrate_add_organized()
         await self._conn.commit()
         logger.info("MemoryStore initialized: %s (fts=%s)", self.db_path, self._fts_available)
 
@@ -264,6 +265,16 @@ class MemoryStore:
         if rows:
             logger.info("Backfilled updated_ts for %d memories", len(rows))
 
+    async def _migrate_add_organized(self) -> None:
+        """加 organized 列（0/1）：记忆整理成功后置 1，整理时跳过，避免重复审查。"""
+        cursor = await self._conn.execute("PRAGMA table_info(memories)")
+        cols = {row["name"] for row in await cursor.fetchall()}
+        if "organized" in cols:
+            return
+        await self._conn.execute("ALTER TABLE memories ADD COLUMN organized INTEGER NOT NULL DEFAULT 0")
+        await self._conn.commit()
+        logger.info("Migrated memories: added organized column")
+
     async def close(self) -> None:
         if self._conn:
             await self._conn.close()
@@ -282,6 +293,14 @@ class MemoryStore:
         row = await cursor.fetchone()
         return row["key"] if row else None
 
+    async def _find_content_by_key(self, key: str) -> str | None:
+        cursor = await self._conn.execute(
+            "SELECT content FROM memories WHERE key = ? LIMIT 1",
+            (key,),
+        )
+        row = await cursor.fetchone()
+        return row["content"] if row else None
+
     async def remember(self, content: str, key: str = "", category: str = "fact") -> str:
         if not isinstance(content, str):
             return json.dumps({"error": "content too short or empty"}, ensure_ascii=False)
@@ -298,14 +317,26 @@ class MemoryStore:
             else:
                 key = self._auto_key(content)
 
+        content_changed = not is_dedup
+        if key and not is_dedup:
+            existing_content = await self._find_content_by_key(key)
+            if existing_content == content:
+                content_changed = False
+
         dt = datetime.now().astimezone()
         now = dt.replace(microsecond=0).isoformat()
         now_ts = dt.timestamp()
+        # 内容变化才重置 organized=0（需复审）；dedup 或同内容写入保留 organized。
+        set_clause = (
+            "content=excluded.content, category=excluded.category, "
+            "updated_at=excluded.updated_at, updated_ts=excluded.updated_ts"
+        )
+        if content_changed:
+            set_clause += ", organized=0"
         await self._conn.execute(
-            "INSERT INTO memories (key, content, category, created_at, updated_at, updated_ts) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET content=excluded.content, "
-            "category=excluded.category, updated_at=excluded.updated_at, updated_ts=excluded.updated_ts",
+            "INSERT INTO memories (key, content, category, created_at, updated_at, updated_ts, organized) "
+            "VALUES (?, ?, ?, ?, ?, ?, 0) "
+            f"ON CONFLICT(key) DO UPDATE SET {set_clause}",
             (key, content, category, now, now, now_ts),
         )
         # FTS sync only needed when content actually changed (new insert, not dedup)
@@ -347,7 +378,7 @@ class MemoryStore:
             if self._fts_available and len(query) >= 3:
                 try:
                     cursor = await self._conn.execute(
-                        "SELECT m.key, m.content, m.category, m.updated_at, m.updated_ts FROM memories m "
+                        "SELECT m.key, m.content, m.category, m.updated_at, m.updated_ts, m.organized FROM memories m "
                         "JOIN memories_fts f ON f.key = m.key "
                         "WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?",
                         (query, limit),
@@ -361,19 +392,20 @@ class MemoryStore:
                                 "category": r["category"],
                                 "updated_at": r["updated_at"],
                                 "updated_ts": r["updated_ts"],
+                                "organized": r["organized"],
                             }
                             for r in rows
                         ]
                 except Exception:
                     pass
             cursor = await self._conn.execute(
-                "SELECT key, content, category, updated_at, updated_ts FROM memories "
+                "SELECT key, content, category, updated_at, updated_ts, organized FROM memories "
                 "WHERE content LIKE ? OR key LIKE ? ORDER BY updated_ts DESC LIMIT ?",
                 (f"%{query}%", f"%{query}%", limit),
             )
         else:
             cursor = await self._conn.execute(
-                "SELECT key, content, category, updated_at, updated_ts FROM memories ORDER BY updated_ts DESC LIMIT ? OFFSET ?",
+                "SELECT key, content, category, updated_at, updated_ts, organized FROM memories ORDER BY updated_ts DESC LIMIT ? OFFSET ?",
                 (limit, offset),
             )
         rows = await cursor.fetchall()
@@ -384,6 +416,7 @@ class MemoryStore:
                 "category": r["category"],
                 "updated_at": r["updated_at"],
                 "updated_ts": r["updated_ts"],
+                "organized": r["organized"],
             }
             for r in rows
         ]
@@ -397,6 +430,18 @@ class MemoryStore:
                 pass
         await self._conn.commit()
         return json.dumps({"ok": True, "key": key}, ensure_ascii=False)
+
+    async def mark_organized(self, keys: list[str], group_id: str = "") -> int:
+        """把给定 key 的 organized 置 1（已整理）。DM store 忽略 group_id。返回更新行数。"""
+        if not keys:
+            return 0
+        placeholders = ",".join("?" * len(keys))
+        cursor = await self._conn.execute(
+            f"UPDATE memories SET organized = 1 WHERE key IN ({placeholders})",
+            list(keys),
+        )
+        await self._conn.commit()
+        return cursor.rowcount or 0
 
 
 class GroupMemoryStore(MemoryStore):
@@ -425,6 +470,7 @@ class GroupMemoryStore(MemoryStore):
         """)
         await self._ensure_fts()
         await self._migrate_add_updated_ts()
+        await self._migrate_add_organized()
         await self._conn.commit()
         logger.info("GroupMemoryStore initialized: %s (fts=%s)", self.db_path, self._fts_available)
 
@@ -459,6 +505,14 @@ class GroupMemoryStore(MemoryStore):
         row = await cursor.fetchone()
         return row["key"] if row else None
 
+    async def _find_content_by_key(self, key: str, group_id: str = "") -> str | None:
+        cursor = await self._conn.execute(
+            "SELECT content FROM memories WHERE key = ? AND group_id = ? LIMIT 1",
+            (key, group_id),
+        )
+        row = await cursor.fetchone()
+        return row["content"] if row else None
+
     async def remember(self, content: str, key: str = "", category: str = "fact", group_id: str = "") -> str:
         if not isinstance(content, str):
             return json.dumps({"error": "content too short or empty"}, ensure_ascii=False)
@@ -475,14 +529,26 @@ class GroupMemoryStore(MemoryStore):
             else:
                 key = self._auto_key(content)
 
+        content_changed = not is_dedup
+        if key and not is_dedup:
+            existing_content = await self._find_content_by_key(key, group_id)
+            if existing_content == content:
+                content_changed = False
+
         dt = datetime.now().astimezone()
         now = dt.replace(microsecond=0).isoformat()
         now_ts = dt.timestamp()
+        # 内容变化才重置 organized=0（需复审）；dedup 或同内容写入保留 organized。
+        set_clause = (
+            "content=excluded.content, category=excluded.category, "
+            "updated_at=excluded.updated_at, updated_ts=excluded.updated_ts"
+        )
+        if content_changed:
+            set_clause += ", organized=0"
         await self._conn.execute(
-            "INSERT INTO memories (key, content, category, group_id, created_at, updated_at, updated_ts) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
-            "ON CONFLICT(key, group_id) DO UPDATE SET content=excluded.content, "
-            "category=excluded.category, updated_at=excluded.updated_at, updated_ts=excluded.updated_ts",
+            "INSERT INTO memories (key, content, category, group_id, created_at, updated_at, updated_ts, organized) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, 0) "
+            f"ON CONFLICT(key, group_id) DO UPDATE SET {set_clause}",
             (key, content, category, group_id, now, now, now_ts),
         )
         if not is_dedup and self._fts_available:
@@ -527,7 +593,7 @@ class GroupMemoryStore(MemoryStore):
                 try:
                     if group_id is not None:
                         cursor = await self._conn.execute(
-                            "SELECT m.key, m.content, m.category, m.updated_at, m.updated_ts "
+                            "SELECT m.key, m.content, m.category, m.updated_at, m.updated_ts, m.organized "
                             "FROM memories m "
                             "JOIN memories_fts f ON f.key = (m.group_id || ':' || m.key) "
                             "WHERE memories_fts MATCH ? AND m.group_id = ? "
@@ -536,7 +602,7 @@ class GroupMemoryStore(MemoryStore):
                         )
                     else:
                         cursor = await self._conn.execute(
-                            "SELECT m.key, m.content, m.category, m.updated_at, m.group_id, m.updated_ts "
+                            "SELECT m.key, m.content, m.category, m.updated_at, m.group_id, m.updated_ts, m.organized "
                             "FROM memories m "
                             "JOIN memories_fts f ON f.key = (m.group_id || ':' || m.key) "
                             "WHERE memories_fts MATCH ? ORDER BY rank LIMIT ?",
@@ -551,6 +617,7 @@ class GroupMemoryStore(MemoryStore):
                                 "category": r["category"],
                                 "updated_at": r["updated_at"],
                                 "updated_ts": r["updated_ts"],
+                                "organized": r["organized"],
                             }
                             for r in rows
                         ]
@@ -558,27 +625,27 @@ class GroupMemoryStore(MemoryStore):
                     pass
             if group_id is not None:
                 cursor = await self._conn.execute(
-                    "SELECT key, content, category, updated_at, updated_ts FROM memories "
+                    "SELECT key, content, category, updated_at, updated_ts, organized FROM memories "
                     "WHERE (content LIKE ? OR key LIKE ?) AND group_id = ? "
                     "ORDER BY updated_ts DESC LIMIT ?",
                     (f"%{query}%", f"%{query}%", group_id, limit),
                 )
             else:
                 cursor = await self._conn.execute(
-                    "SELECT key, content, category, updated_at, updated_ts FROM memories "
+                    "SELECT key, content, category, updated_at, updated_ts, organized FROM memories "
                     "WHERE content LIKE ? OR key LIKE ? ORDER BY updated_ts DESC LIMIT ?",
                     (f"%{query}%", f"%{query}%", limit),
                 )
         else:
             if group_id is not None:
                 cursor = await self._conn.execute(
-                    "SELECT key, content, category, updated_at, updated_ts FROM memories "
+                    "SELECT key, content, category, updated_at, updated_ts, organized FROM memories "
                     "WHERE group_id = ? ORDER BY updated_ts DESC LIMIT ? OFFSET ?",
                     (group_id, limit, offset),
                 )
             else:
                 cursor = await self._conn.execute(
-                    "SELECT key, content, category, updated_at, group_id, updated_ts FROM memories "
+                    "SELECT key, content, category, updated_at, group_id, updated_ts, organized FROM memories "
                     "ORDER BY updated_ts DESC LIMIT ? OFFSET ?",
                     (limit, offset),
                 )
@@ -591,6 +658,7 @@ class GroupMemoryStore(MemoryStore):
                         "updated_at": r["updated_at"],
                         "group_id": r["group_id"],
                         "updated_ts": r["updated_ts"],
+                        "organized": r["organized"],
                     }
                     for r in rows
                 ]
@@ -602,6 +670,7 @@ class GroupMemoryStore(MemoryStore):
                 "category": r["category"],
                 "updated_at": r["updated_at"],
                 "updated_ts": r["updated_ts"],
+                "organized": r["organized"],
             }
             for r in rows
         ]
@@ -619,6 +688,19 @@ class GroupMemoryStore(MemoryStore):
                 pass
         await self._conn.commit()
         return json.dumps({"ok": True, "key": key}, ensure_ascii=False)
+
+    async def mark_organized(self, keys: list[str], group_id: str = "") -> int:
+        """群 store 按 group_id 隔离标记 organized。返回更新行数。"""
+        if not keys:
+            return 0
+        placeholders = ",".join("?" * len(keys))
+        params = list(keys) + [group_id]
+        cursor = await self._conn.execute(
+            f"UPDATE memories SET organized = 1 WHERE key IN ({placeholders}) AND group_id = ?",
+            params,
+        )
+        await self._conn.commit()
+        return cursor.rowcount or 0
 
 
 def _default_memories_db() -> str:

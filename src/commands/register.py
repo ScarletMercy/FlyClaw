@@ -143,6 +143,8 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                     "/compress on|off                — 压缩开关",
                     "/progress on|off                — 工具进度通知开关",
                     "/auto on|off                    — 自主工作模式",
+                    "/organize-session [all]         — 手动触发会话整理（补漏；all=全量）",
+                    "/organize-memory                — 手动触发记忆整理（补漏）",
                     "/restart                        — 重启服务",
                 ]
             else:
@@ -166,6 +168,8 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                     "/compress on|off                — Compression toggle",
                     "/progress on|off                — Tool progress notifications toggle",
                     "/auto on|off                    — Autonomous mode",
+                    "/organize-session [all]         — Trigger session consolidation (all=full catch-up)",
+                    "/organize-memory                — Trigger memory consolidation (catch-up)",
                     "/restart                        — Restart service",
                 ]
 
@@ -1115,6 +1119,66 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         os._exit(0)
 
     dispatcher.register_builtin("restart", cmd_restart)
+
+    async def cmd_organize_session(args: str, ctx: dict) -> str:
+        import datetime as _dt
+
+        zh = container.config.agents.language == "zh"
+        from src.services.consolidation_state import run_session_organize
+
+        since_ts = 0.0 if args.strip().lower() in ("all", "full") else None
+        result = await run_session_organize(container, since_ts=since_ts)
+        last = result.get("last_session_organize_at")
+        since = result.get("since_ts", 0)
+        last_str = _dt.datetime.fromtimestamp(last).strftime("%Y-%m-%d %H:%M") if last else ("无" if zh else "never")
+        is_all = since == 0
+        if is_all:
+            since_str = "全部" if zh else "All time"
+        else:
+            since_str = _dt.datetime.fromtimestamp(since).strftime("%Y-%m-%d %H:%M") if since else "?"
+        now_str = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+        n_err = len(result.get("errors", []))
+        if zh:
+            return (
+                f"会话整理完成：处理 {result['sessions_processed']} 个，"
+                f"跳过 {result['sessions_skipped']} 个，错误 {n_err} 个。\n"
+                f"本次区间：{since_str} ~ {now_str}\n"
+                f"上次整理：{last_str}"
+            )
+        return (
+            f"Session consolidation done: {result['sessions_processed']} processed, "
+            f"{result['sessions_skipped']} skipped, {n_err} errors.\n"
+            f"Range: {since_str} ~ {now_str}\n"
+            f"Last: {last_str}"
+        )
+
+    dispatcher.register_builtin("organize-session", cmd_organize_session)
+
+    async def cmd_organize_memory(args: str, ctx: dict) -> str:
+        import datetime as _dt
+
+        zh = container.config.agents.language == "zh"
+        from src.services.consolidation_state import run_memory_organize
+
+        result = await run_memory_organize(container)
+        last = result.get("last_memory_organize_at")
+        last_str = _dt.datetime.fromtimestamp(last).strftime("%Y-%m-%d %H:%M") if last else ("无" if zh else "never")
+        n_err = len(result.get("errors", []))
+        if zh:
+            return (
+                f"记忆整理完成：总数 {result['total_memories']}，"
+                f"合并 {result['merged']}，删除 {result['deleted']}，"
+                f"保留 {result['kept']}，错误 {n_err} 个。\n"
+                f"上次整理：{last_str}"
+            )
+        return (
+            f"Memory consolidation done: {result['total_memories']} total, "
+            f"{result['merged']} merged, {result['deleted']} deleted, "
+            f"{result['kept']} kept, {n_err} errors.\n"
+            f"Last: {last_str}"
+        )
+
+    dispatcher.register_builtin("organize-memory", cmd_organize_memory)
 
     if container.config.auth.enabled and container.rbac:
         register_auth_commands(dispatcher, container)
