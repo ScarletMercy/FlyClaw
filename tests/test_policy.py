@@ -1,10 +1,6 @@
 """Tests for tool policy with RBAC integration."""
 
-import os
-import sys
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 
 def _make_tool(name):

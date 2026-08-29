@@ -750,7 +750,6 @@ code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:12px}</style
         _check_auth(request)
         try:
             from src.skills.curator import SkillCurator
-            from pathlib import Path
 
             from src.instance import skills_dir
 
@@ -779,7 +778,6 @@ code{background:#f0f0f0;padding:1px 4px;border-radius:3px;font-size:12px}</style
         _check_auth(request)
         try:
             from src.skills.curator import SkillCurator
-            from pathlib import Path
 
             from src.instance import skills_dir
 

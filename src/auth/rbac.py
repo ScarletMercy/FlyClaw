@@ -4,7 +4,7 @@ import fnmatch
 import logging
 from typing import TYPE_CHECKING, Optional
 
-from src.auth.models import ROLE_PERMISSIONS, User, UserRole
+from src.auth.models import User, UserRole
 from src.auth.store import AuthStore
 
 if TYPE_CHECKING:

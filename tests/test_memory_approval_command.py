@@ -1,6 +1,5 @@
 """Tests for /memory-approval command (runtime save approval mode switch)."""
 
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest

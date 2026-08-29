@@ -6,7 +6,6 @@ Used by the Dashboard audit log and analytics features.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass

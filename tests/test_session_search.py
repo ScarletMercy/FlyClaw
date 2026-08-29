@@ -1,12 +1,8 @@
 """Tests for session search feature."""
 
-import os
 import sqlite3
-import sys
 from pathlib import Path
 from unittest.mock import patch
-
-import pytest
 
 
 def _create_checkpoints_db(db_path: str) -> None:

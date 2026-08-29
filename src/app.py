@@ -101,7 +101,6 @@ class ServiceContainer:
         return dirs
 
     async def _reload_skills(self) -> list:
-        from src.skills.types import Skill
 
         dirs = self._build_skill_directories()
         self.skills_cache = await discover_skills(dirs, self.config)
@@ -181,7 +180,8 @@ class ServiceContainer:
     def _setup_plugins(self):
         if not self.config.plugins.enabled:
             return
-        from src.plugins.registry import PluginRegistry, discover_plugins
+        from src.plugins.registry import PluginRegistry
+        from src.plugins.loader import discover_plugins
 
         self.plugin_registry = PluginRegistry()
         records = discover_plugins(self.config.plugins.extra_dirs)

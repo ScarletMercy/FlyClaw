@@ -1,7 +1,5 @@
 """Tests for sub-agent delegation: timeout resolution, run registry touch, heartbeat."""
 
-import os
-import sys
 import time
 
 import pytest

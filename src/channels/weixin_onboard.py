@@ -60,10 +60,9 @@ def qr_login(timeout_seconds: int = 480) -> Optional[dict[str, str]]:
 
     async def _run():
         nonlocal result
-        try:
-            from cryptography.hazmat.backends import default_backend
-            from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-        except ImportError:
+        import importlib.util
+
+        if importlib.util.find_spec("cryptography") is None:
             print("  缺少 cryptography 库，请运行: pip install cryptography")
             return
 

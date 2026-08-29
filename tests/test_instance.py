@@ -1,7 +1,6 @@
 """Tests for multi-instance support (src/instance.py + config adjustment)."""
 
 import sys
-import pytest
 from pathlib import Path
 
 

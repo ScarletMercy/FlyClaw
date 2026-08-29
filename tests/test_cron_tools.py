@@ -1,7 +1,5 @@
 """Tests for src/tools/cron_tools.py — _clean_job_id, validation logic."""
 
-import pytest
-
 from src.tools.cron_tools import _clean_job_id
 
 

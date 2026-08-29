@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from src.skills.types import Skill, SkillCommandSpec
 
@@ -116,7 +116,7 @@ class CommandDispatcher:
             {"role": "user", "content": args or "(no arguments)"},
         ]
         try:
-            from src.agent.client import create_client, create_chain
+            from src.agent.client import create_chain
 
             config = self._config
             if config is None:

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import pytest
 
-from src.tools import memory_tools
 from src.tools.memory_tools import _gate_auto_extract, set_memory_session
 
 

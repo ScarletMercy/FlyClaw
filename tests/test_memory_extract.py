@@ -1,7 +1,5 @@
 """Tests for auto_extract_memory and _extract_matched_clause."""
 
-import pytest
-
 from src.tools.memory_tools import auto_extract_memory, _extract_matched_clause
 
 

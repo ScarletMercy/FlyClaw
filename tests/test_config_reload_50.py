@@ -7,15 +7,10 @@ import pytest
 from src.config import (
     AppConfig,
     ChannelsConfig,
-    CompressionConfig,
-    GatewayConfig,
     MemoryConfig,
-    MemoryStoreConfig,
     ModelConfig,
     QQConfig,
     SecurityConfig,
-    ToolsConfig,
-    WeixinConfig,
 )
 from src.config_watcher import ConfigChange, DiffEngine, ReloadAction, ReloadPlan
 

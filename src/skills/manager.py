@@ -19,7 +19,7 @@ import aiofiles
 import aiofiles.os
 
 from src.skills.loader import load_skill
-from src.skills.types import Skill, SkillMetadata
+from src.skills.types import Skill
 
 logger = logging.getLogger("flyclaw.skills.manager")
 
@@ -422,9 +422,6 @@ class SkillManager:
             "created_at": now_iso(),
             "archived_at": None,
         }
-
-
-_SKILL_TOOL_NAMES = frozenset({"skill_view", "skill_manage", "skill_hub"})
 
 
 def _normalize_skill_name(name: str) -> str:
@@ -1051,7 +1048,6 @@ async def _reload_skills(container) -> None:
 def _install_from_url(url: str) -> str:
     """Install a skill from a URL (zip file)."""
     import tempfile
-    import zipfile
     from urllib.parse import urlparse
     import httpx
 
@@ -1072,7 +1068,6 @@ def _install_from_url(url: str) -> str:
 def _install_from_path(path: str) -> str:
     """Install a skill from a local path (directory or zip)."""
     import shutil
-    import zipfile
 
     p = Path(path).expanduser().resolve()
     if not p.exists():

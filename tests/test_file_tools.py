@@ -1,8 +1,5 @@
 """Tests for file_tools: write_file, edit_file, read_file."""
 
-import os
-import tempfile
-
 import pytest
 
 

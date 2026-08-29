@@ -9,11 +9,10 @@ Skip: auto-skipped if no API key in config.
 
 from __future__ import annotations
 
-import json
 import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 

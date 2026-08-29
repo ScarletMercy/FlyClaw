@@ -7,7 +7,7 @@ import logging
 import os
 import time
 from contextvars import ContextVar
-from typing import Literal, Optional
+from typing import Literal
 
 logger = logging.getLogger("flyclaw.browser.tools")
 

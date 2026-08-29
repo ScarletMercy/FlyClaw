@@ -3,13 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Callable, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
-from apscheduler.triggers.date import DateTrigger
-from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.jobstores.base import JobLookupError
 
 from .store import CronStore
@@ -356,8 +353,7 @@ class CronService:
                         defer_info = json.loads(result.output or "{}")
                         new_at = defer_info.get("new_at", "")
                         if new_at and job.name.startswith("task:"):
-                            from .executor import execute_cron_job
-                            from .types import CronSchedule, CronJobCreate, CronPayload, CronDelivery
+                            from .types import CronSchedule, CronJobCreate
 
                             schedule = CronSchedule(kind="at", at=new_at)
                             payload = job.payload

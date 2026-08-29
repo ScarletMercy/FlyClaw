@@ -3,7 +3,6 @@
 import struct
 import wave
 
-import pytest
 
 from src.channels.qq_audio import guess_audio_ext, looks_like_silk, raw_pcm_to_wav
 

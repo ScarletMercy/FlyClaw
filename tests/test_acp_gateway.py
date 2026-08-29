@@ -1,6 +1,3 @@
-import pytest
-
-
 def test_acp_gateway_module_loads():
     from src.gateway import router
 

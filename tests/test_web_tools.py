@@ -1,13 +1,10 @@
 """Tests for src/tools/web_tools.py — URL helpers, HTML conversion, content type detection."""
 
-import pytest
-
 from src.tools.web_tools import (
     _is_binary_content_type,
     _strip_tags,
     _unescape_unicode,
     _html_to_markdown,
-    _BINARY_CONTENT_TYPES,
     MAX_MARKDOWN_LENGTH,
     FETCH_TIMEOUT,
     BING_TIMEOUT,

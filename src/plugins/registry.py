@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Callable, Optional
+from typing import Callable
 
 from src.agent.tooldef import ToolDef
 
-from .loader import HookResult, PluginRecord, discover_plugins
+from .loader import HookResult, PluginRecord
 
 logger = logging.getLogger("flyclaw.plugins.registry")
 

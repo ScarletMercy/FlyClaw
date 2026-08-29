@@ -1,7 +1,7 @@
 """Tests for memory_tools get_memory_store double-checked locking and reset_memory_store."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

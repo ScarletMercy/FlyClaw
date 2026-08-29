@@ -8,7 +8,6 @@ Fix: best-effort — continue sending remaining chunks after a failure, and
 log a warning instead of aborting the entire loop.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

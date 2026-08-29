@@ -1,6 +1,5 @@
 """Tests for QQ typing indicator circuit breaker: closed → open → half-open."""
 
-import time as _time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

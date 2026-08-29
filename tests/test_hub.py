@@ -1,6 +1,4 @@
-import json
 import pytest
-from pathlib import Path
 from unittest.mock import MagicMock, patch, AsyncMock
 
 from src.skills.hub import (
@@ -14,7 +12,6 @@ from src.skills.hub import (
     quarantine_bundle,
     install_from_quarantine,
     append_audit_log,
-    ensure_hub_dirs,
 )
 from src.skills.types import SkillMeta, SkillBundle, ScanResult
 
@@ -241,7 +238,6 @@ class TestParallelSearch:
 
 class TestQuarantineBundle:
     def test_creates_files(self, tmp_path):
-        import shutil
 
         bundle = SkillBundle(
             name="test-skill",

@@ -15,10 +15,9 @@ Skip: auto-skipped if no API key in config.
 from __future__ import annotations
 
 import io
-import json
 import sys
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 # Fix Windows GBK console — LLM responses may contain emoji/Unicode
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":

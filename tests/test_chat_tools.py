@@ -1,7 +1,5 @@
 """Tests for src/tools/chat_tools.py — media type inference, context management."""
 
-import pytest
-
 from src.tools.chat_tools import (
     _infer_media_type,
     _get_context,

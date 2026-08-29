@@ -1,10 +1,6 @@
 """Tests for auth RBAC system: models, store, and permission checks."""
 
-import os
-import sys
 import time
-
-import pytest
 
 
 class TestUserModels:

@@ -1,7 +1,5 @@
 """Tests for src/skills/loader.py — frontmatter parsing, skill loading, discovery."""
 
-import asyncio
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest

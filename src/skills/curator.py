@@ -17,7 +17,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 from src.skills.manager import SkillManager
-from src.skills.types import Skill
 from src.utils.tz import now_iso
 
 logger = logging.getLogger("flyclaw.skills.curator")

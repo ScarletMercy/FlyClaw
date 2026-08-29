@@ -75,10 +75,9 @@ class TestSetupMemoryArchive:
         关键：archive 不依赖 vector_enabled——FTS5-only 也能归档。
         """
         from src.config import MemoryStoreConfig, MemoryConfig
-        from src.tools.memory_tools import reset_memory_archive_searcher, get_memory_archive_searcher
+        from src.tools.memory_tools import reset_memory_archive_searcher
         from src.memory.store import MemoryStore
         from src.memory.sqlitevec_store import SqliteVecMemoryStore
-        from src.memory.search import MemorySearcher
         import src.instance
 
         await reset_memory_archive_searcher()

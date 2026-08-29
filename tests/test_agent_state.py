@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import pytest
-from pydantic import ValidationError
 
 from src.agent.state import AgentState, StateStore, MemoryStateStore, _VALID_ROLES
 
@@ -241,7 +240,6 @@ class TestStateStore:
     def test_model_validate_tolerates_extra_keys(self, tmp_path):
         async def _test():
             import json
-            import aiosqlite
 
             store = StateStore(str(tmp_path / "test.db"))
             conn = await store._get_conn()

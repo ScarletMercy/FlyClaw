@@ -1,7 +1,5 @@
 """Tests for src/tools/tts_tools.py — basic validation logic."""
 
-import pytest
-
 from src.tools.tts_tools import get_tools
 
 

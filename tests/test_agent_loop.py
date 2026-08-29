@@ -3,7 +3,7 @@
 import asyncio
 import contextlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 

@@ -14,7 +14,6 @@ from typing import Any, Literal, Optional
 import aiosqlite
 
 from src.agent.tooldef import ToolDef
-from src.utils.tz import now_iso
 
 logger = logging.getLogger("flyclaw.memory_tools")
 

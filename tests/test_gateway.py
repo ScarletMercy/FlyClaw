@@ -1,6 +1,6 @@
 """Tests for the gateway HTTP API."""
 
-import os, sys, pytest
+import pytest
 
 
 def _make_gateway(tmp_path):

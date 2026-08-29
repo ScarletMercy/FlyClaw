@@ -6,7 +6,6 @@ agent that reviews the conversation and creates/updates skills.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
 

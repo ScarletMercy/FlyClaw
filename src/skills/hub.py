@@ -11,7 +11,6 @@ import shutil
 import time
 import zipfile
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
 from src.utils.tz import now_iso
 from pathlib import Path, PurePosixPath
 from typing import Any, Optional, Union

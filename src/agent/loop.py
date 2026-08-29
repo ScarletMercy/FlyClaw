@@ -18,7 +18,6 @@ from src.agent.client import ChatClient, ChatResponse, FallbackChain
 from src.agent.guardrails import ToolLoopGuardrails
 from src.agent.state import AgentState, StateStore
 from src.agent.tooldef import ToolDef
-from src.skills.manager import _SKILL_TOOL_NAMES
 
 logger = logging.getLogger("flyclaw.agent.loop")
 

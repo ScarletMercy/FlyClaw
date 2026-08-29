@@ -1,8 +1,7 @@
 """Tests for src/tools/task_tools.py — _parse_plan_json, _parse_relative_time, task_manage."""
 
 import json
-from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock
+from datetime import datetime
 
 import pytest
 

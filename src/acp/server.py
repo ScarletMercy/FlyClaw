@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from src.acp.session import AcpSessionManager
-from src.acp.runtime import AgentLoopRuntime, AcpRuntimeEvent
+from src.acp.runtime import AgentLoopRuntime
 from src.acp.transport import NdjsonTransport
 from src.utils.content import content_to_text
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from pathlib import Path
 from typing import Literal
 
 from src.agent.tooldef import ToolDef
@@ -34,7 +33,7 @@ async def canvas_render(
     jsonl = builder.to_jsonl()
 
     try:
-        from src.canvas.server import _root, broadcast_reload
+        from src.canvas.server import _root
 
         if _root:
             out_path = _root / f"__render_{surface_id}.jsonl"

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 
-import pytest
 
 from src.services.memory_archive_migration import _compute_retention, _path_for_kv
 

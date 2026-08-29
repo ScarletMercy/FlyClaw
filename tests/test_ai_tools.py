@@ -1,7 +1,5 @@
 """Tests for src/tools/ai_tools.py — tool registration."""
 
-import pytest
-
 from src.tools.ai_tools import get_tools
 
 

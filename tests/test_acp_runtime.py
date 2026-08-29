@@ -1,7 +1,6 @@
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
-from src.acp.runtime import AgentLoopRuntime, AcpRuntimeEvent
+from src.acp.runtime import AgentLoopRuntime
 
 
 class TestAgentLoopRuntime:

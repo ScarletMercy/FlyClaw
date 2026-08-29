@@ -8,8 +8,6 @@ from src.tools.browser.snapshot import (
     _reset_refs,
     _get_ref,
     get_interactive_nodes,
-    _INTERACTIVE_ROLES,
-    _SKIP_ROLES,
 )
 
 

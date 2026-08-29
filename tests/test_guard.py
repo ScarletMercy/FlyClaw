@@ -2,7 +2,6 @@ import os
 import re
 
 import pytest
-from pathlib import Path
 
 from src.skills.guard import (
     _determine_verdict,
@@ -15,8 +14,6 @@ from src.skills.guard import (
     format_scan_report,
     THREAT_PATTERNS,
     _COMPILED_THREAT_PATTERNS,
-    TRUSTED_REPOS,
-    INSTALL_POLICY,
 )
 from src.skills.types import Finding, ScanResult
 
@@ -409,7 +406,6 @@ class TestCredentialPatternCoverage:
     """Ensure guard catches everything redact catches — no blind spots."""
 
     def test_guard_catches_all_credential_patterns(self, tmp_path):
-        import re
 
         from src.security.credential_patterns import CREDENTIAL_PATTERNS
 

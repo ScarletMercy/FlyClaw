@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import builtins
-from unittest.mock import patch
 
-import pytest
 
 from src.setup import _step_memory_store
 

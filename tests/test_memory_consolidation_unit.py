@@ -2,7 +2,6 @@
 
 from datetime import datetime, timezone
 
-import pytest
 
 from src.services.memory_consolidation import _extract_json, _friendly_age
 

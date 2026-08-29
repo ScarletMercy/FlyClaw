@@ -1,9 +1,5 @@
 """Tests for gateway HTTP routes — healthz, auth, config API, chat completions."""
 
-import asyncio
-import hashlib
-import hmac
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

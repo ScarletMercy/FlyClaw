@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import builtins
 
-import pytest
 
 from src.setup import _step_media_understanding
 

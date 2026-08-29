@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.agent.client import ChatClient, ChatResponse
+from src.agent.client import ChatClient
 
 
 def _make_openai_resp(

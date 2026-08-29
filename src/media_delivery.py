@@ -78,7 +78,7 @@ async def deliver_media(text: str, chat_id: str, channel_prefix: str, channel) -
 
     for tag, file_path, ext in media_list:
         # Path traversal protection: resolve against workspace (not CWD) and enforce sandbox
-        from src.tools.file_tools import _resolve_path, _BASE_DIR
+        from src.tools.file_tools import _resolve_path
 
         try:
             resolved = _resolve_path(file_path)

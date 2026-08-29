@@ -1,9 +1,5 @@
 """Tests for config loading and validation."""
 
-import os
-import sys
-import pytest
-
 
 class TestLoadConfig:
     def test_default_config(self, tmp_path):

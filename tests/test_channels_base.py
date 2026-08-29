@@ -1,9 +1,6 @@
 """Tests for channel base — QQ channel message parsing and callbacks."""
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import AsyncMock
 
 
 class TestQQChannelInit:

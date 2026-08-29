@@ -3,7 +3,6 @@
 Tests the core message flow: receive message → dispatch/agent loop → reply.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

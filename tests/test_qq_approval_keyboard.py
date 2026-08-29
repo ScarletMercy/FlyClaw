@@ -1,6 +1,5 @@
 """Tests for QQ Bot approval keyboard — send_approval_keyboard and _handle_interaction."""
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

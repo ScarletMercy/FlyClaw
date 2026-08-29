@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import time
 from pathlib import Path
@@ -8,7 +7,7 @@ from typing import Optional
 
 import aiosqlite
 
-from .types import TaskCheckpoint, TaskRun
+from .types import TaskRun
 
 logger = logging.getLogger("flyclaw.task.store")
 

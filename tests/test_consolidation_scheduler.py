@@ -11,8 +11,6 @@ import pytest
 from src.services.consolidation_scheduler import (
     ConsolidationScheduler,
     _next_occurrence,
-    _TRIGGER_HOUR,
-    _TRIGGER_MINUTE,
 )
 
 
