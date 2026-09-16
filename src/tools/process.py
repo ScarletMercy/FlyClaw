@@ -126,8 +126,20 @@ class ProcessRegistry:
         self._max_sessions = max_sessions
         self._finished_ttl = 1800  # 30 minutes
 
-    async def spawn(self, command: str, workdir: str | None = None, env: dict | None = None) -> str:
-        """Start a background process, return session ID."""
+    async def spawn(
+        self,
+        command: str,
+        workdir: str | None = None,
+        env: dict | None = None,
+        argv: list[str] | None = None,
+    ) -> str:
+        """Start a background process, return session ID.
+
+        argv 非空时按 create_subprocess_exec(*argv) 直执行，为空走
+        create_subprocess_shell(command)。command 始终用于展示与审计。
+        env=None 继承父环境；传 dict 原样作为子进程环境，不并回
+        os.environ（env 策略由 exec 层统一决定）。
+        """
         session_id = uuid.uuid4().hex[:8]
 
         proc_kwargs: dict = dict(
@@ -135,14 +147,15 @@ class ProcessRegistry:
             stderr=asyncio.subprocess.PIPE,
             cwd=workdir,
         )
-        if env:
-            full_env = dict(os.environ)
-            full_env.update(env)
-            proc_kwargs["env"] = full_env
+        if env is not None:
+            proc_kwargs["env"] = env
         if os.name != "nt":
             proc_kwargs["start_new_session"] = True
 
-        proc = await asyncio.create_subprocess_shell(command, **proc_kwargs)
+        if argv:
+            proc = await asyncio.create_subprocess_exec(*argv, **proc_kwargs)
+        else:
+            proc = await asyncio.create_subprocess_shell(command, **proc_kwargs)
 
         session = BackgroundSession(
             id=session_id,

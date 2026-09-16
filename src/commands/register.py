@@ -211,6 +211,9 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                     await container.state_store.save(thread_id, state)
                 if container.agent_loop:
                     container.agent_loop.invalidate_memory_cache()
+                from src.tools.exec import reset_shell_cwd
+
+                reset_shell_cwd(thread_id)  # shell cwd 追踪随会话一并清空
                 return "会话已重置。" if zh else "Session reset."
             except Exception as e:
                 return f"重置失败: {e}" if zh else f"Reset failed: {e}"

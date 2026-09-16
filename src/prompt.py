@@ -112,10 +112,6 @@ def _build_environment_hints(workspace_dir: str = "") -> list[str]:
             "注意：Windows 上机器名（hostname）不是用户名。"
             "用上面的 User home directory 构造 C:\\Users\\<user>\\ 路径，不要用机器名。"
         )
-        host_lines.append(
-            "Shell：exec_command 使用 cmd.exe，使用 Windows 命令："
-            "dir（非 ls）、type（非 cat）、copy（非 cp）、del（非 rm）、findstr（非 grep）。"
-        )
 
     hints.append("\n".join(host_lines))
     return ["## 环境信息"] + hints + [""]

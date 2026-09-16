@@ -175,9 +175,10 @@ class ExecToolConfig(BaseModel):
     sandbox_allowed_dirs: list[str] = Field(
         default_factory=lambda: ["."]
     )  # Working dirs allowed (relative to workspace)
-    sandbox_env_whitelist: list[str] = Field(
-        default_factory=lambda: ["PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "LANG", "PYTHONPATH"]
-    )  # Env vars allowed to pass through
+    # Shell 选择: auto=三平台统一优先 bash(Windows=Git Bash→PowerShell 兜底), system=系统默认 shell(COMSPEC//bin/sh)
+    shell: Literal["auto", "system"] = "auto"
+    # 跨调用跟踪 shell cwd(临时文件采集 pwd -P); system shell 模式下自动禁用
+    cwd_persistence: bool = True
 
 
 class WebSearchToolConfig(BaseModel):

@@ -206,6 +206,16 @@ class TestProcessRegistry:
         result = await reg.wait(sid, timeout=5)
         assert "hello_env" in result["output"]
 
+    @pytest.mark.asyncio
+    async def test_spawn_env_verbatim_no_os_environ_merge(self, monkeypatch):
+        # env 原样传递：父进程其余环境变量不得混入子进程
+        monkeypatch.setenv("FLYCLAW_SPAWN_PROBE", "should-not-leak")
+        reg = ProcessRegistry()
+        cmd = "echo %FLYCLAW_SPAWN_PROBE%" if os.name == "nt" else "echo $FLYCLAW_SPAWN_PROBE"
+        sid = await reg.spawn(cmd, env={"PATH": os.environ.get("PATH", "")})
+        result = await reg.wait(sid, timeout=5)
+        assert "should-not-leak" not in result["output"]
+
 
 class TestGetProcessRegistry:
     def test_returns_instance(self):

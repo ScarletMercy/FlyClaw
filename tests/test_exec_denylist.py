@@ -1,6 +1,6 @@
 """Characterization tests for the command denylist matcher.
 
-Locks in ``_is_denylisted`` behavior against every ``_DEFAULT_DENY_PATTERNS``
+Locks in ``is_denylisted`` behavior against every ``DEFAULT_DENY_PATTERNS``
 category plus known bypass vectors (whitespace/case normalization, prefix
 variants caught by the regex word-boundary layer). These are regression
 guards — the current implementation is already correct; the tests prevent a
@@ -9,7 +9,7 @@ future edit from silently weakening the denylist.
 
 import pytest
 
-from src.tools.exec import _DEFAULT_DENY_PATTERNS, _DELETE_APPROVAL_PATTERNS, _is_denylisted
+from src.tools.command_guard import DEFAULT_DENY_PATTERNS, DELETE_APPROVAL_PATTERNS, is_denylisted
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@ DANGEROUS_COMMANDS = [
 
 @pytest.mark.parametrize("command", DANGEROUS_COMMANDS)
 def test_dangerous_commands_are_blocked(command):
-    blocked, _matched = _is_denylisted(command, _DEFAULT_DENY_PATTERNS)
+    blocked, _matched = is_denylisted(command, DEFAULT_DENY_PATTERNS)
     assert blocked, f"危险命令未被拦截: {command!r}"
 
 
@@ -64,7 +64,7 @@ BYPASS_ATTEMPTS = [
 
 @pytest.mark.parametrize("command,desc", BYPASS_ATTEMPTS)
 def test_bypass_attempts_blocked(command, desc):
-    blocked, _ = _is_denylisted(command, _DEFAULT_DENY_PATTERNS)
+    blocked, _ = is_denylisted(command, DEFAULT_DENY_PATTERNS)
     assert blocked, f"绕过未拦住 ({desc}): {command!r}"
 
 
@@ -89,12 +89,12 @@ SAFE_COMMANDS = [
 
 @pytest.mark.parametrize("command", SAFE_COMMANDS)
 def test_safe_commands_not_blocked(command):
-    blocked, _ = _is_denylisted(command, _DEFAULT_DENY_PATTERNS)
+    blocked, _ = is_denylisted(command, DEFAULT_DENY_PATTERNS)
     assert not blocked, f"安全命令被误伤: {command!r}"
 
 
 # ---------------------------------------------------------------------------
-# 非递归删除 —— 走 _DELETE_APPROVAL_PATTERNS（需审批，不是直接 deny）
+# 非递归删除 —— 走 DELETE_APPROVAL_PATTERNS（需审批，不是直接 deny）
 # ---------------------------------------------------------------------------
 
 DELETE_COMMANDS = ["rm file.txt", "del foo.txt", "rmdir empty", "os.remove('x')"]
@@ -103,19 +103,19 @@ DELETE_COMMANDS = ["rm file.txt", "del foo.txt", "rmdir empty", "os.remove('x')"
 @pytest.mark.parametrize("command", DELETE_COMMANDS)
 def test_delete_commands_match_approval_list(command):
     """非递归删除不在 deny 名单（直接拦），而在审批名单里（enforce 层要求审批）。"""
-    blocked, _ = _is_denylisted(command, _DEFAULT_DENY_PATTERNS)
+    blocked, _ = is_denylisted(command, DEFAULT_DENY_PATTERNS)
     assert not blocked, f"非递归删除不应直接 deny: {command!r}"
-    needs_approval, _ = _is_denylisted(command, _DELETE_APPROVAL_PATTERNS)
+    needs_approval, _ = is_denylisted(command, DELETE_APPROVAL_PATTERNS)
     assert needs_approval, f"非递归删除应命中审批名单: {command!r}"
 
 
 # ---------------------------------------------------------------------------
-# 完整性 —— _DEFAULT_DENY_PATTERNS 至少覆盖关键类别（防误删 pattern）
+# 完整性 —— DEFAULT_DENY_PATTERNS 至少覆盖关键类别（防误删 pattern）
 # ---------------------------------------------------------------------------
 
 
 def test_denylist_covers_critical_categories():
-    joined = " ".join(_DEFAULT_DENY_PATTERNS)
+    joined = " ".join(DEFAULT_DENY_PATTERNS)
     for must_have in ["rm -rf", "mkfs", "/dev/", "format ", "diskpart"]:
         assert must_have in joined, f"denylist 缺少关键 pattern 段: {must_have!r}"
 

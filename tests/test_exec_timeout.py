@@ -1,6 +1,6 @@
 """Tests for exec timeout validation boundaries."""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
@@ -8,16 +8,17 @@ from src.tools.exec import ToolExecutionError, exec_command
 
 
 def _mock_config():
-    """Return a minimal config mock that disables sandbox."""
-    cfg = MagicMock()
-    cfg.tools.exec.deny_patterns = []
-    cfg.tools.exec.max_output_bytes = 102400
-    cfg.tools.exec.approval_mode = "off"
-    cfg.tools.exec.no_output_timeout_seconds = 0
-    cfg.tools.exec.sandbox_enabled = False
-    cfg.tools.exec.sandbox_allowed_dirs = []
-    cfg.tools.exec.sandbox_env_whitelist = ["PATH"]
+    """真实 AppConfig 构造的最小 exec 测试配置（沙箱关闭）。
+
+    用真实 pydantic 模型而非 MagicMock：exec 直读 tools.exec 字段，
+    MagicMock 未显式设置的属性会以 truthy 假值泄漏进业务逻辑。
+    """
+    from src.config import AppConfig
+
+    cfg = AppConfig()
     cfg.agents.workspace = "."
+    cfg.tools.exec.sandbox_enabled = False
+    cfg.tools.exec.no_output_timeout_seconds = 0
     return cfg
 
 
