@@ -210,9 +210,12 @@ def _persist_overflow(full_output: str) -> str | None:
     try:
         from src.instance import temp_dir
 
-        path = temp_dir() / f"exec-overflow-{int(time.time())}-{uuid.uuid4().hex[:6]}.txt"
+        cache_dir = temp_dir()
+        # 全新环境（如 CI runner）下 temp 目录可能还不存在，写之前先建
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        path = cache_dir / f"exec-overflow-{int(time.time())}-{uuid.uuid4().hex[:6]}.txt"
         path.write_text(full_output, encoding="utf-8")
-        old = sorted(temp_dir().glob("exec-overflow-*.txt"))[:-20]
+        old = sorted(cache_dir.glob("exec-overflow-*.txt"))[:-20]
         for p in old:
             try:
                 p.unlink()

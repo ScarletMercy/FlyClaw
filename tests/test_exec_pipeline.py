@@ -148,19 +148,18 @@ class TestAssembleOutput:
         # 被杀的进程没有有意义的退出码，不追加 exit 行
         assert "[exit code:" not in out
 
-    def test_truncation_persists_full_output(self):
-        long_text = "x" * 5000 + "END-MARKER"
-        out = _assemble_output(long_text.encode(), b"", 0, "", 1024, "x")
+    def test_truncation_persists_full_output(self, tmp_path):
+        # 隔离到尚不存在的子目录，精确复现全新环境（~/.flyclaw/temp 不存在）
+        with patch("src.instance.temp_dir", return_value=tmp_path / "temp"):
+            long_text = "x" * 5000 + "END-MARKER"
+            out = _assemble_output(long_text.encode(), b"", 0, "", 1024, "x")
         assert "[truncated at 1024 bytes" in out
         assert "full output saved to" in out
-        # 完整内容已落盘
+        # 完整内容已落盘（隔离目录内，由 pytest 自动清理）
         path = out.split("full output saved to ")[1].strip().split("]")[0]
-        try:
-            assert os.path.isfile(path)
-            with open(path, encoding="utf-8") as f:
-                assert "END-MARKER" in f.read()
-        finally:
-            os.unlink(path)
+        assert os.path.isfile(path)
+        with open(path, encoding="utf-8") as f:
+            assert "END-MARKER" in f.read()
 
 
 # ---------------------------------------------------------------------------
