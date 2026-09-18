@@ -917,14 +917,22 @@ async def save_memory(content: str, key: str = "", category: str = "fact") -> st
 async def _gate_memory_save(content: str) -> Optional[str]:
     """入口1（memory save 工具）的保存前置关卡。
 
-    三种出口：
+    出口：
     - 返回 None：放行，调用方继续 save_memory。
     - 返回 JSON 字符串：已处理（model 自检判定 reject），调用方直接返回该串。
     - raise MemorySaveNeedsApproval：转人工审批（manual 模式），由 agent loop 接管。
+    - 后台上下文（background=True 的 loop）→ 返回 None 直存：manual 审批无人可问；
+      model 自检的对照窗口（最近 6 轮）在后台是审查 agent 自身的调用记录而非会话
+      原文，核对必错——两道关卡的前提在后台都不成立。
 
-    仅入口1 调用。dashboard / auto-extract / 日记 / 整理都直接调 save_memory，不经此关卡
-    ——审批协议依赖 agent 工具循环 + 在线交互通道 + thread 上下文，只有入口1 同时具备。
+    交互上下文的入口1 才走完整关卡。dashboard / auto-extract / 日记 / 整理都直接调
+    save_memory，不经此关卡——审批协议依赖 agent 工具循环 + 在线交互通道 + thread
+    上下文，只有交互入口1 同时具备。
     """
+    from src.tools.exec import _current_agent_context
+
+    if _current_agent_context.get({}).get("background"):
+        return None
     # session 短路（对齐 delete）：已授权的 args 直接放行，避免 resume 重复自检。
     # approval manager 不可用时（container 未初始化，如部分集成测试）跳过短路、走自检。
     approved = False

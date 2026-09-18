@@ -394,3 +394,127 @@ def test_deny_does_not_count_for_memory_save():
     from src.tools.memory_tools import _deny_counts_toward_abort
 
     assert _deny_counts_toward_abort("memory_save") is False
+
+
+# ── 后台上下文直存（background review 等无交互通道场景）────────
+
+
+def _set_background_ctx(value: bool):
+    """置位 _current_agent_context 的 background 标志，返回 reset token。"""
+    from src.tools.exec import _current_agent_context
+
+    return _current_agent_context.set({"background": value})
+
+
+@pytest.mark.asyncio
+async def test_background_context_manual_mode_direct_save(monkeypatch):
+    """后台上下文 + manual 模式 → 直存：不抛审批、不自检、直接落库。
+
+    回归：后台审查（background review）无交互通道，manual 审批无人可问，
+    强走只会超时后异常被吞、记忆 0 落库。
+    """
+    set_memory_session("p2p", "")
+    set_memory_dialog_context("无关来源")
+    saved = _patch_store_with_spy(monkeypatch)
+
+    class Client:
+        called = False
+
+        async def chat_simple(self, *a, **k):
+            Client.called = True
+            return "reject"
+
+    _patch_container_with_client(monkeypatch, Client(), save_approval_mode="manual")
+
+    token = _set_background_ctx(True)
+    try:
+        result = json.loads(await memory(action="save", content="后台整理提取的事实"))
+    finally:
+        from src.tools.exec import _current_agent_context
+
+        _current_agent_context.reset(token)
+    assert result.get("ok") is True
+    assert saved.get("content") == "后台整理提取的事实"
+    assert Client.called is False  # 不自检：对照窗口在后台必错
+
+
+@pytest.mark.asyncio
+async def test_background_context_model_mode_skips_self_check(monkeypatch):
+    """后台上下文 + model 模式 → 同样直存。
+
+    model 自检对照的是最近 6 轮对话，在后台场景那是审查 agent 自身的调用
+    记录而非会话原文——核对必错（会话前中部内容的真记忆被误判臆测），
+    故后台一并跳过自检。
+    """
+    set_memory_session("p2p", "")
+    set_memory_dialog_context("无关来源")
+    saved = _patch_store_with_spy(monkeypatch)
+
+    class Client:
+        called = False
+
+        async def chat_simple(self, *a, **k):
+            Client.called = True
+            return "reject 臆测"
+
+    _patch_container_with_client(monkeypatch, Client())  # model 模式
+
+    token = _set_background_ctx(True)
+    try:
+        result = json.loads(await memory(action="save", content="会话第50条的真事实"))
+    finally:
+        from src.tools.exec import _current_agent_context
+
+        _current_agent_context.reset(token)
+    assert result.get("ok") is True
+    assert saved.get("content") == "会话第50条的真事实"
+    assert Client.called is False
+
+
+@pytest.mark.asyncio
+async def test_interactive_context_still_gated_in_manual_mode(monkeypatch):
+    """交互上下文（无 background 标志）锁定原行为：manual 模式照旧转人工审批。"""
+    set_memory_session("p2p", "")
+    set_memory_dialog_context("来源")
+    _patch_store_with_spy(monkeypatch)
+    _patch_container_with_client(monkeypatch, client=None, save_approval_mode="manual")
+
+    token = _set_background_ctx(False)
+    try:
+        with pytest.raises(MemorySaveNeedsApproval):
+            await memory(action="save", content="交互保存内容")
+    finally:
+        from src.tools.exec import _current_agent_context
+
+        _current_agent_context.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_publishes_background_flag():
+    """传送带接线：AgentLoop(background=True) 执行工具时 _current_agent_context
+    带 background=True，默认 loop 为 False——gate 消费的事实由 loop 声明并发布。"""
+    from src.agent.loop import AgentLoop
+    from src.agent.state import AgentState
+    from src.agent.tooldef import ToolDef
+    from src.tools.exec import _current_agent_context
+
+    captured: list[dict] = []
+
+    async def probe() -> str:
+        captured.append(dict(_current_agent_context.get({})))
+        return "ok"
+
+    tool = ToolDef.from_function(probe)
+
+    async def _passthrough(**kw):
+        return kw.get("result", "")
+
+    for bg in (True, False):
+        captured.clear()
+        loop = AgentLoop(client=object(), tools=[tool], state_store=object(), background=bg)
+        loop._record_tool_success = _passthrough  # 聚焦注入接线，跳过审计链
+        state = AgentState(messages=[])
+        tc = {"id": f"t{bg}", "function": {"name": "probe", "arguments": "{}"}}
+        out = await loop._execute_tool(tc, state, "test-thread")
+        assert out == "ok"
+        assert captured[0].get("background") is bg

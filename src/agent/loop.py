@@ -97,6 +97,7 @@ class AgentLoop:
         config: Any = None,
         skills_prompt: str = "",
         context_window_tokens: int = 100000,
+        background: bool = False,
     ):
         self._client = client
         self._tools = tools
@@ -146,6 +147,9 @@ class AgentLoop:
         self._guardrails_map: dict[str, ToolLoopGuardrails] = {}
 
         self._auto_deny_approval: bool = False
+        # 后台 loop 声明：无交互通道（无人可审批）。经 _execute_tool 注入
+        # _current_agent_context 供工具层读取（如 memory(save) 审批门）。
+        self._background = background
 
     def swap_client(self, new_client):
         """切换激活 client:对话(_client)与压缩/摘要(_compressor._client)同步跟随。
@@ -1109,6 +1113,7 @@ class AgentLoop:
                 "chat_id": state.chat_id,
                 "channel": state.channel,
                 "parent_thread_id": thread_id,
+                "background": self._background,
             }
         )
         # Also publish thread_id via _current_thread_id so tools that resolve

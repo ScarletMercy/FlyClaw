@@ -198,6 +198,7 @@ async def _run_review_loop(
         state_store=state_store,
         config=config,
         skills_prompt="",
+        background=True,
     )
 
     state = AgentState(
