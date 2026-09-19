@@ -334,7 +334,7 @@ def cmd_model(args):
 
     # flyclaw model config
     if sub == "config":
-        from src.setup import _ask, _ask_int, _ask_yn, _ask_required, _verify_api_key
+        from src.setup import _ask, _ask_int, _ask_yn, _ask_required, _ask_verify_action, _verify_api_key
 
         print("\n  当前模型配置:")
         print(f"    模型名称: {config.model.name}")
@@ -361,18 +361,28 @@ def cmd_model(args):
         if _ask_yn("  保留当前 API 密钥？", default=True):
             pass
         else:
-            config.model.api_key = _ask_required("  新 API 密钥", default="")
-            # 验证 API Key
-            print("  验证 API Key 中...")
-            success, msg = _verify_api_key(
-                config.model.provider, config.model.name, config.model.base_url, config.model.api_key
-            )
-            if success:
-                print("  [通过] API Key 验证成功")
-            else:
+            # 验证失败弹 重试/重输/放弃（对齐 setup 向导与 chcode）：重试原值重验，
+            # 重输重收密钥，放弃=中止本次修改不保存（此前已改的字段一并作废）。
+            reinput = True
+            while True:
+                if reinput:
+                    config.model.api_key = _ask_required("  新 API 密钥", default=config.model.api_key or "")
+                print("  验证 API Key 中...")
+                success, msg = _verify_api_key(
+                    config.model.provider, config.model.name, config.model.base_url, config.model.api_key
+                )
+                if success:
+                    print("  [通过] API Key 验证成功")
+                    break
                 print(f"  [警告] API Key 验证失败: {msg}")
-                if not _ask_yn("  是否仍然使用此 API Key？", default=True):
-                    config.model.api_key = _ask_required("  重新输入 API 密钥", default="")
+                action = _ask_verify_action()
+                if action == "重试":
+                    reinput = False
+                elif action == "重输":
+                    reinput = True
+                else:
+                    print("\n  已放弃修改，配置未保存。")
+                    return 1
 
         # 上下文窗口
         if _ask_yn(f"  保留当前上下文窗口 ({config.model.context_window})？", default=True):

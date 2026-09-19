@@ -513,6 +513,31 @@ class TestOrganizedColumn:
 
         asyncio.run(_test())
 
+    def test_list_threads_since_orders_oldest_first(self, tmp_path):
+        """list_threads_since 按 created_at 正序：全量补漏中途崩溃时残留落在最新一侧
+        （created_at >= 游标），下轮定时任务自动补齐。"""
+
+        async def _test():
+            import time as _time
+
+            store = StateStore(str(tmp_path / "test.db"))
+
+            now = _time.time()
+            conn = await store._get_conn()
+            for tid, ts in (("older", now - 200), ("newer", now - 100)):
+                await conn.execute(
+                    "INSERT INTO sessions (thread_id, messages, metadata, frozen_system_prompt, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (tid, "[]", "{}", "", ts, ts),
+                )
+            await conn.commit()
+
+            threads = await store.list_threads_since(now - 3600)
+            assert threads == ["older", "newer"]
+            await store.close()
+
+        asyncio.run(_test())
+
     def test_migration_from_pre_created_at_schema(self, tmp_path):
         """最老 schema（无 frozen_system_prompt/created_at/organized）经 _get_conn 迁移成功。
 

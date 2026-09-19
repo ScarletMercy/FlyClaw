@@ -208,15 +208,17 @@ class StateStore:
         return [r[0] for r in rows]
 
     async def list_threads_since(self, since_ts: float) -> list[str]:
-        """返回 created_at >= since_ts 且未整理(organized=0)的 thread_id。
+        """返回 created_at >= since_ts 且未整理(organized=0)的 thread_id，按 created_at 正序。
 
         SQL 层直接排除已整理会话：当 last_session_organize_at 因失败长期不推进、
         反复重扫同一区间时，已整理项不会回到 Python 层逐个跳过，避免 O(n) 退化。
         所有调用方拿到 organized 会话本就只会跳过，语义不变。
+        正序：全量补漏中途崩溃时，残留是最新一侧（created_at >= 游标），
+        下轮定时任务自动补齐；老会话若倒序排后则永久落在窗口外。
         """
         conn = await self._get_conn()
         async with conn.execute(
-            "SELECT thread_id FROM sessions WHERE created_at >= ? AND organized = 0 ORDER BY updated_at DESC",
+            "SELECT thread_id FROM sessions WHERE created_at >= ? AND organized = 0 ORDER BY created_at ASC",
             (since_ts,),
         ) as cursor:
             rows = await cursor.fetchall()

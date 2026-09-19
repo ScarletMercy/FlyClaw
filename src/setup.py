@@ -191,6 +191,14 @@ def _ask_yn(prompt: str, default: bool = True) -> bool:
     return _ask_choice(prompt, ["yes", "no"], default_str) == "yes"
 
 
+def _ask_verify_action() -> str:
+    """验证失败后的三选项菜单（对齐 chcode 连接测试失败处理）。
+
+    重试=原值直接重验（瞬时网络错误）；重输=重收字段；放弃=中止本段配置。
+    """
+    return _ask_choice("  操作", ["重试", "重输", "放弃"], default="重试")
+
+
 def _has_values(d: dict, *keys: str) -> bool:
     return all(d.get(k) for k in keys)
 
@@ -304,76 +312,80 @@ def _step_model(config: dict) -> None:
     if _ask_skip("模型", model, "provider", "name", "api_key"):
         _configure_fallbacks(model)
         return
-    existing_provider = model.get("provider", "openai")
 
-    current_preset = "custom"
-    for key, preset in PRESETS.items():
-        if preset and preset["provider"] == existing_provider and preset.get("base_url") == model.get("base_url"):
-            current_preset = key
-            break
+    # 收集+验证循环：失败弹 重试/重输/放弃。重试跳过收集原值重验；
+    # 重输从提供商选择重收全部字段（字段默认值已填入刚输入的值，回车沿用）；
+    # 放弃=模型为必配项，退出向导且不保存（对齐 chcode 中止后不落盘）。
+    reinput = True
+    while True:
+        if reinput:
+            existing_provider = model.get("provider", "openai")
 
-    choice = _ask_choice("  选择提供商", list(PRESETS.keys()), default="custom")
-    preset = PRESETS[choice]
+            current_preset = "custom"
+            for key, preset in PRESETS.items():
+                if (
+                    preset
+                    and preset["provider"] == existing_provider
+                    and preset.get("base_url") == model.get("base_url")
+                ):
+                    current_preset = key
+                    break
 
-    if preset:
-        model["provider"] = preset["provider"]
-        model["name"] = _ask("  模型名称", default=model.get("name", preset["name"]))
-        if preset["base_url"]:
-            model["base_url"] = _ask("  接口地址", default=model.get("base_url", preset["base_url"]))
-        else:
-            model.pop("base_url", None)
-        if preset["env_key"]:
-            env_name = preset["env_key"]
-            current_api_key = model.get("api_key", "")
-            if current_api_key and current_api_key.startswith("${") and current_api_key.endswith("}"):
-                inner = current_api_key[2:-1]
-                if not inner.isupper() or "_" not in inner:
-                    current_api_key = inner
-            default_key = current_api_key or ""
-            model["api_key"] = _ask_required(f"  API 密钥 ({env_name})", default=default_key)
-            # 验证 API Key
-            if model["api_key"]:
-                print("  验证 API Key 中...")
-                success, msg = _verify_api_key(
-                    model.get("provider", ""), model.get("name", ""), model.get("base_url", ""), model["api_key"]
-                )
-                if success:
-                    print("  [通过] API Key 验证成功")
-                    model["context_window"] = _ask_int(
-                        "  上下文窗口大小 (tokens)", default=model.get("context_window", 1000000)
-                    )
-                    print(f"  上下文窗口: {model['context_window']} tokens")
+            choice = _ask_choice("  选择提供商", list(PRESETS.keys()), default="custom")
+            preset = PRESETS[choice]
+
+            if preset:
+                model["provider"] = preset["provider"]
+                model["name"] = _ask("  模型名称", default=model.get("name", preset["name"]))
+                if preset["base_url"]:
+                    model["base_url"] = _ask("  接口地址", default=model.get("base_url", preset["base_url"]))
                 else:
-                    print(f"  [警告] API Key 验证失败: {msg}")
-                    if not _ask_yn("  是否仍然使用此 API Key？", default=True):
-                        model["api_key"] = _ask_required(f"  重新输入 API 密钥 ({env_name})", default="")
-        else:
-            model.pop("api_key", None)
+                    model.pop("base_url", None)
+                if preset["env_key"]:
+                    env_name = preset["env_key"]
+                    current_api_key = model.get("api_key", "")
+                    if current_api_key and current_api_key.startswith("${") and current_api_key.endswith("}"):
+                        inner = current_api_key[2:-1]
+                        if not inner.isupper() or "_" not in inner:
+                            current_api_key = inner
+                    model["api_key"] = _ask_required(f"  API 密钥 ({env_name})", default=current_api_key or "")
+                else:
+                    model.pop("api_key", None)
+            else:
+                model["provider"] = "openai"
+                model["name"] = _ask("  模型名称", default=model.get("name", ""))
+                model["base_url"] = _ask("  接口地址", default=model.get("base_url", ""))
+                model["api_key"] = _ask_required("  API 密钥", default=model.get("api_key", ""))
+
+        if not model.get("api_key"):
+            # 无密钥预设（如 ollama）无验证环节
             model["context_window"] = _ask_int(
                 "  上下文窗口大小 (tokens)", default=model.get("context_window", 1000000)
             )
             print(f"  上下文窗口: {model['context_window']} tokens")
-    else:
-        model["provider"] = "openai"
-        model["name"] = _ask("  模型名称", default=model.get("name", ""))
-        model["base_url"] = _ask("  接口地址", default=model.get("base_url", ""))
-        model["api_key"] = _ask_required("  API 密钥", default=model.get("api_key", ""))
-        # 验证 API Key
-        if model["api_key"]:
-            print("  验证 API Key 中...")
-            success, msg = _verify_api_key(
-                model.get("provider", ""), model.get("name", ""), model.get("base_url", ""), model["api_key"]
+            break
+
+        print("  验证 API Key 中...")
+        success, msg = _verify_api_key(
+            model.get("provider", ""), model.get("name", ""), model.get("base_url", ""), model["api_key"]
+        )
+        if success:
+            print("  [通过] API Key 验证成功")
+            model["context_window"] = _ask_int(
+                "  上下文窗口大小 (tokens)", default=model.get("context_window", 1000000)
             )
-            if success:
-                print("  [通过] API Key 验证成功")
-                model["context_window"] = _ask_int(
-                    "  上下文窗口大小 (tokens)", default=model.get("context_window", 1000000)
-                )
-                print(f"  上下文窗口: {model['context_window']} tokens")
-            else:
-                print(f"  [警告] API Key 验证失败: {msg}")
-                if not _ask_yn("  是否仍然使用此 API Key？", default=True):
-                    model["api_key"] = _ask_required("  重新输入 API 密钥", default="")
+            print(f"  上下文窗口: {model['context_window']} tokens")
+            break
+
+        print(f"  [警告] API Key 验证失败: {msg}")
+        action = _ask_verify_action()
+        if action == "重试":
+            reinput = False
+        elif action == "重输":
+            reinput = True
+        else:
+            print("\n  已放弃模型配置，退出且不保存。")
+            sys.exit(0)
 
     model.setdefault("temperature", 1.0)
 
@@ -624,17 +636,23 @@ def _step_media_understanding(config: dict) -> None:
     tools = _section(config, "tools")
     mu = _section(tools, "media_understanding")
 
+    # base_url 可合法为空(用默认地址),完整性只看 provider/name/api_key
+    if mu.get("enabled") and _ask_skip("媒体理解", mu, "provider", "name", "api_key"):
+        return
+
     enabled = _ask_yn("  启用媒体理解？", default=mu.get("enabled", False))
     mu["enabled"] = enabled
 
     if not enabled:
         return
 
+    reinput = True
     while True:
-        mu["provider"] = _ask("  模型提供商", default=mu.get("provider", "openai"))
-        mu["name"] = _ask("  模型名称", default=mu.get("name", "gpt-4o-mini"))
-        mu["base_url"] = _ask("  接口地址（留空使用默认）", default=mu.get("base_url", ""))
-        mu["api_key"] = _ask("  API 密钥", default=mu.get("api_key", "${OPENAI_API_KEY}"))
+        if reinput:
+            mu["provider"] = _ask("  模型提供商", default=mu.get("provider", "openai"))
+            mu["name"] = _ask("  模型名称", default=mu.get("name", "gpt-4o-mini"))
+            mu["base_url"] = _ask("  接口地址（留空使用默认）", default=mu.get("base_url", ""))
+            mu["api_key"] = _ask("  API 密钥", default=mu.get("api_key", "${OPENAI_API_KEY}"))
 
         if not mu["api_key"]:
             return  # 留空跳过验证
@@ -648,12 +666,15 @@ def _step_media_understanding(config: dict) -> None:
             return
 
         print(f"  [警告] API Key 验证失败: {msg}")
-        action = _ask_choice("  操作 (1=重新输入, 2=放弃)", ["1", "2"], default="1")
-        if action == "1":
-            continue  # 重新输入（字段已填，回车即沿用，重新验证）
-        mu["enabled"] = False
-        print("  已放弃媒体理解配置。")
-        return
+        action = _ask_verify_action()
+        if action == "重试":
+            reinput = False
+        elif action == "重输":
+            reinput = True
+        else:
+            mu["enabled"] = False
+            print("  已放弃媒体理解配置。")
+            return
 
 
 def _step_memory_store(config: dict) -> None:
@@ -676,6 +697,9 @@ def _step_memory_store(config: dict) -> None:
 
 def _configure_vector_memory(ms: dict) -> None:
     """向导子步骤：配置 KV 向量归档。"""
+    if ms.get("vector_enabled") and _ask_skip("向量记忆", ms, "vector_model", "vector_base_url", "vector_api_key"):
+        return
+
     if not _ask_yn(
         "  启用向量记忆？（将旧记忆自动归档到向量库，提升长期检索）",
         default=ms.get("vector_enabled", False),
@@ -683,10 +707,12 @@ def _configure_vector_memory(ms: dict) -> None:
         ms["vector_enabled"] = False
         return
 
+    reinput = True
     while True:
-        model = _ask_required("  嵌入模型名称", default=ms.get("vector_model", "text-embedding-3-small"))
-        base_url = _ask_required("  嵌入接口地址", default=ms.get("vector_base_url", ""))
-        api_key = _ask_required("  嵌入 API 密钥", default=ms.get("vector_api_key", ""))
+        if reinput:
+            model = _ask_required("  嵌入模型名称", default=ms.get("vector_model", "text-embedding-3-small"))
+            base_url = _ask_required("  嵌入接口地址", default=ms.get("vector_base_url", ""))
+            api_key = _ask_required("  嵌入 API 密钥", default=ms.get("vector_api_key", ""))
 
         print("  验证嵌入 API Key 中...")
         ok, dim_str = _verify_embedding_api_key(base_url, api_key, model)
@@ -706,9 +732,11 @@ def _configure_vector_memory(ms: dict) -> None:
             return
 
         print(f"  [警告] 嵌入 API 验证失败: {dim_str}")
-        action = _ask_choice("  操作 (1=重新输入, 2=放弃)", ["1", "2"], default="1")
-        if action == "1":
-            continue  # 重新输入
+        action = _ask_verify_action()
+        if action == "重试":
+            reinput = False
+        elif action == "重输":
+            reinput = True
         else:
             ms["vector_enabled"] = False
             print("  已放弃向量记忆配置。")
