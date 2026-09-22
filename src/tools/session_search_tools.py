@@ -18,6 +18,9 @@ def _format_results(results: list[dict]) -> str:
 async def session_search(query: str = "", limit: int = 3) -> str:
     """Search historical conversation records by keyword (FTS5).
 
+    Use proactively when the user references past conversations or prior work —
+    search history yourself instead of asking them to repeat.
+
     Args:
         query: Search keyword. Empty string returns recent sessions.
         limit: Max number of results to return. Default 3.

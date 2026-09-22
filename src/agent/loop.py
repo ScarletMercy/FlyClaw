@@ -125,7 +125,7 @@ class AgentLoop:
                 extra = getattr(agents_cfg, "bootstrap_files", None)
                 self._context_files = load_bootstrap_files(agents_cfg.workspace, extra_names=extra)
 
-        self._cache_prompt_sections(tools, skills_prompt)
+        self._cache_prompt_sections(skills_prompt)
 
         # Frozen system prompt per session — built once, reused across rounds.
         # Keyed by thread_id so each session gets its own frozen prompt.
@@ -752,7 +752,7 @@ class AgentLoop:
             _mem_ms = (_time.monotonic() - _t_mem_start) * 1000
 
             _t_prompt_start = _time.monotonic()
-            system_text = self._build_system_prompt(state, await self._get_active_tool_defs(state), memory_summary)
+            system_text = self._build_system_prompt(state, memory_summary)
             state.frozen_system_prompt = system_text
             self._system_prompt_cache[thread_id] = system_text
             _prompt_ms = (_time.monotonic() - _t_prompt_start) * 1000
@@ -882,9 +882,6 @@ class AgentLoop:
     # Tool handling
     # ------------------------------------------------------------------
 
-    async def _get_active_tool_defs(self, state: AgentState) -> list[ToolDef]:
-        return await self._filter_tools(state)
-
     async def _filter_tools(self, state: AgentState) -> list[ToolDef]:
         tools = self._tools
 
@@ -910,13 +907,11 @@ class AgentLoop:
             logger.debug("resolve_user failed: %s", exc)
         return None
 
-    def _cache_prompt_sections(self, tools: list[ToolDef], skills_prompt: str) -> None:
+    def _cache_prompt_sections(self, skills_prompt: str) -> None:
         from pathlib import Path
         from src.prompt import (
             _load_soul_md,
             _build_environment_hints,
-            _build_tooling_rules,
-            _build_tool_index,
             _build_safety,
             _build_skills_section,
             _build_workspace,
@@ -932,8 +927,6 @@ class AgentLoop:
 
         self._prompt_soul = _load_soul_md()
         self._prompt_env = "\n".join(_build_environment_hints(workspace_dir))
-        self._prompt_tool_rules = "\n".join(_build_tooling_rules(tools))
-        self._prompt_tool_guidance = "\n".join(_build_tool_index(tools))
         self._prompt_safety = "\n".join(_build_safety())
         hub_on = bool(self._config and getattr(self._config.skills.hub, "enabled", True))
         self._prompt_skills = "\n".join(_build_skills_section(skills_prompt, hub_enabled=hub_on))
@@ -942,10 +935,9 @@ class AgentLoop:
         self._prompt_platform_cache: dict[str, str] = {}
 
         logger.info(
-            "System prompt sections cached (soul=%d, env=%d, tool_index=%d, skills=%d, bootstrap=%d chars)",
+            "System prompt sections cached (soul=%d, env=%d, skills=%d, bootstrap=%d chars)",
             len(self._prompt_soul),
             len(self._prompt_env),
-            len(self._prompt_tool_guidance),
             len(self._prompt_skills),
             len(self._prompt_bootstrap),
         )
@@ -982,8 +974,8 @@ class AgentLoop:
         except Exception:
             return self._memory_summary_cache.get(scope_key, "")
 
-    def _build_system_prompt(self, state: AgentState, active_tools: list[ToolDef], memory_summary: str = "") -> str:
-        from src.prompt import _build_platform_hints, _build_tool_index, _build_sandbox_hints
+    def _build_system_prompt(self, state: AgentState, memory_summary: str = "") -> str:
+        from src.prompt import _build_platform_hints, _build_sandbox_hints
         from src.tools.exec import is_sandbox_enabled
 
         parts = [self._prompt_soul, ""]
@@ -1017,10 +1009,6 @@ class AgentLoop:
         if sandbox_hints:
             parts.append("\n".join(sandbox_hints))
 
-        parts.append(self._prompt_tool_rules)
-        tool_index = "\n".join(_build_tool_index(active_tools))
-        if tool_index:
-            parts.append(tool_index)
         parts.append(self._prompt_safety)
         if self._prompt_skills:
             parts.append(self._prompt_skills)

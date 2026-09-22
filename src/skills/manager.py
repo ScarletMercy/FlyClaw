@@ -540,6 +540,9 @@ def get_tools() -> list:
         Required params per action: write_file needs name+file_path+file_content;
         remove_file needs name+file_path.
 
+        Proactively save reusable workflows as skills (action="create") after complex
+        tasks (5+ tool calls); patch outdated skills immediately with action="patch".
+
         Args:
             action: Operation type (create, edit, patch, delete, toggle, write_file, remove_file)
             name: Skill name (required for all actions)

@@ -1,4 +1,4 @@
-"""Modular system prompt builder — tool-guidance follows tools, config controls persona."""
+"""Modular system prompt builder — config controls persona, tool defs ride the API tools param."""
 
 from __future__ import annotations
 
@@ -63,10 +63,7 @@ DEFAULT_SOUL_MD = (
 )
 
 PLATFORM_HINTS: dict[str, str] = {
-    "qq": (
-        "你运行在 QQ 消息平台上。支持 markdown 格式和表情。"
-        "发送文件、图片、音频：使用 send_file 工具，系统自动识别类型并以原生媒体发送。"
-    ),
+    "qq": "你运行在 QQ 消息平台上。支持 markdown 格式和表情。",
     "api": ("你通过 API 服务响应。渲染层未知，假设纯文本输出，不使用 markdown 格式。保持回复简洁自然。"),
     "ws": ("你通过 WebSocket 连接响应。渲染层未知，假设纯文本输出，不使用 markdown 格式。保持回复简洁自然。"),
 }
@@ -137,50 +134,6 @@ def _build_sandbox_hints(sandbox_enabled: bool, workspace_dir: str = "") -> list
     ]
 
 
-def _build_tooling_rules(tools: list | None = None) -> list[str]:
-    tool_names = {t.name for t in tools} if tools else set()
-    lines = [
-        "## 工具调用规则",
-        "始终使用原生工具调用，不要将工具调用输出为文本、XML 或伪标签。",
-        "不要描述常规工具调用 — 直接调用。仅在多步骤工作、敏感操作或被要求时才描述。",
-        "优先使用工具调用，而非让用户手动执行 CLI 命令。",
-        "不要尝试通过 exec_command 执行 flyclaw、openclaw 等命令来操作平台内部功能（定时任务、记忆、会话等），这些都有对应的工具。",
-        "",
-        "## 工具使用约定",
-        "- edit_file 前必须先 read_file，需要精确匹配 old_string",
-        "- 优先使用 file_tools（read_file/write_file/edit_file/list_dir/grep/glob）而非 exec_command",
-        "- 发送文件、图片、音频时使用 send_file 工具，系统自动识别媒体类型",
-    ]
-    if "browser_navigate" in tool_names:
-        lines.append(
-            "- 浏览器自动化：先 browser_navigate 打开网页，再 browser_snapshot 获取元素引用（@e1, @e2...），操作失败时重新 snapshot"
-        )
-    lines.extend(
-        [
-            "- 当用户提及过去的对话内容，用 session_search 检索历史记录，不要让用户重复",
-            '- 完成复杂任务（5+ 次工具调用）后，主动用 skill_manage(action="create") 保存为技能；发现技能过时立即用 patch 修补',
-            "",
-        ]
-    )
-    return lines
-
-
-def _build_tool_index(tools: list) -> list[str]:
-    """Compact tool index: name + full one-line description (no parameter schemas).
-
-    The full parameter schemas are provided via the OpenAI ``tools`` JSON parameter;
-    the heading carries the count so the model need not recount the list.
-    """
-    if not tools:
-        return []
-    lines = [f"## 可用工具（共 {len(tools)} 个）", ""]
-    for t in tools:
-        desc = t.description.split("\n")[0].strip() or "(no description)"
-        lines.append(f"- {t.name}: {desc}")
-    lines.append("")
-    return lines
-
-
 def _build_safety() -> list[str]:
     return [
         "## 安全",
@@ -209,7 +162,7 @@ def _build_skills_section(skills_prompt: str, hub_enabled: bool = True) -> list[
             '2. **加载**：当用户请求匹配某个技能时，用 skill_view(name="技能名") 加载完整指令。如果技能有问题，用 skill_manage(action="patch") 修补。',
             "3. **执行**：遵循技能指令完成任务。技能可能包含 scripts 目录下的脚本，可用 exec_command 执行。",
             "",
-            "如果没有匹配的本地技能，不要调用 skill_view 或 skill_manage（它们只用于已安装的本地技能）。不要用 read_file 读取技能文件。",
+            "如果没有匹配的本地技能，不要调用 skill_view 或 skill_manage（它们只用于已安装的本地技能）。",
             "",
         ]
 
@@ -217,11 +170,7 @@ def _build_skills_section(skills_prompt: str, hub_enabled: bool = True) -> list[
     if hub_enabled:
         lines += [
             "## 远程技能库",
-            "当需要安装新技能或本地技能不适用时，可以使用 skill_hub 工具（不要用 web_fetch/web_search 替代）：",
-            '1. **搜索**：skill_hub(action="search_hub", query="关键词")',
-            '2. **查看详情**：skill_hub(action="inspect_hub", identifier="标识符")',
-            '3. **安装**：skill_hub(action="install_hub", identifier="标识符")',
-            '4. **从文件安装**：用户发送 skill 压缩包时，先保存到本地，再用 skill_hub(action="install", source="保存路径")。',
+            "当需要安装新技能或本地技能不适用时，使用 skill_hub 工具。",
             "注意：如果 search_hub/inspect_hub/install_hub 返回 'Hub is disabled in configuration'，说明远程技能库已禁用。",
             "",
         ]

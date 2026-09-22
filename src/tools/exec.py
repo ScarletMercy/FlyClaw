@@ -575,6 +575,9 @@ async def exec_command(
 
     If a command fails due to timeout, increase the timeout value and retry.
 
+    For file operations prefer the dedicated file tools
+    (read_file/write_file/edit_file/list_dir/grep/glob) over shell commands.
+
     Args:
         command: The shell command to execute.
         timeout: Timeout in seconds. Default 300. Increase this value for long-running commands like npm install or docker build.

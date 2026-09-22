@@ -242,6 +242,8 @@ async def write_file(path: str, content: str) -> str:
 async def edit_file(path: str, old_string: str, new_string: str, replace_all: bool = False) -> str:
     """Replace a specific text segment in a file with new text.
 
+    Read the file with read_file first — old_string must match the current file content exactly.
+
     Args:
         path: File path (relative to workspace)
         old_string: Exact text to find and replace
