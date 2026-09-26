@@ -82,9 +82,56 @@ PRESETS: dict[str, PresetEntry | None] = {
 }
 
 # ── Prompt helpers ──
+#
+# TTY 终端下 _ask* 家族走 questionary 控件（方向键选择、默认值预填，对齐 chcode）；
+# 非 TTY（管道/CI/pytest）自动回退裸 input() 文字交互，行为与旧版一致。
 
 
-def _ask(prompt: str, default: str = "") -> str:
+_interactive_disabled = False
+
+
+def _interactive_ui():
+    """TTY 且 questionary 可用时返回 questionary 模块，否则 None。
+
+    控件附着终端失败过一次（见 _q_failed）后全局禁用，避免每题重复报错。
+    Ctrl+C 打断导入时与 _ask 同语义——退出向导不保存。
+    """
+    global _interactive_disabled
+    if _interactive_disabled:
+        return None
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        return None
+    try:
+        import questionary
+    except ImportError:
+        return None
+    except KeyboardInterrupt:
+        print()
+        sys.exit(0)
+    return questionary
+
+
+def _q_ask(build):
+    """构造并执行 questionary 控件（build 为零参构造器，构造期也在守卫内）。
+
+    Ctrl+C/Ctrl+D 与 _ask 同语义——退出向导不保存。
+    """
+    try:
+        return build().unsafe_ask()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        sys.exit(0)
+
+
+def _q_failed(exc: Exception) -> None:
+    """questionary 附着终端失败（如 mintty 伪终端非 winpty）：降级文字交互。"""
+    global _interactive_disabled
+    _interactive_disabled = True
+    print(f"  [提示] 交互式控件不可用({exc.__class__.__name__})，回退文字输入")
+
+
+def _input_line(prompt: str, default: str = "") -> str:
+    """裸 input() 文字输入（非 TTY 回退路径），Ctrl+C/Ctrl+D 退出向导不保存。"""
     suffix = f" [{default}]" if default else ""
     try:
         val = input(f"  {prompt}{suffix}: ").strip()
@@ -94,15 +141,28 @@ def _ask(prompt: str, default: str = "") -> str:
     return val or default
 
 
+def _ask(prompt: str, default: str = "") -> str:
+    q = _interactive_ui()
+    if q is not None:
+        try:
+            return (_q_ask(lambda: q.text(prompt.strip(), default=default)) or "").strip() or default
+        except Exception as exc:  # SystemExit 不在此列，Ctrl+C 退出语义不受影响
+            _q_failed(exc)
+    return _input_line(prompt, default)
+
+
 def _ask_required(prompt: str, default: str = "") -> str:
     """要求用户必须输入，不能为空。"""
+    q = _interactive_ui()
     while True:
-        suffix = f" [{default}]" if default else ""
-        try:
-            val = input(f"  {prompt}{suffix}: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            sys.exit(0)
+        if q is not None:
+            try:
+                val = (_q_ask(lambda: q.text(prompt.strip(), default=default)) or "").strip()
+            except Exception as exc:
+                _q_failed(exc)
+                q = None
+        else:
+            val = _input_line(prompt, default)
         if val:
             return val
         if default:
@@ -177,16 +237,35 @@ def _verify_embedding_api_key(base_url: str, api_key: str, model: str) -> tuple[
 
 
 def _ask_choice(prompt: str, choices: list[str], default: str = "") -> str:
+    q = _interactive_ui()
+    if q is not None:
+        try:
+            return _q_ask(
+                lambda: q.select(
+                    prompt.strip(),
+                    choices=choices,
+                    default=default if default in choices else None,
+                    # noinherit 去掉高亮背景色，避免 Windows 终端渲染问题（对齐 chcode）
+                    style=q.Style([("highlighted", "noinherit"), ("selected", "noinherit")]),
+                )
+            )
+        except Exception as exc:
+            _q_failed(exc)
     options = ", ".join(choices)
     while True:
-        val = _ask(prompt + f" ({options})", default)
+        val = _input_line(prompt + f" ({options})", default)
         if val in choices:
             return val
         print(f"  请从以下选项中选择: {options}")
 
 
 def _ask_yn(prompt: str, default: bool = True) -> bool:
-    choices = "yes, no"
+    q = _interactive_ui()
+    if q is not None:
+        try:
+            return _q_ask(lambda: q.confirm(prompt.strip(), default=default))
+        except Exception as exc:
+            _q_failed(exc)
     default_str = "yes" if default else "no"
     return _ask_choice(prompt, ["yes", "no"], default_str) == "yes"
 
