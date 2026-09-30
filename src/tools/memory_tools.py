@@ -36,10 +36,7 @@ class MemoryDeleteNeedsApproval(Exception):
 
 
 class MemorySaveNeedsApproval(Exception):
-    """Raised by memory(save) when pre-validation flags content as unsupported by source.
-
-    保存前自检判定候选记忆疑似臆测/曲解，转人工审批：用户确认后才落库。
-    """
+    """memory(save) 转人工审批（manual 模式全部；model 模式自检 reject 直接丢弃，不走此异常）。"""
 
     def __init__(self, content: str, source_context: str = "", reason: str = "", mode: str = "model"):
         self.content = content
@@ -803,12 +800,8 @@ def build_dialog_context(messages: list[dict], max_turns: int = 6, max_chars: in
 def _memory_save_approval_text(
     content: str, source_context: str, timeout: int, zh: bool, model_mode: bool = True
 ) -> str:
-    """构造 memory_save 审批文案：展示候选记忆 + 来源原文，供用户核对是否保存。
-
-    model_mode=True（模型自检 reject）：措辞提示"疑似臆测"。
-    model_mode=False（manual 模式）：措辞用"确认保存"（无模型判断）。
-    无来源上下文时省略来源行（降级，不阻断审批流程）。
-    """
+    """构造 memory_save 审批文案：候选记忆 + 来源原文，供用户核对。model_mode
+    切换标题措辞；无来源时省略来源行。"""
     src = (source_context or "").strip()
     if src:
         src_line = f"来源原文：\n{src[:300]}\n\n" if zh else f"Source:\n{src[:300]}\n\n"
@@ -822,11 +815,7 @@ def _memory_save_approval_text(
 
 
 def _deny_counts_toward_abort(tool_name: str) -> bool:
-    """该工具的 deny 是否计入 consecutive_denies 终止计数。
-
-    memory_save 逐条审批：连续 deny 是用户对不同 content 逐条把关，非死循环重试，不计入。
-    其他工具（exec/memory_delete）的连续 deny 视为潜在死循环重试，计入。
-    """
+    """memory_save 的 deny 是逐条把关（非死循环重试），不计入；其余工具计入。"""
     return tool_name != "memory_save"
 
 
@@ -915,26 +904,20 @@ async def save_memory(content: str, key: str = "", category: str = "fact") -> st
 
 
 async def _gate_memory_save(content: str) -> Optional[str]:
-    """入口1（memory save 工具）的保存前置关卡。
+    """memory save 工具的保存前置关卡。
 
-    出口：
-    - 返回 None：放行，调用方继续 save_memory。
-    - 返回 JSON 字符串：已处理（model 自检判定 reject），调用方直接返回该串。
-    - raise MemorySaveNeedsApproval：转人工审批（manual 模式），由 agent loop 接管。
-    - 后台上下文（background=True 的 loop）→ 返回 None 直存：manual 审批无人可问；
-      model 自检的对照窗口（最近 6 轮）在后台是审查 agent 自身的调用记录而非会话
-      原文，核对必错——两道关卡的前提在后台都不成立。
-
-    交互上下文的入口1 才走完整关卡。dashboard / auto-extract / 日记 / 整理都直接调
-    save_memory，不经此关卡——审批协议依赖 agent 工具循环 + 在线交互通道 + thread
-    上下文，只有交互入口1 同时具备。
+    返回 None 放行；返回 JSON（model 自检 reject）已处理；raise 转人工审批
+    （manual 模式）。后台 loop（background=True）直存：审批无人可问；且自检
+    对照窗口（最近 6 轮 messages）在后台是 agent 自身调用记录而非会话原文，
+    核对必错。仅交互入口走此关卡——审批协议依赖 agent 工具循环 + 在线交互
+    通道 + thread 上下文；dashboard / auto-extract / 日记 / 整理不具备，
+    直调 save_memory。
     """
     from src.tools.exec import _current_agent_context
 
     if _current_agent_context.get({}).get("background"):
         return None
-    # session 短路（对齐 delete）：已授权的 args 直接放行，避免 resume 重复自检。
-    # approval manager 不可用时（container 未初始化，如部分集成测试）跳过短路、走自检。
+    # session 短路：已授权的 args 直接放行，避免 resume 重执重复自检（container 未初始化时跳过短路）
     approved = False
     mode = "model"
     try:
@@ -954,9 +937,9 @@ async def _gate_memory_save(content: str) -> Optional[str]:
 
     source = get_memory_dialog_context()
     if mode == "manual":
-        # 人工批准模式：跳过自检，直接转人工审批
+        # manual：跳过自检，直接转人工审批
         raise MemorySaveNeedsApproval(content, source_context=source, reason="manual approval mode", mode=mode)
-    # model 模式：模型自检把关。reject 直接丢弃（错误信息挡在库外），不弹审批。
+    # model：自检 reject 直接丢弃，不弹审批
     decision, reason = await _validate_memory(content, source)
     if decision == "reject":
         logger.info("memory save rejected by self-check: %.80s", content)
@@ -965,19 +948,13 @@ async def _gate_memory_save(content: str) -> Optional[str]:
 
 
 async def _gate_auto_extract(content: str, source_context: str = "") -> tuple[str, str]:
-    """入口2（auto_extract 正则提取）的保存前置关卡。
+    """auto_extract 的保存前置关卡（与 _gate_memory_save 同一套 model/manual 语义）。
 
-    与入口1（_gate_memory_save）复用同一套 model/manual 审批语义，但不抛异常、
-    不依赖 agent 工具循环——auto_extract 在消息回复后触发，无 ApprovalPending 槽位，
-    由调用方（message.py）用 detached 后台 task 实现程序式审批（不阻塞主回合）。
-
-    返回 (decision, reason)，decision ∈ {"allow", "reject", "manual"}：
-    - allow:  放行，调用方 save_memory
-    - reject: model 自检判臆测/曲解，静默丢弃（错误信息挡在库外）
-    - manual: 需人工审批（model 模式可疑 / manual 模式全部），调用方起 detached 后台 task
+    不抛异常、不依赖 agent 工具循环——manual 由调用方起 detached 后台 task 审批。
+    返回 (decision, reason)，decision ∈ {"allow", "reject", "manual"}。
     fail-open：无主模型/调用失败 → allow（不阻断 auto_extract）。
     """
-    # 会话级授权短路：本会话已批准该内容 → 不再问（对齐 save 关卡，防重复轰炸）
+    # 会话级授权短路：已批准内容不再问
     try:
         from src._container import get_container
         from src.tools.approval import get_approval_manager
@@ -993,10 +970,9 @@ async def _gate_auto_extract(content: str, source_context: str = "") -> tuple[st
         return ("allow", "no container, fail-open")
 
     if mode == "manual":
-        # 人工批准模式：跳过自检，全部转 detached 后台审批
+        # manual：全部转 detached 后台审批
         return ("manual", "manual approval mode")
-    # model 模式：模型自检把关。reject 静默丢弃，allow 放行；可疑（allow 但需复核）不在此层处理。
-    # 注：_validate_memory 只返回 allow/reject 两态；model 模式下"可疑转人工"由 manual 模式承担。
+    # model：自检 reject 静默丢弃，allow 放行（两态，无转人工）
     decision, reason = await _validate_memory(content, source_context)
     if decision == "reject":
         logger.info("auto_extract rejected by self-check: %.80s", content)
@@ -1269,7 +1245,6 @@ async def memory(
         if not previews:
             return json.dumps({"error": "None of the specified keys exist"}, ensure_ascii=False)
 
-        # Check session approval before raising (same pattern as exec_command)
         from src.tools.approval import get_approval_manager
         from src.tools.exec import _current_thread_id
 
@@ -1279,7 +1254,6 @@ async def memory(
         if not _mgr.has_session_approval(_tid, "memory_delete", _args_preview):
             raise MemoryDeleteNeedsApproval(found_keys, previews)
 
-        # Approved via session — execute delete directly
         deleted = []
         for k in found_keys:
             if is_group:

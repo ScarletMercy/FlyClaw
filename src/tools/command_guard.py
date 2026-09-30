@@ -1,34 +1,24 @@
-"""命令静态安全分析 — hardline 底线 + 可配置 denylist。
+"""命令静态安全分析 — hardline 底线 + 可配置 denylist + 审批触发表。
 
-威胁模型——**防模型，不防攻击者**：静态层只拦「字面可见」的危险命令。模型
-误操作写出的命令，危险词总是字面出现的（``$(rm -rf ~)`` 里的 ``rm -rf``
-照样命中 deny/hardline）；需要 base64/编码/两步隐藏的蓄意绕过明确不防——
-那是审批与沙箱的职责。
+只拦「字面可见」的危险命令（防模型误操作，不防蓄意编码/两步绕过——
+那是审批与沙箱的职责）：
 
-分层：
+- hardline（``check_hardline``）：无恢复路径的灾难命令，命令位置锚定防误报，
+  无条件拦截——审批模式与用户配置都不可绕过。
+- denylist（``is_denylisted``）：可配置黑名单（``tools.exec.deny_patterns``
+  覆盖默认表），命中即拒；误报有出口（调配置）。
+- 审批闸（exec.py）：删除类、强杀进程、shell executor 走人工审批。
 
-- **hardline**（``check_hardline``）：无恢复路径的灾难命令（抹盘/关机/fork 炸弹/
-  删系统根），小而稳定，命令位置锚定（``_CMDPOS``）防误报，**无条件拦截**——
-  审批关闭也不放行，想跑请自己开终端。
-- **denylist**（``is_denylisted``）：可配置黑名单（``tools.exec.deny_patterns``
-  覆盖默认表），命中即拒但**误报有出口**——报错信息指向配置项。这里的语义是
-  "该让人类过目的操作"，不追求看穿命令内部。
-- **审批闸**（exec.py）：删除类命令、强杀进程（kill -9/pkill -KILL/Stop-Process
-  -Force）、shell executor（sh -c / cmd /c）走人工审批。
-- 所有匹配前做归一化：NFKC 反混淆 + 剥离行首 sudo/doas 与整段引号包裹
-  （bash 同样会剥掉这两层壳再执行，检测等价于裸命令）。
+不防：已放行命令的后续行为（npm postinstall）、数据外传（curl -d）、
+子进程继承环境里的密钥——同样是审批与沙箱的职责。
 
-**不防什么**：已放行命令的后续行为（npm postinstall）、数据外传（curl -d）、
-子进程继承环境里的密钥、蓄意对抗者的深层绕过（编码/两步攻击——那是审批和
-沙箱的职责，不是字符串匹配的）。
+匹配前统一归一化（NFKC + 剥行首 sudo/doas 与整段引号壳——bash 执行时同样
+剥壳，检测等价于裸命令）。``DEFAULT_DENY_PATTERNS`` 默认表契约由
+test_exec_denylist.py 锁定。
 
 已知限制：非子串级的 glob 模式（schtasks*/create* 等）只覆盖串首（含剥壳后），
 不匹配分号/管道中段——中段覆盖只给了与 rm -rf 同级的删除类；hardline 的重定向
 模式不识别引号，echo "x > /dev/sda" 这类文本会被过拦（方向为过拦不泄漏）。
-
-``DEFAULT_DENY_PATTERNS`` 默认表契约由特征化测试 test_exec_denylist.py 锁定；
-非递归删除审批门控（``DELETE_APPROVAL_PATTERNS`` 子串匹配 +
-``COMMAND_PREFIX_WHITELIST`` 前缀豁免）见 exec.py。
 """
 
 from __future__ import annotations
@@ -37,24 +27,19 @@ import fnmatch
 import re
 import unicodedata
 
-# ---------------------------------------------------------------------------
-# 归一化：反混淆与包装剥离（仅用于检测，不用于执行）。
-# NFKC 折叠全角字符；NUL 剥离；行首 sudo/doas（含 flag）与「整段引号包裹」
-# 逐层剥掉——bash 对这两种包装都会剥离后执行，检测视角等价于裸命令。
-# 这归一化不是解析器：只处理把整条命令包起来的壳，不分析内部结构。
-# ---------------------------------------------------------------------------
-
 _LEADING_LAUNCHER_RE = re.compile(
     r"^(?:sudo|doas)(?:\s+(?:-[ugpCtTrD]\s+\S+|--(?:user|group|prompt|chdir|role|type)\s+\S+|-\S+))*\s+",
     re.IGNORECASE,
 )
 
-# sudo/doas 启动器吞掉的内容：带参数的 flag（-u root）优先于裸 flag（-E），
-# 否则 -u 剥掉后参数词会留在命令位置导致后续全部错位。剥壳 RE 与 _CMDPOS 共用。
+# 带参 flag（-u root）优先于裸 flag（-E），否则参数词残留在命令位置导致后续错位。
+# 剥壳 RE 与 _CMDPOS 共用。
 _SUDO_FLAGS = r"(?:-[ugpCtTrD]\s+\S+|--(?:user|group|prompt|chdir|role|type)\s+\S+|-\S+)"
 
 
 def _normalize_for_detection(command: str) -> str:
+    """仅用于检测，不用于执行。不是解析器——只剥整段包裹的壳
+    （NFKC 反混淆、NUL 剥离、sudo/doas/引号），不分析命令内部结构。"""
     text = unicodedata.normalize("NFKC", command.replace("\x00", ""))
     for _ in range(3):  # 'sudo x'、"'sudo x'"、"sudo 'x'" 等有限嵌套
         if len(text) >= 2 and text[0] in "'\"" and text[-1] == text[0]:
@@ -84,8 +69,7 @@ DEFAULT_DENY_PATTERNS = [
     "shutil.rmtree",
     "del /s",
     "erase /s",
-    # 前导 * 使 fnmatch 也覆盖分号/管道中段（"cd x; Remove-Item -Recurse y"），
-    # 与 rm -rf / del /s 的子串级覆盖对齐
+    # 前导 *：覆盖分号/管道中段，与 rm -rf / del /s 的子串级覆盖对齐
     "*remove-item *-recurse*",
     "*ri *-recurse*",
     # System destruction
@@ -147,7 +131,7 @@ DEFAULT_DENY_PATTERNS = [
     "regsvr32 */i:*",
 ]
 
-# Non-recursive delete — always requires approval (even if approval_mode=off)
+# 非递归删除——一律审批（审批关也不放行）。子串匹配 + 白名单前缀豁免，门控在 exec.py
 DELETE_APPROVAL_PATTERNS = [
     "rm ",
     "del ",
@@ -160,8 +144,8 @@ DELETE_APPROVAL_PATTERNS = [
     "ri ",
 ]
 
-# 强杀进程 —— 一律要求审批（可恢复但影响面大：可能误杀 agent 自身进程、
-# 数据库等有状态服务）。与 DELETE_APPROVAL_PATTERNS 同一语义层级。
+# 强杀进程——一律审批：可能误杀 agent 自身进程或数据库等有状态服务。
+# 门控在 exec.py（同上：白名单前缀豁免）。
 FORCE_KILL_APPROVAL_PATTERNS = [
     "kill -9",
     "kill -kill",
@@ -175,9 +159,8 @@ FORCE_KILL_APPROVAL_PATTERNS = [
     "stop-process -force",
 ]
 
-# Shell executor 触发表：不做安全拦截（denylist 已对全串做过检查），只用于
-# 审批门控——审批模式下要求人工确认，后台模式无法审批故直接禁。
-# 匹配见 ``_SHELL_EXECUTOR_COMPILED``（命令位置锚定）。
+# Shell executor 触发表：不做安全拦截（denylist 已查全串），只用于审批门控
+# ——审批模式要求人工确认，后台模式无法审批故直接禁。
 
 _SHELL_EXECUTOR_PATTERNS = [
     ("sh -c", "sh -c"),
@@ -202,8 +185,7 @@ _SHELL_EXECUTOR_PATTERNS = [
     ("pwsh -command ", "pwsh -command"),
 ]
 
-# Command prefixes whose subcommands should not trigger denylist/delete checks.
-# e.g. "git rm", "docker rm" — these operate on their own scope, not the filesystem.
+# 前缀白名单：git rm / docker rm 等子命令只作用于自身作用域，不落文件系统。
 COMMAND_PREFIX_WHITELIST = frozenset({"git", "docker", "kubectl", "podman", "npm", "yarn", "pnpm"})
 
 
@@ -214,8 +196,7 @@ def is_denylisted(command: str, deny_patterns: list[str]) -> tuple[bool, str]:
         pattern_lower = pattern.lower()
         if fnmatch.fnmatch(cmd_normalized, pattern_lower):
             return True, pattern
-        # fnmatch is full-string — missed if command has a prefix/suffix.
-        # regex substring + word boundary catches those cases.
+        # fnmatch 是全串匹配——命令带前后缀时漏配；regex 子串+词边界兜住这类情况
         start_boundary = r"\b" if pattern_lower[0:1].isalnum() or pattern_lower[0:1] == "_" else ""
         end_boundary = r"\b" if pattern_lower[-1:].isalnum() or pattern_lower[-1:] == "_" else ""
         try:
@@ -228,14 +209,10 @@ def is_denylisted(command: str, deny_patterns: list[str]) -> tuple[bool, str]:
 
 
 def has_shell_executor(command: str) -> tuple[bool, str]:
-    """Detect shell executor patterns (sh -c, cmd /c, powershell -command, etc.).
+    """检测 shell executor（sh -c、cmd /c、powershell -command 等）。
 
-    These are NOT inherently dangerous — the denylist already checks the full
-    command string for dangerous tokens. They only matter for approval gating.
-
-    命令位置锚定（``_CMDPOS`` + find 的 -exec）：只在各命令段首匹配，
-    参数位置的普通词不误伤——``ls /bin/sh``、``echo medieval castle``
-    不命中；``; eval x``、``nohup bash -c``、``find -exec sh -c`` 照常命中。
+    只用于审批门控（denylist 已查全串）。命令位置锚定（``_CMDPOS`` +
+    find -exec）：只在命令段首匹配，``ls /bin/sh`` 这类参数位置不误伤。
     """
     normalized = _normalize_for_detection(command)
     for pattern_re, label in _SHELL_EXECUTOR_COMPILED:
@@ -248,10 +225,8 @@ def has_shell_executor(command: str) -> tuple[bool, str]:
 # hardline 底线：无恢复路径的灾难命令。锚定命令位置防误报；不可审批绕过。
 # ---------------------------------------------------------------------------
 
-# 匹配「shell 开始解析新命令」的位置：串首、分隔符（; & | 换行）或子 shell
-# 开启（$( 、反引号）之后，透明穿透 sudo/doas（含带参 flag）、env VAR=..、
-# exec/nohup/setsid/time/xargs 包装器。参数位置的词（cat shutdown.log、grep
-# 'format C:'）不匹配，因此不误报。
+# 匹配「shell 开始解析新命令」的位置（串首/分隔符/子 shell 开启后，穿透
+# sudo/env/包装器）；参数位置的词（cat shutdown.log）不匹配，因此不误报。
 _CMDPOS = (
     r"(?:^|[;&|\n\r]|\$\(|`)"
     r"\s*"
@@ -261,10 +236,9 @@ _CMDPOS = (
     r"\s*"
 )
 
-# rm 递归删除保护的根：POSIX 系统目录 + macOS + Git Bash 盘符根（/c、/d、/c/*）
-# 及盘符根下的系统目录（/c/Users）。根之后必须紧跟空白/结尾（(?=\s|$)）——
-# "rm -rf /tmp"、"/home/user/build" 这类子路径是普通删除，走 denylist/审批，
-# 不进 hardline。
+# rm 递归删除保护的根：POSIX 系统目录 + macOS + Git Bash 盘符根及其下系统
+# 目录。尾部 (?=\s|$) 锚定——只有根本身（或 /*）命中；子路径（/home/user/build）
+# 是普通删除，走 denylist/审批，不进 hardline。
 _PROTECTED_SYS_DIRS = r"(?:home|root|etc|usr|var|bin|sbin|boot|lib|opt|Users|System|Library|Windows)"
 _RM_PROTECTED_ROOTS = (
     r"(?:"
@@ -299,8 +273,7 @@ _HARDLINE_RAW: list[tuple[str, str]] = [
     (_CMDPOS + r"(?:diskpart|bcdedit|bootsect)\b", "Windows disk/boot tool"),
     (_CMDPOS + r"vssadmin\b[^|;&\n]*\bdelete\b", "delete volume shadow copies"),
     (_CMDPOS + r"cipher\b\s+/w", "cipher drive wipe"),
-    # 根目录权限放开 / 所有权移交（保护根集合与 rm 对齐：/, /*, 系统目录, ~,
-    # Git Bash 盘符根及盘符根下系统目录；子路径归 denylist/审批层）
+    # 根目录权限放开 / 所有权移交（保护根集合与 rm 对齐）
     (_CMDPOS + r"chmod\s+\S*R\S*\s+777\s+" + _RM_PROTECTED_ROOTS, "chmod 777 on root filesystem"),
     (_CMDPOS + r"chown\s+\S*R\S*[^|;&\n]*\s+" + _RM_PROTECTED_ROOTS, "chown root filesystem"),
 ]
@@ -310,9 +283,8 @@ HARDLINE_PATTERNS_COMPILED = [(re.compile(pattern, _RE_FLAGS), description) for 
 
 
 # ---------------------------------------------------------------------------
-# executor 编译表：命令位置锚定（复用 _CMDPOS）。子串匹配会误伤参数位置
-# 的普通词（"medieval" 含 "eval"、"ls /bin/sh" 含 "/bin/sh"），锚定后只剩
-# 真正的执行入口命中。find 的 -exec(dir) 是独立的执行入口，单独锚定。
+# executor 编译表：命令位置锚定（复用 _CMDPOS），避免误伤参数位置普通词
+# （"medieval" 含 "eval"）；find 的 -exec(dir) 是独立执行入口，单独锚定。
 # ---------------------------------------------------------------------------
 
 
@@ -332,12 +304,7 @@ _SHELL_EXECUTOR_COMPILED = [(_compile_executor_pattern(trigger), label) for trig
 
 
 def check_hardline(command: str) -> str | None:
-    """命中 hardline 底线则返回描述，否则 None。
-
-    无条件拦截层：审批模式、用户配置都不可绕过。只收无恢复路径的灾难
-    操作；可恢复的高危操作（kill -9、schtasks、certutil 等）属
-    denylist/审批层。
-    """
+    """命中 hardline 底线则返回描述，否则 None。审批模式与用户配置不可绕过。"""
     if not command or not command.strip():
         return None
     normalized = _normalize_for_detection(command)

@@ -147,8 +147,8 @@ class AgentLoop:
         self._guardrails_map: dict[str, ToolLoopGuardrails] = {}
 
         self._auto_deny_approval: bool = False
-        # 后台 loop 声明：无交互通道（无人可审批）。经 _execute_tool 注入
-        # _current_agent_context 供工具层读取（如 memory(save) 审批门）。
+        # 后台 loop：无交互通道（无人可审批）。由 _execute_tool 写入
+        # _current_agent_context，供工具层审批门读取。
         self._background = background
 
     def swap_client(self, new_client):
@@ -580,10 +580,7 @@ class AgentLoop:
                                 result = await self._execute_tool(tc, state, thread_id)
                             except ApprovalPending as ap:
                                 state.pending_approval = ap.to_pending_data()
-                                # Remaining tools without results will be
-                                # re-executed in the next resume cycle —
-                                # do NOT add fake results here, or
-                                # _resume_inner will skip them forever.
+                                # 剩余工具下轮 resume 重执——不能补假结果，否则会被 _resume_inner 永久跳过
                                 await self._store.save(thread_id, state)
                                 raise
                             if not result:
@@ -630,8 +627,8 @@ class AgentLoop:
                             tc_action = json.loads(tc_func.get("arguments", "") or "{}").get("action", "")
                         except (json.JSONDecodeError, TypeError):
                             tc_action = ""
-                        # memory 逐条审批：deny 一条 memory(save/delete) 时，仅兄弟 delete 走 associated skip；
-                        # save/get/list 独立重执——get/list 是纯读必须返回结果，save 走各自自检/审批。
+                        # deny 一条 memory 时仅兄弟 delete 走 associated skip；
+                        # get/list 纯读必须返回结果，save 走各自关卡
                         if (
                             tc_name == "memory"
                             and pending_tool in ("memory_save", "memory_delete")
@@ -1104,10 +1101,8 @@ class AgentLoop:
                 "background": self._background,
             }
         )
-        # Also publish thread_id via _current_thread_id so tools that resolve
-        # session-approval by thread (exec_command AND memory_delete) see the
-        # same value on every path — including gateway/OpenAI-API, where no
-        # inbound handler sets it. Without this the two tools disagreed.
+        # 同步注入 _current_thread_id：gateway/OpenAI-API 路径无人设置，
+        # 工具按 thread 查会话授权会拿到不一致的值。
         _tid_token = _current_thread_id.set(thread_id)
         # 注入最近对话原文，供 memory(save) 自检对照来源
         _dialog_token = _current_dialog_context.set(build_dialog_context(state.messages))
@@ -1144,10 +1139,9 @@ class AgentLoop:
             if isinstance(e, (ApprovalNeededError, MemoryDeleteNeedsApproval, MemorySaveNeedsApproval)):
                 # ── 记忆删除/保存：不可绕过审批（delete 不可逆；save 需内容把关）──
                 if not isinstance(e, (MemoryDeleteNeedsApproval, MemorySaveNeedsApproval)):
-                    # ── 审批绕过检查：owner 等高权限用户可跳过审批（仅 exec_command 等命令执行类） ──
-                    # try/except 仅包裹绕过资格判定（resolve_user / RBAC /
-                    # approve_session），工具实际执行放在 try/except 之外，
-                    # 避免执行阶段的异常被静默吞掉而落入正常审批流程。
+                    # ── 审批绕过：owner 等高权限用户可跳过审批（仅命令执行类）──
+                    # try/except 只包资格判定（resolve_user / RBAC / approve_session）——
+                    # 执行阶段异常必须传播，不能被吞进正常审批流程。
                     _bypass_ctx = None
                     try:
                         bypass_user = await self._resolve_user(state.sender_id)
@@ -1168,11 +1162,8 @@ class AgentLoop:
 
                     if _bypass_ctx is not None:
                         bypass_user, cmd = _bypass_ctx
-                        # 直接重新执行工具（session 已批准，不会再抛
-                        # ApprovalNeededError），然后走完整审计链。
-                        # 注意：不能用递归 self._execute_tool()，
-                        # 否则 tool.exec_started 会双重发射。
-                        # 执行/审计异常自然传播到外层 except 处理。
+                        # 重执行工具（session 已批准，不会再抛审批异常）走完整审计链。
+                        # 不能递归 _execute_tool——tool.exec_started 会双重发射。
                         result = await tool_def.execute(args)
                         duration_ms = (_time.monotonic() - start) * 1000
 

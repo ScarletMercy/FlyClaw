@@ -143,8 +143,8 @@ def is_delete_command(command: str) -> bool:
 # ---------------------------------------------------------------------------
 # workdir / 沙箱目录
 #
-# workdir 不做字符校验：它只作为 Popen(cwd=...) 的 OS 级参数使用，从不进入
-# shell 解析——坏路径只会得到干净的「目录不存在」错误。
+# workdir 不做字符校验：只作为子进程 cwd= 的 OS 级参数（Popen / registry.spawn），
+# 从不进入 shell 解析——坏路径只会得到干净的「目录不存在」错误。
 # ---------------------------------------------------------------------------
 
 
@@ -263,9 +263,8 @@ def _assemble_output(
 
 
 # 常见命令的非错误退出码（管道/链取最后一段判定），标注在输出里，避免模型
-# 把正常非零码当失败排查。覆盖 bash / cmd / powershell 三方言常见命令。
-# type 不入表：bash 内建是命令名查找（rc=1=命令未找到）、cmd/PS 是文件
-# 读取，方言语义冲突且 stderr 已写明原因。
+# 把正常非零码当失败排查。type 不入表：bash 内建是命令名查找（rc=1），
+# cmd/PS 是读文件——语义冲突，stderr 已写明原因。
 _EXIT_SEMANTICS: list[tuple[set[str], dict[int, str]]] = [
     ({"grep", "egrep", "fgrep", "rg", "ag", "ack", "findstr", "select-string"}, {1: "No matches found"}),
     ({"diff", "colordiff", "compare-object", "fc"}, {1: "Files differ"}),
@@ -352,10 +351,9 @@ def _finalize_cwd(provider: ShellProvider, cwd_file: str, cfg, thread_id: str) -
             return
         new_cwd = msys_to_windows(raw) if (os.name == "nt" and raw.startswith("/")) else raw
         if os.name == "nt" and not re.match(r"[A-Za-z]:[\\/]", new_cwd) and not new_cwd.startswith("\\\\"):
-            # MSYS 挂载点（/tmp、/usr）经 pwd -P 原样输出且无盘符——msys_to_windows
-            # 不认识它们，而原生 Windows 会把 "/tmp" 解析成「当前盘根」下的另一个
-            # 目录（D:\tmp ≠ 挂载源 D:/Temp），跟踪必错。不变量：Windows 上 tracked
-            # cwd 必须是盘符/UNC 绝对路径，否则放弃跟踪保持原值。
+            # MSYS 挂载点（/tmp 等）无盘符，原生 Windows 会解析成「当前盘根」
+            # 下的另一目录（D:\tmp ≠ 挂载源）。不变量：Windows 上 tracked cwd
+            # 必须是盘符/UNC 绝对路径，否则放弃跟踪保持原值。
             return
         if new_cwd and os.path.isdir(new_cwd) and _sandbox_path_allowed(new_cwd, cfg):
             _shell_cwd.set(thread_id, new_cwd)
@@ -649,8 +647,7 @@ async def exec_command(
     if background:
         from src.tools.process import get_process_registry
 
-        # Shell executor patterns — blocked in background mode.
-        # Approval gating is not feasible for async processes; block outright.
+        # 后台无法走人工审批——executor/删除/强杀三类一律阻断
         executor_bg, executor_bg_detail = has_shell_executor(command)
         if executor_bg:
             logger.warning(
@@ -662,7 +659,6 @@ async def exec_command(
                 f"Command uses shell executor ('{executor_bg_detail}') and cannot be run in background mode"
             )
 
-        # Non-recursive delete — blocked in background mode (approval not feasible).
         if _get_first_token(command) not in COMMAND_PREFIX_WHITELIST:
             delete_bg, delete_bg_pattern = is_denylisted(command, DELETE_APPROVAL_PATTERNS)
             if delete_bg:
@@ -673,7 +669,6 @@ async def exec_command(
                 )
                 raise ToolExecutionError(f"Delete operation ('{delete_bg_pattern}') cannot be run in background mode")
 
-        # Force-kill — blocked in background mode (approval not feasible).
         if _get_first_token(command) not in COMMAND_PREFIX_WHITELIST:
             kill_bg, kill_bg_pattern = is_denylisted(command, FORCE_KILL_APPROVAL_PATTERNS)
             if kill_bg:
@@ -706,9 +701,7 @@ async def exec_command(
 
     # ── 审批闸门（顺序：删除审批 → executor → 强杀 → 常规审批）──
 
-    # Non-recursive delete — always requires approval (30s timeout, auto-deny)
-    # Whitelisted prefixes (git, docker, etc.) skip delete approval — their "rm"
-    # subcommands operate within their own scope, not the filesystem directly.
+    # 非递归删除——一律审批（30s 超时自动拒）；git/docker 等前缀白名单豁免
     if _get_first_token(command) not in COMMAND_PREFIX_WHITELIST:
         delete_match, delete_pattern = is_denylisted(command, DELETE_APPROVAL_PATTERNS)
         if delete_match:
@@ -725,9 +718,7 @@ async def exec_command(
                     approval_key=delete_pattern,
                 )
 
-    # Shell executor patterns (sh -c, cmd /c, powershell -command, etc.).
-    # These are safe to pass through — the denylist already checked the full command
-    # for dangerous tokens. Only apply approval gating if configured.
+    # shell executor——denylist 已查过全串，此处仅做审批门控
     executor, executor_detail = has_shell_executor(command)
     if executor and approval_mode not in ("off", ""):
         from src.tools.approval import get_approval_manager
@@ -741,10 +732,7 @@ async def exec_command(
             )
             raise ApprovalNeededError(command, False)
 
-    # Force-kill (kill -9 / pkill -KILL / Stop-Process -Force) — always requires
-    # approval: recoverable, but can kill the agent's own process tree or stateful
-    # services (databases). Whitelisted prefixes (docker kill etc.) skip — their
-    # kill operates within their own scope.
+    # 强杀进程——一律审批（可误杀 agent 自身或有状态服务）；白名单前缀豁免
     if _get_first_token(command) not in COMMAND_PREFIX_WHITELIST:
         kill_match, kill_pattern = is_denylisted(command, FORCE_KILL_APPROVAL_PATTERNS)
         if kill_match:
@@ -921,10 +909,7 @@ def get_tools() -> list:
     if _EXEC_COMMAND_ORIGINAL_DOC is None:
         _EXEC_COMMAND_ORIGINAL_DOC = exec_command.__doc__ or ""
 
-    # Patch the workdir description with the resolved default path so the LLM
-    # sees the actual value instead of a cryptic config variable name, and
-    # append shell-dialect guidance. Always patch from the original docstring
-    # so this is idempotent across hot-reloads.
+    # 从原始 docstring 打补丁（幂等，兼容热重载）：workdir 实际默认值 + shell 方言指引
     _resolved = _resolve_default_workdir()
     _cfg = _get_config()
     _provider = resolve_shell_provider(_cfg.tools.exec.shell if _cfg else "auto")

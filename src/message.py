@@ -818,9 +818,9 @@ class MessageHandler:
                                 self._container.agent_loop.invalidate_memory_cache()
                             await reply_fn(f"\U0001f4be update memory: {content[:50]}")
                         elif decision == "reject":
-                            # model 自检判臆测/曲解：静默丢弃（错误信息挡在库外，不通知用户）
+                            # 自检 reject：静默丢弃——错误信息挡在库外即可，不通知用户
                             logger.info("auto_extract rejected by self-check: %.80s", content)
-                        else:  # "manual"：model 可疑 / manual 全部 → detached 后台 task 审批（不阻塞主回合）
+                        else:  # manual：转 detached 后台 task 审批（不阻塞主回合）
                             asyncio.create_task(
                                 self._auto_extract_approval_task(
                                     content=content,
@@ -968,9 +968,8 @@ class MessageHandler:
                 auto_deny = getattr(current_exc, "auto_deny", False)
                 tool_name = getattr(current_exc, "tool_name", "exec_command")
 
-                # 删除类操作在"需要审批"后追加操作类型后缀,避免和普通命令审批混淆。
-                # memory 走 tool_name;exec 删除靠扫 command_preview(is_delete_command)——
-                # ApprovalPending 异常不携带 approval_key,只能从命令文本判断。
+                # 操作类型后缀（与普通命令审批区分）：memory 走 tool_name；exec 删除
+                # 靠扫 command_preview（ApprovalPending 不携带 approval_key）
                 if tool_name in ("memory_delete", "memory"):
                     _action_tag = "（删除记忆）" if zh else " (Delete Memory)"
                 elif tool_name == "memory_save":
@@ -1091,9 +1090,7 @@ class MessageHandler:
             except Exception:
                 pass
         finally:
-            # Guarantee session approval cache is cleared on any exit path
-            # (normal return already cleared by loop.py:375; this catches
-            # timeout / consecutive-deny / exception exits that skip it).
+            # 兜底：任何退出路径都清会话授权缓存（正常返回已由 loop.py 清）
             try:
                 get_approval_manager().clear_session(thread_id)
             except Exception:
@@ -1126,20 +1123,13 @@ class MessageHandler:
         chat_id: str,
         reply_fn,
     ):
-        """auto_extract 的异步审批 task：发审批 → 等 /y 或超时 → allow 才存。
+        """auto_extract 的 detached 审批 task：发审批 → 等 /y 或超时 → allow 才存。
 
-        detached 后台 task：调用方 create_task 后立即返回，不 await、不持有引用、
-        不阻塞主回合。task 仍通过 reply_fn 向同一对话发消息（审批提示/确认），并注册
-        全局 pending 请求与 /y 路由耦合——故"detached"指主回合不阻塞，非完全无副作用。
-        复用 ApprovalManager 底层（request_approval/await_approval/resolve），
-        不碰 agent_loop 的 ApprovalPending 机制——auto_extract 不写 state.pending_approval，
-        故 /y 路由触发的 _resume_and_reply 会因 pending_approval 为空而 no-op（安全）。
-
-        - allow_once：approve_session（本会话同内容不再问）+ save_memory + 二次确认
-        - deny：取消提示，不落库
-        - timeout：超时提示，不落库
-        整体 try/except：detached task 的异常不会被调用方捕获，
-        需自行兜底，避免 "Task exception was never retrieved" 静默告警 + 孤儿 pending 请求。
+        主回合 create_task 后不等待。复用 ApprovalManager（request/await/resolve），
+        不碰 ApprovalPending/state.pending_approval（/y 路由 resume 为 no-op，安全）。
+        allow_once：approve_session（同内容不再问）+ save + 确认；deny/timeout：不落库。
+        整体 try/except 自行兜底：detached task 的异常无人捕获，需避免
+        "Task exception was never retrieved" 告警与孤儿 pending 请求。
         """
         from src.tools.approval import get_approval_manager
 
@@ -1151,7 +1141,7 @@ class MessageHandler:
             mgr = get_approval_manager()
             timeout = _AUTO_EXTRACT_TIMEOUT
 
-            # 读取审批模式，决定文案措辞（manual=无模型判断，model=疑似臆测）
+            # 文案措辞按审批模式区分
             mode = getattr(self._container.config.memory_store, "save_approval_mode", "model")
             model_mode = mode != "manual"
 
@@ -1163,8 +1153,7 @@ class MessageHandler:
                 timeout_seconds=timeout,
                 approval_key="auto_extract",
             )
-            # 发审批消息：优先交互按钮键盘（QQ C2C/group），不支持则回退纯文本。
-            # 对齐现有 memory_save/delete 审批的发送路径（message.py 的 _handle_approval_pending）。
+            # 优先交互按钮键盘，不支持则回退纯文本（对齐 _handle_approval_pending 的发送路径）
             msg_text = _memory_save_approval_text(content, source, timeout, zh, model_mode=model_mode)
             action_note = "（保存记忆）" if zh else " (Save Memory)"
             sent_keyboard = False
@@ -1188,10 +1177,8 @@ class MessageHandler:
 
             decision, _ = await mgr.await_approval(req.id, timeout=timeout)
             if decision == "allow_once":
-                # 会话级授权：本会话内同内容不再弹审批（防重复轰炸）。
-                # 注：用户点 keyboard 的"⭐ 始终允许"按钮时，_handle_interaction 已按 pattern
-                # 授权（approval_key == tool_name == "auto_extract"），gate 的 has_session_approval
-                # 走 pattern 分支命中；这里再 approve_session 精确授权是幂等的（allow_once 也会走到）。
+                # 会话级授权：同内容不再弹。键盘「始终允许」走 pattern 授权，
+                # 此处精确授权幂等。
                 mgr.approve_session(thread_id, "auto_extract", content[:200])
                 await save_memory(content, category=category)
                 if self._container.agent_loop:
