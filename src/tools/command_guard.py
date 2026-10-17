@@ -6,15 +6,15 @@
 - hardline（``check_hardline``）：无恢复路径的灾难命令，命令位置锚定防误报，
   无条件拦截——审批模式与用户配置都不可绕过。
 - denylist（``is_denylisted``）：可配置黑名单（``tools.exec.deny_patterns``
-  覆盖默认表），命中即拒；误报有出口（调配置）。
+  覆盖默认表），命中即拒；误报有出口（调配置）。默认表契约由
+  test_exec_denylist.py 锁定。
 - 审批闸（exec.py）：删除类、强杀进程、shell executor 走人工审批。
 
 不防：已放行命令的后续行为（npm postinstall）、数据外传（curl -d）、
 子进程继承环境里的密钥——同样是审批与沙箱的职责。
 
 匹配前统一归一化（NFKC + 剥行首 sudo/doas 与整段引号壳——bash 执行时同样
-剥壳，检测等价于裸命令）。``DEFAULT_DENY_PATTERNS`` 默认表契约由
-test_exec_denylist.py 锁定。
+剥壳，检测等价于裸命令）。
 
 已知限制：非子串级的 glob 模式（schtasks*/create* 等）只覆盖串首（含剥壳后），
 不匹配分号/管道中段——中段覆盖只给了与 rm -rf 同级的删除类；hardline 的重定向

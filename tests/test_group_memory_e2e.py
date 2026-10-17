@@ -4,7 +4,7 @@
 与 test_group_memory_integration.py 互补: 那个用假 LLM 测接线,
 这个用真 LongCat 测"群 scope 下记忆摘要注入 + 召回"是否真的工作。
 
-Run: pytest tests/test_group_memory_e2e.py -v -s --timeout=200
+Run: pytest -m e2e tests/test_group_memory_e2e.py -v -s --timeout=200
 """
 
 from __future__ import annotations
@@ -27,6 +27,8 @@ from src.agent.loop import AgentLoop
 from src.agent.state import AgentState, MemoryStateStore
 from src.config import load_config
 from src.tools.memory_tools import GroupMemoryStore, get_tools, set_memory_session
+
+pytestmark = pytest.mark.e2e
 
 # ─── Load model config ───────────────────────────────────────────────────────
 

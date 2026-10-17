@@ -60,7 +60,6 @@ class ApprovalPending(Exception):
         keys: list[str] | None = None,
         partial_results: list[tuple[str, str]] | None = None,
         source_context: str = "",
-        memory_save_mode: str = "",
     ):
         self.thread_id = thread_id
         self.request_id = request_id
@@ -72,7 +71,6 @@ class ApprovalPending(Exception):
         self.auto_deny = auto_deny
         self.keys = keys or []
         self.source_context = source_context
-        self.memory_save_mode = memory_save_mode
         self.partial_results: list[tuple[str, str]] = list(partial_results) if partial_results else []
         super().__init__(f"需要审批: {tool_name} — {command_preview[:80]}")
 
@@ -127,8 +125,8 @@ class AgentLoop:
 
         self._cache_prompt_sections(skills_prompt)
 
-        # Frozen system prompt per session — built once, reused across rounds.
-        # Keyed by thread_id so each session gets its own frozen prompt.
+        # 每会话冻结的系统提示词——构建一次，跨回合复用；按 thread_id 键控，
+        # 各会话各持一份。
         self._system_prompt_cache: dict[str, str] = {}
 
         self._memory_summary_cache: dict[str, str] = {}
@@ -993,7 +991,7 @@ class AgentLoop:
         if platform:
             parts.append(platform)
 
-        # Sandbox hints — dynamically read current state (not cached, since /sandbox toggles at runtime)
+        # 沙箱提示——动态读当前状态（不缓存：/sandbox 运行时可切换）
         from pathlib import Path as _Path
 
         workspace_dir = "."
@@ -1318,11 +1316,10 @@ class AgentLoop:
                 mgr = get_approval_manager()
                 for j in range(i + 1, len(results)):
                     if results[j] is NotImplemented:
-                        # Not started — will be re-executed on resume
+                        # 未启动——resume 时重执
                         pass
                     elif isinstance(results[j], ApprovalPending):
-                        # Also needs approval — cancel request; will
-                        # re-request when _resume_inner re-executes it
+                        # 同样待审批——先撤销请求，_resume_inner 重执时会重新发起
                         mgr.cancel_pending(results[j].request_id)
                     elif not isinstance(results[j], BaseException):
                         final.append(results[j])
@@ -1385,6 +1382,5 @@ class AgentLoop:
             auto_deny=getattr(error, "auto_deny", False),
             keys=getattr(error, "keys", None),
             source_context=getattr(error, "source_context", ""),
-            memory_save_mode=getattr(error, "mode", ""),
             tc_id=tc_id,
         )

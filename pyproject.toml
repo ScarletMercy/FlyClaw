@@ -49,6 +49,10 @@ select = ["E9", "F63", "F7", "F82", "F401"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+addopts = '-m "not e2e"'
+markers = [
+    "e2e: 真实 LLM 端到端测试（需 config.yaml 有效 API 凭据）。默认排除，pytest -m e2e 单独跑",
+]
 
 [build-system]
 requires = ["setuptools>=68.0"]

@@ -269,9 +269,8 @@ async def test_manual_mode_save_skips_validation_and_requests_approval(monkeypat
 
     _patch_container_with_client(monkeypatch, Client(), save_approval_mode="manual")
 
-    with pytest.raises(MemorySaveNeedsApproval) as ei:
+    with pytest.raises(MemorySaveNeedsApproval):
         await memory(action="save", content="任何内容")
-    assert ei.value.mode == "manual"
     assert Client.called is False  # manual 不自检
     assert saved == {}  # 没存
 
@@ -359,23 +358,15 @@ def test_memory_save_approval_text_omits_source_line_when_empty():
     assert "来源原文" not in text  # 无来源时不显示来源行（降级）
 
 
-def test_memory_save_approval_text_manual_mode_no_speculation():
-    """manual 模式文案不说'臆测'（无模型判断），用'确认保存'。"""
+def test_memory_save_approval_text_no_speculation():
+    """审批文案用中性措辞，不说'臆测'。"""
     from src.tools.memory_tools import _memory_save_approval_text
 
-    text = _memory_save_approval_text("某内容", "来源", timeout=120, zh=True, model_mode=False)
+    text = _memory_save_approval_text("某内容", "来源", timeout=120, zh=True)
     assert "某内容" in text
     assert "来源" in text
     assert "臆测" not in text
     assert "确认" in text or "/y" in text
-
-
-def test_memory_save_approval_text_model_mode_mentions_speculation():
-    """model 模式文案提示'疑似臆测'（有模型判断）。"""
-    from src.tools.memory_tools import _memory_save_approval_text
-
-    text = _memory_save_approval_text("某内容", "来源", timeout=120, zh=True, model_mode=True)
-    assert "臆测" in text
 
 
 # ── consecutive_denies：memory_save 逐条 deny 不计入终止 ──────

@@ -8,7 +8,7 @@ user facts from conversation history. Each test follows a two-phase pattern:
     it can answer correctly — same model, different angle.
 
 Requires valid API credentials in config.yaml (model section).
-Run: pytest tests/test_daily_consolidation_e2e.py -v -s
+Run: pytest -m e2e tests/test_daily_consolidation_e2e.py -v -s
 Skip: auto-skipped if no API key in config.
 """
 
@@ -33,6 +33,8 @@ from src.agent.state import AgentState, MemoryStateStore
 from src.config import load_config
 from src.skills.review import spawn_background_review
 from src.tools.memory_tools import MemoryStore
+
+pytestmark = pytest.mark.e2e
 
 # ─── Load model config ───────────────────────────────────────────────────────
 

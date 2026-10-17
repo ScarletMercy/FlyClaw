@@ -155,11 +155,9 @@ class MessageHandler:
         self._pending_queue: dict[str, list[str]] = {}
         self._interrupted_threads: dict[str, str] = {}
         self._approval_saved_ctx: dict[str, tuple] = {}
-        # Threads that passed the busy check and are about to enter
-        # _run_agent_turn.  Prevents TOCTOU: between the locked() check and
-        # the actual lock.acquire() inside agent_loop.run() there is an await
-        # (load) — without this marker a second coroutine could also pass the
-        # check and race for the lock.
+        # 已过 busy check、即将进入 _run_agent_turn 的线程。防 TOCTOU：locked()
+        # 检查与 agent_loop.run() 内真正的 lock.acquire() 之间隔着 await(load)——
+        # 没有这个标记，第二个协程也能同时通过检查并竞争锁。
         self._claiming_threads: set[str] = set()
 
     def _get_channel(self, channel_prefix: str):
@@ -354,10 +352,9 @@ class MessageHandler:
                 channel=channel_prefix,
             )
 
-            # -- Busy check BEFORE await load() to avoid TOCTOU race ----------
-            # acquire_thread() is async (creates Lock if needed), but once it
-            # returns we can check locked() synchronously — no yield between
-            # the check and the load below, so no other coroutine can slip in.
+            # -- busy check 在 await load() 之前做，防 TOCTOU 竞态 -----------
+            # acquire_thread() 是异步的（按需建 Lock），但返回后 locked() 是
+            # 同步检查——检查与下面的 load 之间无 yield，其它协程插不进来。
             thread_lock = await self._container.state_store.acquire_thread(thread_id)
 
             if (
@@ -417,14 +414,12 @@ class MessageHandler:
                     message_id=message_id,
                 )
             finally:
-                # Layer-2 invariant: the agent turn awaited above must not be
-                # hard-cancelled except on shutdown. _interrupted_threads[T] /
-                # _pending_queue[T] are drained only by _drain_pending at the
-                # end of a *completed* turn; a mid-flight CancelledError skips
-                # that, leaving the thread permanently busy-blocked. Guaranteed
-                # today by qq.py _cleanup(cancel_inflight=False) — any NEW
-                # task.cancel() on a running turn reopens it; pair with a
-                # self-healing guard in the busy-check (T resident but lock free).
+                # 二层不变量：上面 await 的 agent 回合除关停外不得被硬取消。
+                # _interrupted_threads[T] / _pending_queue[T] 只在完整回合结束时
+                # 由 _drain_pending 清空；回合中途的 CancelledError 会跳过清理，
+                # 线程从此 busy 阻塞。目前由 qq.py _cleanup(cancel_inflight=False)
+                # 保证——任何新增的对运行中回合的 task.cancel() 都会重新打开此洞，
+                # 需在 busy-check 配自愈守卫（T 在表但锁空闲）。
                 self._claiming_threads.discard(thread_id)
 
         return on_message
@@ -999,7 +994,6 @@ class MessageHandler:
                         getattr(current_exc, "source_context", ""),
                         approval_timeout,
                         zh,
-                        model_mode=getattr(current_exc, "memory_save_mode", "") != "manual",
                     )
                 else:
                     if zh:
@@ -1141,10 +1135,6 @@ class MessageHandler:
             mgr = get_approval_manager()
             timeout = _AUTO_EXTRACT_TIMEOUT
 
-            # 文案措辞按审批模式区分
-            mode = getattr(self._container.config.memory_store, "save_approval_mode", "model")
-            model_mode = mode != "manual"
-
             req = mgr.request_approval(
                 tool_name="auto_extract",
                 args=content[:300],
@@ -1154,7 +1144,7 @@ class MessageHandler:
                 approval_key="auto_extract",
             )
             # 优先交互按钮键盘，不支持则回退纯文本（对齐 _handle_approval_pending 的发送路径）
-            msg_text = _memory_save_approval_text(content, source, timeout, zh, model_mode=model_mode)
+            msg_text = _memory_save_approval_text(content, source, timeout, zh)
             action_note = "（保存记忆）" if zh else " (Save Memory)"
             sent_keyboard = False
             ch = self._get_channel_for_chat_id(chat_id)

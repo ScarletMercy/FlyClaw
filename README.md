@@ -322,7 +322,8 @@ Gateway 提供 OpenAI 兼容接口，任何支持 OpenAI API 的客户端均可�
 ```bash
 uv run ruff check      # 检查
 uv run ruff format     # 格式化
-uv run pytest          # 测试
+uv run pytest          # 测试（默认排除 e2e）
+uv run pytest -m e2e   # 仅 e2e：真实 LLM 端到端，需 API 凭据
 ```
 
 ## 致谢

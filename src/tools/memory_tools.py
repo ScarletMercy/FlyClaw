@@ -38,11 +38,10 @@ class MemoryDeleteNeedsApproval(Exception):
 class MemorySaveNeedsApproval(Exception):
     """memory(save) 转人工审批（manual 模式全部；model 模式自检 reject 直接丢弃，不走此异常）。"""
 
-    def __init__(self, content: str, source_context: str = "", reason: str = "", mode: str = "model"):
+    def __init__(self, content: str, source_context: str = "", reason: str = ""):
         self.content = content
         self.source_context = source_context
         self.reason = reason
-        self.mode = mode
         self.command_preview = content[:500]
         self.tool_name = "memory_save"
         self.timeout = 120
@@ -52,7 +51,7 @@ class MemorySaveNeedsApproval(Exception):
         self.approval_key = "memory_save"
         self.thread_id = ""
         self.keys: list[str] = []
-        super().__init__(f"记忆保存需审批(疑似臆测): {content[:60]}")
+        super().__init__(f"记忆保存需审批: {content[:60]}")
 
 
 _MEMORY_PATTERNS: list[tuple[str, re.Pattern]] = [
@@ -797,21 +796,18 @@ def build_dialog_context(messages: list[dict], max_turns: int = 6, max_chars: in
     return "\n".join(lines)[:max_chars]
 
 
-def _memory_save_approval_text(
-    content: str, source_context: str, timeout: int, zh: bool, model_mode: bool = True
-) -> str:
-    """构造 memory_save 审批文案：候选记忆 + 来源原文，供用户核对。model_mode
-    切换标题措辞；无来源时省略来源行。"""
+def _memory_save_approval_text(content: str, source_context: str, timeout: int, zh: bool) -> str:
+    """构造 memory_save 审批文案：候选记忆 + 来源原文，供用户核对。无来源时省略来源行。"""
     src = (source_context or "").strip()
     if src:
         src_line = f"来源原文：\n{src[:300]}\n\n" if zh else f"Source:\n{src[:300]}\n\n"
     else:
         src_line = ""
     if zh:
-        header = "📝 这条记忆疑似臆测，确认是否保存：" if model_mode else "📝 确认是否保存这条记忆："
-        return f"{header}\n\n{content}\n\n{src_line}发送 /y 确认保存，其它消息自动取消（{timeout}秒超时）"
-    header = "📝 This memory looks speculative. Confirm saving:" if model_mode else "📝 Confirm saving this memory:"
-    return f"{header}\n\n{content}\n\n{src_line}Send /y to save, any other message cancels ({timeout}s timeout)"
+        return (
+            f"📝 确认是否保存这条记忆：\n\n{content}\n\n{src_line}发送 /y 确认保存，其它消息自动取消（{timeout}秒超时）"
+        )
+    return f"📝 Confirm saving this memory:\n\n{content}\n\n{src_line}Send /y to save, any other message cancels ({timeout}s timeout)"
 
 
 def _deny_counts_toward_abort(tool_name: str) -> bool:
@@ -938,7 +934,7 @@ async def _gate_memory_save(content: str) -> Optional[str]:
     source = get_memory_dialog_context()
     if mode == "manual":
         # manual：跳过自检，直接转人工审批
-        raise MemorySaveNeedsApproval(content, source_context=source, reason="manual approval mode", mode=mode)
+        raise MemorySaveNeedsApproval(content, source_context=source, reason="manual approval mode")
     # model：自检 reject 直接丢弃，不弹审批
     decision, reason = await _validate_memory(content, source)
     if decision == "reject":

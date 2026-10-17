@@ -3,7 +3,7 @@
 Requires valid API credentials in config.yaml (model section).
 Uses config.model.base_url, config.model.api_key, config.model.name.
 
-Run: pytest tests/test_memory_system_e2e.py -v -s
+Run: pytest -m e2e tests/test_memory_system_e2e.py -v -s
 Skip: auto-skipped if no API key in config.
 """
 
@@ -22,6 +22,8 @@ from src.agent.tooldef import ToolDef
 from src.agent.state import AgentState, MemoryStateStore
 from src.config import load_config
 from src.tools.memory_tools import MemoryStore
+
+pytestmark = pytest.mark.e2e
 
 # ─── Load model config ───────────────────────────────────────────────────────
 

@@ -1540,7 +1540,7 @@ class TestUsageAccumulation:
 
 
 class TestMemorySaveApprovalRouting:
-    """memory(save) 自检 reject → MemorySaveNeedsApproval 路由到审批，且 owner 不可绕过。"""
+    """memory(save) 审批异常路由到 _handle_approval，且 owner 不可绕过。"""
 
     @pytest.mark.asyncio
     async def test_routes_to_handle_approval(self, store, config):
@@ -1605,15 +1605,6 @@ class TestMemorySaveApprovalRouting:
     def test_approval_pending_source_context_defaults_empty(self):
         exc = ApprovalPending("t1", "r1", "exec", "cmd", tc_id="")
         assert exc.source_context == ""
-
-    def test_approval_pending_carries_memory_save_mode(self):
-        """ApprovalPending 携带 memory_save_mode，供 message 文案区分 model/manual。"""
-        exc = ApprovalPending("t1", "r1", "memory_save", "c", tc_id="", memory_save_mode="manual")
-        assert exc.memory_save_mode == "manual"
-
-    def test_approval_pending_memory_save_mode_defaults_empty(self):
-        exc = ApprovalPending("t1", "r1", "exec", "cmd", tc_id="")
-        assert exc.memory_save_mode == ""
 
     @pytest.mark.asyncio
     async def test_resume_deny_save_reexecutes_other_saves(self, store, config):
@@ -2016,8 +2007,8 @@ class TestMemorySaveApprovalRouting:
         assert "Python 3.13" in captured.get("ctx", "")
 
     @pytest.mark.asyncio
-    async def test_handle_approval_propagates_source_and_mode(self, store, config, monkeypatch):
-        """_handle_approval 把 error 的 source_context/mode 传给 ApprovalPending。
+    async def test_handle_approval_propagates_source_context(self, store, config, monkeypatch):
+        """_handle_approval 把 error 的 source_context 传给 ApprovalPending。
 
         接线守门：若漏传，ApprovalPending 字段为空。
         """
@@ -2031,7 +2022,7 @@ class TestMemorySaveApprovalRouting:
         fake_mgr.request_approval.return_value = fake_req
         monkeypatch.setattr("src.tools.approval.get_approval_manager", lambda: fake_mgr)
 
-        error = MemorySaveNeedsApproval(content="内容", source_context="来源原文", mode="manual")
+        error = MemorySaveNeedsApproval(content="内容", source_context="来源原文")
         tc = _make_tc("memory", {"action": "save", "content": "内容"})
         state = AgentState(messages=[{"role": "user", "content": "x"}])
 
@@ -2039,4 +2030,3 @@ class TestMemorySaveApprovalRouting:
             await loop._handle_approval(error, tc, state, "t1")
 
         assert ei.value.source_context == "来源原文"
-        assert ei.value.memory_save_mode == "manual"

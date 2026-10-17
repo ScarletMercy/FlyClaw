@@ -640,7 +640,7 @@ async def exec_command(
             workspace = Path(cfg.agents.workspace).expanduser().resolve()
             raise ToolExecutionError(f"当前为沙盒模式，无法访问工作目录之外的路径：{wd}（允许范围：{workspace}）")
 
-        # Use resolved path to prevent TOCTOU symlink race
+        # 用 resolve 后的路径防 TOCTOU 符号链接竞态
         workdir = str(wd)
 
     # Background mode: spawn via ProcessRegistry and return immediately
