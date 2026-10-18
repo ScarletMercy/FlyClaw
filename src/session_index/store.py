@@ -10,11 +10,17 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from src.utils.fts import sanitize_fts5_query
+from src.utils.fts import sanitize_fts5_query, tokenize_batch
 
 logger = logging.getLogger("flyclaw.session_index")
 
-_SCHEMA = """
+_FTS_TABLE_SQL = """CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+    search_text,
+    content=messages,
+    content_rowid=id
+)"""
+
+_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS sessions (
     thread_id TEXT PRIMARY KEY,
     channel TEXT NOT NULL,
@@ -33,33 +39,33 @@ CREATE TABLE IF NOT EXISTS messages (
     message_id TEXT NOT NULL UNIQUE,
     role TEXT NOT NULL,
     content TEXT,
+    search_text TEXT,
     tool_name TEXT,
     tool_calls TEXT,
     timestamp REAL NOT NULL
 );
 
-CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-    content,
-    content=messages,
-    content_rowid=id
-);
+{_FTS_TABLE_SQL};
 
+-- 不变量：content 与 search_text 必须同语句写入——单字切分只能发生在应用层，
+-- 触发器只会搬运 search_text 列。应用层唯一写入口是 add_messages；绕过它只改
+-- content，FTS 将持续索引旧文本（滞后而非损坏）。
 CREATE TRIGGER IF NOT EXISTS messages_fts_insert
     AFTER INSERT ON messages BEGIN
-    INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+    INSERT INTO messages_fts(rowid, search_text) VALUES (new.id, new.search_text);
 END;
 
 CREATE TRIGGER IF NOT EXISTS messages_fts_delete
     AFTER DELETE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, content)
-        VALUES('delete', old.id, old.content);
+    INSERT INTO messages_fts(messages_fts, rowid, search_text)
+        VALUES('delete', old.id, old.search_text);
 END;
 
 CREATE TRIGGER IF NOT EXISTS messages_fts_update
     AFTER UPDATE ON messages BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, content)
-        VALUES('delete', old.id, old.content);
-    INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+    INSERT INTO messages_fts(messages_fts, rowid, search_text)
+        VALUES('delete', old.id, old.search_text);
+    INSERT INTO messages_fts(rowid, search_text) VALUES (new.id, new.search_text);
 END;
 
 CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id);
@@ -68,6 +74,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_channel ON sessions(channel);
 CREATE INDEX IF NOT EXISTS idx_sessions_last ON sessions(last_message_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(is_active);
 """
+
 
 # ── Module-level singleton — delegates to ServiceContainer ──
 
@@ -111,10 +118,68 @@ class SessionIndexStore:
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         obj._db = await aiosqlite.connect(db_path)
         obj._db.row_factory = aiosqlite.Row
-        await obj._db.executescript(_SCHEMA)
         await obj._db.execute("PRAGMA journal_mode=WAL")
         await obj._db.execute("PRAGMA busy_timeout=5000")
+        await obj._migrate_search_text()
+        await obj._db.executescript(_SCHEMA)
         return obj
+
+    async def _migrate_search_text(self) -> None:
+        """search_text 一次性迁移：旧 schema 升级、存量切词回填、FTS 重建。
+
+        完成标记最后写入，任何时点被打断，下次启动自动续跑（keyset 按
+        search_text IS NULL 续）；以标记而非列存在性判定完成，半迁移状态
+        不会被误判。迁移期间拆掉触发器与 FTS 表：对从未入索引的行，update
+        触发器会向 FTS 发值不匹配的 'delete'，损坏索引（database disk
+        image is malformed）；回填后重建 FTS 并整体 rebuild，触发器由随后
+        的 _SCHEMA 创建。全新库无存量可迁，直接打标记。
+        """
+        db = self._require_db()
+        await db.execute("CREATE TABLE IF NOT EXISTS index_meta (key TEXT PRIMARY KEY, value TEXT)")
+        cursor = await db.execute("SELECT value FROM index_meta WHERE key = 'fts_search_text'")
+        row = await cursor.fetchone()
+        if row and row[0] == "1":
+            return
+        cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'")
+        if not await cursor.fetchone():
+            # 全新库：无存量可迁，_SCHEMA 直接建新 schema
+            await db.execute("INSERT OR REPLACE INTO index_meta VALUES ('fts_search_text', '1')")
+            await db.commit()
+            return
+        cursor = await db.execute("PRAGMA table_info(messages)")
+        cols = {r[1] for r in await cursor.fetchall()}
+        if "search_text" not in cols:
+            logger.info("Session index: legacy FTS schema detected, migrating to search_text")
+            await db.execute("ALTER TABLE messages ADD COLUMN search_text TEXT")
+        for trig in ("messages_fts_insert", "messages_fts_delete", "messages_fts_update"):
+            await db.execute(f"DROP TRIGGER IF EXISTS {trig}")
+        await db.execute("DROP TABLE IF EXISTS messages_fts")
+        await db.commit()
+        batch_size = 2000
+        last_id = 0
+        backfilled = 0
+        while True:
+            cursor = await db.execute(
+                "SELECT id, content FROM messages WHERE search_text IS NULL AND id > ? ORDER BY id LIMIT ?",
+                (last_id, batch_size),
+            )
+            rows = await cursor.fetchall()
+            if not rows:
+                break
+            texts = tokenize_batch([r[1] for r in rows])
+            await db.executemany(
+                "UPDATE messages SET search_text = ? WHERE id = ?",
+                [(text, r[0]) for text, r in zip(texts, rows)],
+            )
+            await db.commit()
+            last_id = rows[-1][0]
+            backfilled += len(rows)
+        if backfilled:
+            logger.info("Session index: backfilled search_text for %d messages", backfilled)
+        await db.execute(_FTS_TABLE_SQL)
+        await db.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+        await db.execute("INSERT OR REPLACE INTO index_meta VALUES ('fts_search_text', '1')")
+        await db.commit()
 
     async def close(self):
         async with self._lock:
@@ -151,16 +216,18 @@ class SessionIndexStore:
             return dict(row) if row else None
 
     async def add_messages(self, thread_id: str, messages: list[dict]) -> None:
+        texts = tokenize_batch([m.get("content") for m in messages])
         async with self._lock:
             db = self._require_db()
-            for msg in messages:
+            for msg, search_text in zip(messages, texts):
                 await db.execute(
                     "INSERT INTO messages "
-                    "(thread_id, message_id, role, content, tool_name, tool_calls, timestamp) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "(thread_id, message_id, role, content, search_text, tool_name, tool_calls, timestamp) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
                     "ON CONFLICT(message_id) DO UPDATE SET "
                     "role=excluded.role, "
                     "content=excluded.content, "
+                    "search_text=excluded.search_text, "
                     "tool_name=excluded.tool_name, "
                     "tool_calls=excluded.tool_calls, "
                     "timestamp=excluded.timestamp",
@@ -169,6 +236,7 @@ class SessionIndexStore:
                         msg["message_id"],
                         msg["role"],
                         msg.get("content"),
+                        search_text,
                         msg.get("tool_name"),
                         msg.get("tool_calls"),
                         msg.get("timestamp", time.time()),
@@ -210,7 +278,7 @@ class SessionIndexStore:
                     s.is_active,
                     s.last_message_at,
                     s.message_count,
-                    GROUP_CONCAT(f.content, char(10)) AS snippets
+                    GROUP_CONCAT(m.content, char(10)) AS snippets
                 FROM messages_fts f
                 JOIN messages m ON m.id = f.rowid
                 JOIN sessions s ON s.thread_id = m.thread_id

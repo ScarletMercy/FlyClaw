@@ -22,7 +22,7 @@ async def session_search(query: str = "", limit: int = 3) -> str:
     search history yourself instead of asking them to repeat.
 
     Args:
-        query: Search keyword. Empty string returns recent sessions.
+        query: Search keyword; multiple keywords are AND-ed, a long Chinese phrase matches any fragment. Empty string returns recent sessions.
         limit: Max number of results to return. Default 3.
     """
     from src.session_index.store import get_session_index

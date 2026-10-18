@@ -14,7 +14,7 @@ from typing import Optional
 
 import aiosqlite
 
-from src.utils.fts import sanitize_fts5_query
+from src.utils.fts import sanitize_fts5_query, tokenize_batch
 
 logger = logging.getLogger("flyclaw.memory.base")
 
@@ -52,6 +52,8 @@ class BaseMemoryStore(ABC):
             CREATE INDEX IF NOT EXISTS idx_chunks_group ON chunks(group_id);
         """)
 
+        # tokenize 须为 unicode61：content 写入前已按单字预切分（utils/fts.py），
+        # 换其他分词器会与预切分粒度冲突（trigram 甚至无法索引单字 token）
         try:
             await self._conn.execute(
                 f"CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts "
@@ -62,6 +64,7 @@ class BaseMemoryStore(ABC):
 
         await self._conn.commit()
         await self._migrate_add_group_id_column()
+        await self._migrate_fts_to_unigram()
         await self._init_vector_backend()
 
     async def close(self) -> None:
@@ -79,6 +82,56 @@ class BaseMemoryStore(ABC):
             await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_chunks_group ON chunks(group_id)")
             await self._conn.commit()
             logger.info("chunks table migrated: added group_id column")
+
+    async def _migrate_fts_to_unigram(self) -> None:
+        """一次性把 chunks_fts 的 content 换成单字切分文本。
+
+        unicode61 不做中文分词，句中词永远无法命中；索引与查询（sanitize_
+        fts5_query）必须同粒度，故存量行重建、新行由 add_document 切分写入。
+        """
+        await self._conn.execute("CREATE TABLE IF NOT EXISTS memory_meta (key TEXT PRIMARY KEY, value TEXT)")
+        cursor = await self._conn.execute("SELECT value FROM memory_meta WHERE key = 'fts_unigram'")
+        row = await cursor.fetchone()
+        if row and row[0] == "1":
+            return
+
+        cursor = await self._conn.execute("SELECT COUNT(*) FROM chunks")
+        count = (await cursor.fetchone())[0]
+        if count:
+            cursor = await self._conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='chunks_fts'")
+            if not await cursor.fetchone():
+                # FTS 表从未建成（如环境缺 FTS5，建表仅 warning）——无表可重建，
+                # 保持旧版降级；不打标记，环境修复后下次启动自动补迁
+                logger.warning("Memory FTS: chunks_fts missing (FTS5 unavailable?) — skip re-index, retry next start")
+                return
+            logger.info("Memory FTS: re-indexing %d chunks with unigram tokenization", count)
+            try:
+                await self._conn.execute("DELETE FROM chunks_fts")
+                batch_size = 2000
+                last_id = 0
+                while True:
+                    cursor = await self._conn.execute(
+                        "SELECT id, path, content FROM chunks WHERE id > ? ORDER BY id LIMIT ?",
+                        (last_id, batch_size),
+                    )
+                    rows = await cursor.fetchall()
+                    if not rows:
+                        break
+                    texts = tokenize_batch([r[2] for r in rows])
+                    await self._conn.executemany(
+                        "INSERT INTO chunks_fts(rowid, path, content) VALUES (?, ?, ?)",
+                        [(r[0], r[1], t) for r, t in zip(rows, texts)],
+                    )
+                    last_id = rows[-1][0]
+                await self._conn.commit()
+            except Exception as e:
+                # 不打标记——下次启动自动重试
+                await self._conn.rollback()
+                logger.warning("Memory FTS: re-index failed: %s — skip, retry next start", e)
+                return
+
+        await self._conn.execute("INSERT OR REPLACE INTO memory_meta VALUES ('fts_unigram', '1')")
+        await self._conn.commit()
 
     # ── Abstract hooks (vector backend) ─────────────────────
 
@@ -122,8 +175,9 @@ class BaseMemoryStore(ABC):
         meta_json = json.dumps(metadata) if metadata else None
         group_id = (metadata or {}).get("group_id", "")
         added = 0
+        texts = tokenize_batch([c["text"] for c in chunks])
 
-        for chunk_obj in chunks:
+        for chunk_obj, search_text in zip(chunks, texts):
             cursor = await self._conn.execute(
                 "INSERT INTO chunks (path, chunk_index, content, metadata, group_id, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (path, chunk_obj["index"], chunk_obj["text"], meta_json, group_id, now),
@@ -134,7 +188,7 @@ class BaseMemoryStore(ABC):
             try:
                 await self._conn.execute(
                     "INSERT INTO chunks_fts(rowid, path, content) VALUES (?, ?, ?)",
-                    (chunk_id, path, chunk_obj["text"]),
+                    (chunk_id, path, search_text),
                 )
             except Exception as e:
                 logger.warning("FTS5 insert failed for chunk %d: %s", chunk_obj["index"], e)

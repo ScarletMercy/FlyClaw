@@ -1140,7 +1140,7 @@ async def memory(
         content: 记忆内容（save 时必填）
         key: 记忆键名，即记忆内容摘要（save 可选，get 必填）
         category: 记忆分类（默认 fact）
-        query: list 用关键词过滤记忆
+        query: list 用关键词过滤记忆；多关键词为 AND 匹配，长句按片段宽松匹配
         keys: 要删除的记忆键名列表（delete 必填）
         mode: list 时的检索池。recent=KV 保留区，past=归档库
     """

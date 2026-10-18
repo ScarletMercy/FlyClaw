@@ -55,11 +55,12 @@ class TestMemoryStore:
     def test_fts_query_formatting(self):
         from src.utils.fts import sanitize_fts5_query
 
-        assert "OR" in sanitize_fts5_query("hello world")
+        # 空格分段 AND 连接
+        assert "AND" in sanitize_fts5_query("hello world")
         assert "test" in sanitize_fts5_query("test")
-        # Special chars stripped
+        # Special chars stripped；残留引号均为成对的短语定界符
         q = sanitize_fts5_query('hello "world" * (test)')
-        assert '"' not in q
+        assert q.count('"') % 2 == 0
         assert "*" not in q
 
     def test_fts_query_only_special_chars_returns_empty(self):
