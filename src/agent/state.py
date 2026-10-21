@@ -266,8 +266,9 @@ class InterruptFlagStore:
         with self._lock:
             if thread_id not in self._flags:
                 if len(self._flags) > _MAX_FLAGS:
+                    # 谓词必须只读（peek）：扫描时 drain 会把待注入的 steer 排掉丢弃
                     to_remove = [
-                        tid for tid, flag in self._flags.items() if not flag.check()[0] and flag.drain_steer() is None
+                        tid for tid, flag in self._flags.items() if not flag.check()[0] and flag.peek_steer() is None
                     ]
                     for tid in to_remove[: len(self._flags) - _MAX_FLAGS // 2]:
                         del self._flags[tid]

@@ -506,6 +506,34 @@ class TestInterruptFlag:
         flag.clear_interrupt()
         assert flag.drain_steer() == "keep me"
 
+    def test_peek_steer_does_not_consume(self):
+        from src.agent.interrupt import InterruptFlag
+
+        flag = InterruptFlag()
+        assert flag.peek_steer() is None
+
+        flag.steer("keep me")
+        assert flag.peek_steer() == "keep me"
+        assert flag.peek_steer() == "keep me"  # 重复 peek 不消费
+        assert flag.drain_steer() == "keep me"
+        assert flag.peek_steer() is None
+
+
+class TestInterruptFlagStore:
+    def test_lru_scan_preserves_pending_steer(self):
+        """LRU 驱逐谓词必须只读：扫描不得吞掉 flag 上待注入的 steer。"""
+        from src.agent.state import InterruptFlagStore, _MAX_FLAGS
+
+        store = InterruptFlagStore()
+        for i in range(_MAX_FLAGS + 1):
+            store.get_flag(f"t{i}")
+        store.get_flag("t0").steer("重要引导")
+
+        store.get_flag("t_new")  # 触发 LRU 扫描
+
+        assert store.get_flag("t0").drain_steer() == "重要引导"
+        assert len(store._flags) < _MAX_FLAGS  # 驱逐照常，只是不再破坏内容
+
 
 class TestInterruptInLoop:
     @pytest.mark.asyncio

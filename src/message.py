@@ -172,6 +172,21 @@ class MessageHandler:
             return self._container.qq
         return self._container.weixin or self._container.qq
 
+    @staticmethod
+    def _channel_prefix_for_chat_id(chat_id: str) -> str:
+        # qq 系 chat_id 带平台前缀；其余（微信原始 id 等）归 weixin
+        return "qq" if chat_id.startswith(("c2c:", "group:", "channel:", "dm:")) else "weixin"
+
+    def _make_channel_reply(self, channel_prefix: str, chat_id: str):
+        """把渠道 send_text 包成 reply_fn（drain 重跑回合的回复出口）。"""
+        ch = self._get_channel(channel_prefix)
+
+        async def _reply(text: str):
+            if ch is not None:
+                await ch.send_text(chat_id, text)
+
+        return _reply
+
     def _enqueue(self, thread_id: str, text: str) -> None:
         q = self._pending_queue.setdefault(thread_id, [])
         q.append(text)
@@ -937,6 +952,42 @@ class MessageHandler:
             depth=depth + 1,
         )
 
+    def _drain_ctx_from_state(self, thread_id: str, state, chat_id: str) -> _DrainContext:
+        """从落盘 state 重建 drain 上下文。
+
+        回退路径（_resume_and_reply / 链式 ApprovalPending）没有现成的回调
+        上下文；system_prompt 复用该会话实际使用过的值，保证补跑回合与原
+        回合同提示词。
+        """
+        chat_type = getattr(state, "chat_type", "p2p") or "p2p"
+        sender_id = getattr(state, "sender_id", "")
+        channel_prefix = getattr(state, "channel", "") or self._channel_prefix_for_chat_id(chat_id)
+        return _DrainContext(
+            thread_id=thread_id,
+            session_key=self._resolve_session_key(sender_id, chat_type, chat_id),
+            chat_id=chat_id,
+            sender_id=sender_id,
+            chat_type=chat_type,
+            channel_prefix=channel_prefix,
+            reply_fn=self._make_channel_reply(channel_prefix, chat_id),
+            system_prompt=getattr(state, "system_prompt", "") or self._container.config.agents.system_prompt,
+            depth=0,
+        )
+
+    async def _drain_from_ctx(self, ctx: _DrainContext) -> None:
+        """ctx 版 drain 统一入口：持有 _DrainContext 的回合出口一律经此消费残留表。"""
+        await self._drain_pending(
+            thread_id=ctx.thread_id,
+            session_key=ctx.session_key,
+            chat_id=ctx.chat_id,
+            sender_id=ctx.sender_id,
+            chat_type=ctx.chat_type,
+            channel_prefix=ctx.channel_prefix,
+            reply_fn=ctx.reply_fn,
+            system_prompt=ctx.system_prompt,
+            depth=ctx.depth,
+        )
+
     async def _handle_approval_pending(
         self,
         exc,
@@ -982,6 +1033,23 @@ class MessageHandler:
 
                 approval_ch = self._get_channel(channel_prefix)
                 if not approval_ch:
+                    # 渠道缺失：审批既发不出去也无从答复。撤销孤儿请求并清
+                    # pending_approval——幻影状态会让此后每次 /y 都走
+                    # _resume_and_reply 回退路径。
+                    logger.warning(
+                        "approval channel %r missing for thread %s, cancelling request %s",
+                        channel_prefix,
+                        thread_id,
+                        current_exc.request_id,
+                    )
+                    mgr.cancel_pending(current_exc.request_id)
+                    try:
+                        st = await self._container.state_store.load(thread_id)
+                        if st and st.pending_approval:
+                            st.pending_approval = None
+                            await self._container.state_store.save(thread_id, st)
+                    except Exception:
+                        logger.warning("clear pending_approval for %s failed", thread_id, exc_info=True)
                     return
 
                 if tool_name in ("memory_delete", "memory"):
@@ -1102,17 +1170,7 @@ class MessageHandler:
                     self._interrupted_threads.setdefault(drain_ctx.thread_id, saved_interrupt)
                 if saved_queue:
                     self._pending_queue.setdefault(drain_ctx.thread_id, saved_queue)
-                await self._drain_pending(
-                    thread_id=drain_ctx.thread_id,
-                    session_key=drain_ctx.session_key,
-                    chat_id=drain_ctx.chat_id,
-                    sender_id=drain_ctx.sender_id,
-                    chat_type=drain_ctx.chat_type,
-                    channel_prefix=drain_ctx.channel_prefix,
-                    reply_fn=drain_ctx.reply_fn,
-                    system_prompt=drain_ctx.system_prompt,
-                    depth=drain_ctx.depth,
-                )
+                await self._drain_from_ctx(drain_ctx)
 
     async def _auto_extract_approval_task(
         self,
@@ -1205,12 +1263,14 @@ class MessageHandler:
         only sends the final reply. If resume() raises ApprovalPending again,
         a new _handle_approval_pending is spawned which handles event subscriptions.
         """
+        resumed_state = None
         try:
             state = await self._container.state_store.load(thread_id)
             if not state or not state.pending_approval:
                 logger.debug("_resume_and_reply: no pending_approval for thread %s, skipping", thread_id)
                 return
             result_state = await self._container.agent_loop.resume(thread_id, decision)
+            resumed_state = result_state
             assistant_text = ""
             for msg in reversed(result_state.messages):
                 if msg.get("role") == "assistant" and msg.get("content"):
@@ -1220,9 +1280,13 @@ class MessageHandler:
             if assistant_text and ch:
                 await ch.send_text(chat_id, assistant_text)
         except ApprovalPending as exc:
-            _rp = "weixin" if not chat_id.startswith(("c2c:", "group:", "channel:", "dm:")) else "qq"
+            _rp = getattr(state, "channel", "") or self._channel_prefix_for_chat_id(chat_id)
             saved = self._approval_saved_ctx.pop(exc.thread_id, None)
             _si, _sq, _dc = saved if saved else (None, None, None)
+            if _dc is None:
+                # 原 handler 已死、保存的 drain 上下文也没有——从落盘 state 重建，
+                # 否则新 handler 的 finally 会因 drain_ctx=None 跳过 drain
+                _dc = self._drain_ctx_from_state(exc.thread_id, state, chat_id)
             asyncio.create_task(
                 self._handle_approval_pending(
                     exc,
@@ -1242,3 +1306,12 @@ class MessageHandler:
                 logger.warning("_resume_and_reply failed: %s", e)
         except Exception:
             pass
+
+        # 回退回合结束同样必须 drain（与 _run_agent_turn/_handle_approval_pending
+        # 同一不变量）：收尾窗口注册的打断/引导不得跨回合残留，否则线程永久
+        # 卡在 busy 排队。回复发送失败不豁免——drain 只依赖回合是否真的跑完。
+        if resumed_state is not None:
+            try:
+                await self._drain_from_ctx(self._drain_ctx_from_state(thread_id, resumed_state, chat_id))
+            except Exception:
+                logger.exception("_resume_and_reply drain failed for %s", thread_id)

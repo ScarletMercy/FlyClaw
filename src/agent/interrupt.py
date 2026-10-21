@@ -64,6 +64,11 @@ class InterruptFlag:
             self._pending_steer = None
             return text
 
+    def peek_steer(self) -> str | None:
+        """只读查看 pending steer，不消费——消费权专属 drain_steer。"""
+        with self._lock:
+            return self._pending_steer
+
     def clear(self) -> None:
         """Clear all flags."""
         with self._lock:

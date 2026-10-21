@@ -3,6 +3,8 @@
 Tests the core message flow: receive message → dispatch/agent loop → reply.
 """
 
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -589,3 +591,167 @@ class TestSteerFinishWindowRescue:
         assert container.state_store.get_interrupt_flag("qq:dm").drain_steer() is None
         assert "qq:dm" not in handler._interrupted_threads
         assert "qq:dm" not in handler._pending_queue
+
+
+class TestResumeFallbackDrain:
+    """/y 回退路径（_resume_and_reply）受"回合结束必须 drain"不变量约束：
+    回退回合的收尾窗口里注册的 busy 打断必须被 drain 消费重跑，不得让
+    线程永久卡在 busy 排队。"""
+
+    @pytest.mark.asyncio
+    async def test_fallback_resume_drains_interrupt_table(self, container, reply_fn, mock_approval_mgr):
+        import src.tools.approval as approval_mod
+        from src.agent.client import ChatResponse
+        from src.agent.loop import AgentLoop
+        from src.agent.tooldef import ToolDef
+
+        container.config.voice.enabled = False
+        container.config.link_understanding.enabled = False
+        container.config.session_search.enabled = False
+        container.config.agents.busy_input_mode = "interrupt"
+        container.weixin = None  # _get_channel_for_chat_id 回落到 qq
+        container.qq.send_text = AsyncMock()
+
+        calls = 0
+
+        class CountingClient:
+            async def chat(self, messages, tools=None, **kw):
+                nonlocal calls
+                calls += 1
+                return ChatResponse(content=f"回答#{calls}", tool_calls=[], usage=None)
+
+        async def echo(**kwargs):
+            return "echo result"
+
+        container.agent_loop = AgentLoop(
+            client=CountingClient(),
+            tools=[ToolDef.from_function(echo, name="echo")],
+            state_store=container.state_store,
+            config=container.config,
+        )
+
+        # 前提：pending_approval 落盘、审批请求未解决、_approval_handler_threads 为空
+        state = AgentState(
+            messages=[
+                {"role": "user", "content": "跑一下"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [{"id": "tc1", "type": "function", "function": {"name": "echo", "arguments": "{}"}}],
+                },
+            ],
+            pending_approval={
+                "request_id": "r1",
+                "tool_call_id": "tc1",
+                "tool_name": "echo",
+                "command_preview": "",
+            },
+            sender_id="u1",
+            chat_id="c1",
+            chat_type="p2p",
+            channel="qq",
+        )
+        await container.state_store.save("qq:dm", state)
+
+        req = SimpleNamespace(id="r1", chat_id="c1", thread_id="qq:dm", tool_name="echo")
+        resolved = {"v": False}
+        mgr = MagicMock()
+        mgr.list_pending.side_effect = lambda: [] if resolved["v"] else [req]
+        mgr.is_resolved.side_effect = lambda rid: resolved["v"]
+        mgr.resolve.side_effect = lambda rid, decision, **kw: resolved.__setitem__("v", True)
+
+        with patch.object(approval_mod, "get_approval_manager", return_value=mgr):
+            handler = MessageHandler(container)
+            callback = handler.create_callback()
+
+            orig_save = container.state_store.save
+            save_count = 0
+
+            async def hooked_save(thread_id, st):
+                nonlocal save_count
+                save_count += 1
+                if save_count == 2:
+                    # save#1 = _resume_inner 清 pending 后落盘；save#2 = 回退回合
+                    # 完成路径落盘（模型已回答、锁仍持有）→ 收尾窗口注入 busy 打断
+                    await callback(
+                        text="等等，先停一下",
+                        sender_id="u1",
+                        chat_id="c1",
+                        chat_type="p2p",
+                        message_id="m_busy",
+                        reply_fn=AsyncMock(),
+                    )
+                return await orig_save(thread_id, st)
+
+            container.state_store.save = hooked_save
+
+            await callback(
+                text="/y",
+                sender_id="u1",
+                chat_id="c1",
+                chat_type="p2p",
+                message_id="m_y",
+                reply_fn=AsyncMock(),
+            )
+            await asyncio.sleep(0.3)  # 等 create_task(_resume_and_reply) 全链路跑完
+
+        # 回退回合(#1) + 打断消息 drain 重跑(#2)
+        assert calls == 2
+        assert "qq:dm" not in handler._interrupted_threads
+        assert "qq:dm" not in handler._pending_queue
+        sent = [c[0][1] for c in container.qq.send_text.call_args_list]
+        assert any("回答#1" in s for s in sent)
+        assert any("回答#2" in s for s in sent)
+        saved = await container.state_store.load("qq:dm")
+        dup = sum(1 for m in saved.messages if m.get("role") == "user" and m.get("content") == "等等，先停一下")
+        assert dup == 1
+
+        # 线程已恢复健康：后续消息正常处理，不再排队
+        follow_up = AsyncMock()
+        await callback(
+            text="第三条",
+            sender_id="u1",
+            chat_id="c1",
+            chat_type="p2p",
+            message_id="m3",
+            reply_fn=follow_up,
+        )
+        assert calls == 3
+        assert "回答#3" in follow_up.call_args[0][0]
+
+
+class TestApprovalChannelMissing:
+    """渠道缺失时审批 handler 不得留幻影状态：撤销孤儿请求 + 清 pending_approval，
+    否则每次 /y 都会触发 _resume_and_reply 回退路径。"""
+
+    @pytest.mark.asyncio
+    async def test_missing_channel_cancels_request_and_clears_pending(self, container, mock_approval_mgr):
+        from src.agent.loop import ApprovalPending
+
+        container.qq = None  # 渠道缺失
+
+        state = AgentState(
+            messages=[{"role": "user", "content": "hi"}],
+            pending_approval={
+                "request_id": "r1",
+                "tool_call_id": "tc1",
+                "tool_name": "exec_command",
+                "command_preview": "rm x",
+            },
+        )
+        await container.state_store.save("qq:dm", state)
+
+        exc = ApprovalPending(
+            thread_id="qq:dm",
+            request_id="r1",
+            tool_name="exec_command",
+            command_preview="rm x",
+            tc_id="tc1",
+        )
+        handler = MessageHandler(container)
+        await handler._handle_approval_pending(exc, "c1", "qq")
+
+        mock_approval_mgr.cancel_pending.assert_called_once_with("r1")
+        saved = await container.state_store.load("qq:dm")
+        assert saved.pending_approval is None
+        assert "qq:dm" not in handler._approval_handler_threads
