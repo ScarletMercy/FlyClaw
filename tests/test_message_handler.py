@@ -440,3 +440,152 @@ class TestInterruptedNoDuplicateReply:
 
         reply_fn.assert_awaited()
         assert "Here is your answer." in reply_fn.call_args[0][0]
+
+
+class TestBusyInterruptDuringFinishWindow:
+    """收尾窗口内的 busy 打断：最终响应已产生、loop 正在退出时注册的
+    interrupt flag 属于已结束的回合；drain 重跑必须真正处理被打断的消息。"""
+
+    @pytest.mark.asyncio
+    async def test_interrupt_message_answered_after_turn_finishes(self, container, reply_fn, mock_approval_mgr):
+        from src.agent.client import ChatResponse
+        from src.agent.loop import AgentLoop
+
+        container.config.voice.enabled = False
+        container.config.link_understanding.enabled = False
+        container.config.session_search.enabled = False
+        container.config.agents.busy_input_mode = "interrupt"
+
+        calls = 0
+
+        class CountingClient:
+            async def chat(self, messages, tools=None, **kw):
+                nonlocal calls
+                calls += 1
+                return ChatResponse(content=f"回答#{calls}", tool_calls=[], usage=None)
+
+        container.agent_loop = AgentLoop(
+            client=CountingClient(), tools=[], state_store=container.state_store, config=container.config
+        )
+
+        handler = MessageHandler(container)
+        callback = handler.create_callback()
+        reply_fn2 = AsyncMock()
+
+        orig_save = container.state_store.save
+        save_count = 0
+
+        async def hooked_save(thread_id, state):
+            nonlocal save_count
+            save_count += 1
+            if save_count == 1:
+                # 第一回合完成路径的 save：run 仍持锁，第二条消息走 busy 打断路径
+                await callback(
+                    text="等等，先别结束",
+                    sender_id="u1",
+                    chat_id="c1",
+                    chat_type="p2p",
+                    message_id="m2",
+                    reply_fn=reply_fn2,
+                )
+            return await orig_save(thread_id, state)
+
+        container.state_store.save = hooked_save
+
+        await callback(
+            text="第一条",
+            sender_id="u1",
+            chat_id="c1",
+            chat_type="p2p",
+            message_id="m1",
+            reply_fn=reply_fn,
+        )
+
+        assert calls == 2
+        texts1 = [c[0][0] for c in reply_fn.call_args_list]
+        assert "回答#1" in texts1
+        assert "回答#2" in texts1
+        texts2 = [c[0][0] for c in reply_fn2.call_args_list]
+        assert len(texts2) == 1 and "已中断" in texts2[0]
+
+        state = await container.state_store.load("qq:dm")
+        dup = sum(1 for m in state.messages if m.get("role") == "user" and m.get("content") == "等等，先别结束")
+        assert dup == 1
+        assert not container.state_store.get_interrupt_flag("qq:dm").check()[0]
+        assert "qq:dm" not in handler._interrupted_threads
+        assert "qq:dm" not in handler._pending_queue
+
+
+class TestSteerFinishWindowRescue:
+    """steer 模式收尾窗口：回合完成路径 save 期间到达的引导消息已无工具轮
+    注入点，不得只活在 interrupt flag 里跨过回合边界——drain 兜底转排队消息补跑。"""
+
+    @pytest.mark.asyncio
+    async def test_finish_window_steer_requeued_and_answered(self, container, reply_fn, mock_approval_mgr):
+        from src.agent.client import ChatResponse
+        from src.agent.loop import AgentLoop
+
+        container.config.voice.enabled = False
+        container.config.link_understanding.enabled = False
+        container.config.session_search.enabled = False
+        container.config.agents.busy_input_mode = "steer"
+
+        calls = 0
+
+        class CountingClient:
+            async def chat(self, messages, tools=None, **kw):
+                nonlocal calls
+                calls += 1
+                return ChatResponse(content=f"回答#{calls}", tool_calls=[], usage=None)
+
+        container.agent_loop = AgentLoop(
+            client=CountingClient(), tools=[], state_store=container.state_store, config=container.config
+        )
+
+        handler = MessageHandler(container)
+        callback = handler.create_callback()
+        reply_fn2 = AsyncMock()
+
+        orig_save = container.state_store.save
+        save_count = 0
+
+        async def hooked_save(thread_id, state):
+            nonlocal save_count
+            save_count += 1
+            if save_count == 1:
+                # 第一回合完成路径的 save：run 仍持锁，引导消息走 busy steer 分支
+                await callback(
+                    text="拐个弯",
+                    sender_id="u1",
+                    chat_id="c1",
+                    chat_type="p2p",
+                    message_id="m2",
+                    reply_fn=reply_fn2,
+                )
+            return await orig_save(thread_id, state)
+
+        container.state_store.save = hooked_save
+
+        await callback(
+            text="第一条",
+            sender_id="u1",
+            chat_id="c1",
+            chat_type="p2p",
+            message_id="m1",
+            reply_fn=reply_fn,
+        )
+
+        # 引导文本经排队补跑到达模型，得到自己的回答
+        assert calls == 2
+        texts1 = [c[0][0] for c in reply_fn.call_args_list]
+        assert "回答#1" in texts1
+        assert "回答#2" in texts1
+        # steer 分支被接受时不回复；兜底回答走原回合的 reply_fn
+        assert len(reply_fn2.call_args_list) == 0
+
+        state = await container.state_store.load("qq:dm")
+        steer_as_user = sum(1 for m in state.messages if m.get("role") == "user" and m.get("content") == "拐个弯")
+        assert steer_as_user == 1
+        assert container.state_store.get_interrupt_flag("qq:dm").drain_steer() is None
+        assert "qq:dm" not in handler._interrupted_threads
+        assert "qq:dm" not in handler._pending_queue

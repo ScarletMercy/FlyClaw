@@ -187,6 +187,9 @@ class AgentLoop:
             await asyncio.wait_for(lock.acquire(), timeout=timeout)
         except asyncio.TimeoutError:
             raise RuntimeError(f"Thread {thread_id} is busy (lock timeout {timeout}s)")
+        # 打断位只在持锁回合内有效：遗留的陈旧打断会在首轮 check 吞掉本回合。
+        # steer 不清——它由工具轮后的注入点消费，收尾兜底在 handler 的 drain。
+        self._store.get_interrupt_flag(thread_id).clear_interrupt()
         _approval_paused = False
         try:
             return await self._run_inner(state, thread_id, max_rounds)
@@ -210,6 +213,8 @@ class AgentLoop:
             await asyncio.wait_for(lock.acquire(), timeout=timeout)
         except asyncio.TimeoutError:
             raise RuntimeError(f"Thread {thread_id} is busy (lock timeout {timeout}s)")
+        # 同 run
+        self._store.get_interrupt_flag(thread_id).clear_interrupt()
         try:
             return await self._resume_inner(thread_id, decision)
         finally:
@@ -370,9 +375,6 @@ class AgentLoop:
                     clear_thread_cache(thread_id)
                 except Exception:
                     pass
-                flag = self._store.get_interrupt_flag(thread_id)
-                if not flag.check()[0]:
-                    flag.clear()
                 duration_ms = (_time.monotonic() - start_ts) * 1000
                 await emit_async(
                     "agent_loop.completed",

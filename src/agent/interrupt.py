@@ -72,3 +72,15 @@ class InterruptFlag:
             self._pending_steer = None
         if self._event is not None:
             self._event.clear()
+
+    def clear_interrupt(self) -> None:
+        """只清打断位，保留待注入的 steer。
+
+        steer 的消费点是 loop 工具轮后的 drain_steer，不是本方法——入口若连它
+        一起清，claiming 窗口设置的引导会在回合开始前就丢失。
+        """
+        with self._lock:
+            self._requested = False
+            self._message = None
+        if self._event is not None:
+            self._event.clear()

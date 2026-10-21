@@ -872,6 +872,12 @@ class MessageHandler:
     ):
         from src.agent.state import AgentState
 
+        # Priority 0: steer 不得只活在 flag 里跨过回合边界——收尾窗口设置的
+        # 引导已无工具轮注入点，转为排队消息补跑。
+        leftover_steer = self._container.state_store.get_interrupt_flag(thread_id).drain_steer()
+        if leftover_steer:
+            self._enqueue(thread_id, leftover_steer)
+
         # Priority 1: re-run agent for interrupted message
         interrupt_msg = self._interrupted_threads.pop(thread_id, None)
         if interrupt_msg:

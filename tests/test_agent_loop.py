@@ -490,10 +490,78 @@ class TestInterruptFlag:
         flag.clear()
         assert not event.is_set()
 
+    def test_clear_interrupt_preserves_steer(self):
+        from src.agent.interrupt import InterruptFlag
+
+        flag = InterruptFlag()
+        event = flag.get_event()
+
+        flag.interrupt("stop")
+        flag.clear_interrupt()
+        assert flag.check() == (False, None)
+        assert not event.is_set()
+
+        # steer 不随 clear_interrupt 丢失（interrupt 与 steer 按设计互斥，分开验证）
+        flag.steer("keep me")
+        flag.clear_interrupt()
+        assert flag.drain_steer() == "keep me"
+
 
 class TestInterruptInLoop:
     @pytest.mark.asyncio
-    async def test_interrupt_stops_loop(self, store, config):
+    async def test_stale_flag_before_run_is_cleared(self, store, config):
+        client = AsyncMock()
+        client.chat.return_value = ChatResponse(content="done", tool_calls=[])
+        loop = _make_loop(store, config, client=client)
+
+        flag = store.get_interrupt_flag("int_test")
+        event = flag.get_event()
+        flag.interrupt("stop this")
+        assert event.is_set()
+
+        state = AgentState(messages=[{"role": "user", "content": "go"}])
+        result = await loop.run(state, "int_test")
+
+        client.chat.assert_called_once()
+        assert not flag.check()[0]
+        assert not event.is_set()
+        assert not any(m.get("content") == "stop this" for m in result.messages)
+        assert result.messages[-1]["content"] == "done"
+
+    @pytest.mark.asyncio
+    async def test_stale_flag_before_resume_is_cleared(self, store, config):
+        client = AsyncMock()
+        client.chat.return_value = ChatResponse(content="Resumed result.", tool_calls=[])
+
+        tool = _make_tool("echo")
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        state = AgentState(
+            messages=[
+                {"role": "user", "content": "test"},
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"id": "tc1", "type": "function", "function": {"name": "echo", "arguments": '{"text":"hi"}'}}
+                    ],
+                },
+            ],
+            pending_approval={"request_id": "r1", "tool_call_id": "tc1", "tool_name": "echo", "command_preview": ""},
+        )
+        await store.save("t_stale_resume", state)
+
+        store.get_interrupt_flag("t_stale_resume").interrupt("stop this")
+
+        result = await loop.resume("t_stale_resume", "allow_once")
+
+        client.chat.assert_called_once()
+        assert not store.get_interrupt_flag("t_stale_resume").check()[0]
+        assert result.messages[-1]["content"] == "Resumed result."
+
+    @pytest.mark.asyncio
+    async def test_steer_before_run_survives_entry_clear(self, store, config):
+        """claiming 窗口场景：run 前设置的 steer 应存活到工具轮后的注入点。"""
         tool = _make_tool("echo")
         client = AsyncMock()
 
@@ -502,22 +570,20 @@ class TestInterruptInLoop:
         async def fake_chat(messages, tools=None, **kw):
             nonlocal call_count
             call_count += 1
-            return ChatResponse(content="", tool_calls=[_make_tc("echo", {"text": "hi"})])
+            if call_count == 1:
+                return ChatResponse(content="", tool_calls=[_make_tc("echo", {"text": "hi"})])
+            return ChatResponse(content="done", tool_calls=[])
 
         client.chat.side_effect = fake_chat
         loop = _make_loop(store, config, tools=[tool], client=client)
 
-        # Set interrupt before running
-        flag = store.get_interrupt_flag("int_test")
-        flag.interrupt("stop this")
+        store.get_interrupt_flag("steer_entry").steer("change direction")
 
         state = AgentState(messages=[{"role": "user", "content": "go"}])
-        result = await loop.run(state, "int_test")
+        result = await loop.run(state, "steer_entry")
 
-        # Loop should have stopped immediately
-        assert call_count == 0
-        # Interrupt message should be in state
-        assert any(m.get("content") == "stop this" for m in result.messages)
+        assert any(m.get("role") == "user" and "[User guidance]" in m.get("content", "") for m in result.messages)
+        assert store.get_interrupt_flag("steer_entry").drain_steer() is None
 
     @pytest.mark.asyncio
     async def test_steer_injected_into_tool_result(self, store, config):
