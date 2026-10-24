@@ -11,7 +11,7 @@ from typing import Literal, Optional
 from src._container import get_container
 from src.agent.tooldef import ToolDef
 
-from src.tools.chat_tools import _current_chat_id
+from src.tools.chat_tools import _current_channel_type, _current_chat_id
 
 logger = logging.getLogger("flyclaw.task_tools")
 
@@ -160,6 +160,7 @@ async def _task_plan_impl(goal: str, plan_json: str) -> str:
 
     container = get_container()
     chat_id = _current_chat_id.get("")
+    channel_type = _current_channel_type.get("")
     sender_id = _current_sender_id.get("")
     thread_id = _current_thread_id.get("")
 
@@ -244,7 +245,9 @@ async def _task_plan_impl(goal: str, plan_json: str) -> str:
                 message=cp.prompt,
                 timeout_seconds=container.config.task.default_timeout,
             )
-            delivery = CronDelivery(mode="announce", to=chat_id) if chat_id else CronDelivery()
+            delivery = (
+                CronDelivery(mode="announce", to=chat_id, channel_type=channel_type) if chat_id else CronDelivery()
+            )
 
             create = CronJobCreate(
                 name=f"task:{run.id}:cp:{cp.id}",

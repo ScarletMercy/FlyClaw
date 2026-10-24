@@ -95,6 +95,10 @@ class CronPayload(BaseModel):
 class CronDelivery(BaseModel):
     mode: Literal["none", "announce", "webhook"] = "none"
     channel: Optional[str] = None
+    # 投递目标的渠道类型('qq'/'weixin')。to 只存 chat_id 分不出渠道,
+    # executor 靠它为定时任务的工具(send_file 等)显式设 chat 上下文。
+    # 存量任务无此字段为 None,executor 走投递渠道实例反推兜底。
+    channel_type: Optional[str] = None
     to: Optional[str] = None
     webhook_url: Optional[str] = None
     best_effort: bool = False

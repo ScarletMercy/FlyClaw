@@ -2124,3 +2124,76 @@ class TestMemorySaveApprovalRouting:
             await loop._handle_approval(error, tc, state, "t1")
 
         assert ei.value.source_context == "来源原文"
+
+
+class TestToolResultAudit:
+    @pytest.mark.asyncio
+    async def test_error_string_result_audited_as_failure(self, store, config):
+        """工具未抛异常但返回 [error] 字符串 → exec_completed 事件 success=False 且带 error。
+
+        静默丢图事故的病灶:send_file 这类"字符串失败"曾被记成 success=1。
+        """
+
+        async def failing(**kwargs):
+            return "[error] No active channel context"
+
+        tool = _make_tool("send_file", failing)
+        client = AsyncMock()
+
+        call_count = 0
+
+        async def fake_chat(messages, tools=None, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ChatResponse(content="", tool_calls=[_make_tc("send_file", {"file_key": "/tmp/x.png"})])
+            return ChatResponse(content="done", tool_calls=[])
+
+        client.chat.side_effect = fake_chat
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        events = []
+
+        async def capture_emit(event, **ctx):
+            events.append((event, ctx))
+
+        with patch("src.events.emit_async", new=capture_emit):
+            state = AgentState(messages=[{"role": "user", "content": "send"}])
+            await loop.run(state, "t-audit-err")
+
+        completed = [ctx for ev, ctx in events if ev == "tool.exec_completed"]
+        assert len(completed) == 1
+        assert completed[0]["success"] is False
+        assert "No active channel context" in completed[0]["error"]
+
+    @pytest.mark.asyncio
+    async def test_normal_result_audited_as_success(self, store, config):
+        """正常返回的工具仍记 success=True,error 为空串。"""
+        tool = _make_tool("send_file")
+        client = AsyncMock()
+
+        call_count = 0
+
+        async def fake_chat(messages, tools=None, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ChatResponse(content="", tool_calls=[_make_tc("send_file", {"file_key": "/tmp/x.png"})])
+            return ChatResponse(content="done", tool_calls=[])
+
+        client.chat.side_effect = fake_chat
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        events = []
+
+        async def capture_emit(event, **ctx):
+            events.append((event, ctx))
+
+        with patch("src.events.emit_async", new=capture_emit):
+            state = AgentState(messages=[{"role": "user", "content": "send"}])
+            await loop.run(state, "t-audit-ok")
+
+        completed = [ctx for ev, ctx in events if ev == "tool.exec_completed"]
+        assert len(completed) == 1
+        assert completed[0]["success"] is True
+        assert completed[0]["error"] == ""

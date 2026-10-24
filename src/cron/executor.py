@@ -54,6 +54,32 @@ def _extract_assistant_text(messages: list[dict]) -> str:
     return ""
 
 
+_KNOWN_CHANNEL_TYPES = ("qq", "weixin")
+
+
+def _resolve_delivery_context(job: CronJob, channel: Any) -> tuple[str, str]:
+    """解析定时任务的 chat 上下文(渠道类型, 目标 chat_id)。
+
+    定时任务不在消息流里,send_file 等工具的上下文必须由 job 自己声明:
+    渠道类型优先取建任务时存进 delivery 的值;存量任务没存则从投递渠道
+    实例反推。两者都拿不到、或没有目标时返回空串——调用方靠无条件 set
+    把定时链可能继承的消息残值挡在 agent 运行之外。
+    """
+    ctype = job.delivery.channel_type or ""
+    if ctype not in _KNOWN_CHANNEL_TYPES and channel is not None:
+        from src.channels.qq import QQChannel
+        from src.channels.weixin import WeixinChannel
+
+        if isinstance(channel, QQChannel):
+            ctype = "qq"
+        elif isinstance(channel, WeixinChannel):
+            ctype = "weixin"
+    target = job.delivery.to or job.delivery.channel or ""
+    if ctype not in _KNOWN_CHANNEL_TYPES or not target:
+        return "", ""
+    return ctype, target
+
+
 async def execute_cron_job(
     job: CronJob,
     agent_loop: Any,
@@ -202,9 +228,16 @@ async def execute_cron_job(
             finished_at=time.time(),
         )
 
+    from src.tools.chat_tools import _current_channel_type, _current_chat_id
     from src.tools.exec import _current_thread_id as _exec_thread_id
 
+    # 无条件覆盖 chat 上下文:job 声明了投递目标就用声明的,没有就设空。
+    # 若只在有目标时才设,定时链继承的消息残值会漏进无目标任务。
+    # resolve 放在两个 token set 之前:它是纯函数(仅函数内 import),
+    # 若它抛异常不应带着已设的 token 泄漏。
+    _chat_type, _chat_target = _resolve_delivery_context(job, channel)
     _tid_token = _exec_thread_id.set(thread_id)
+    _chat_tokens = (_current_channel_type.set(_chat_type), _current_chat_id.set(_chat_target))
     try:
         result = await asyncio.wait_for(
             agent_loop.run(input_state, thread_id),
@@ -259,6 +292,8 @@ async def execute_cron_job(
             finished_at=finished_at,
         )
     finally:
+        _current_channel_type.reset(_chat_tokens[0])
+        _current_chat_id.reset(_chat_tokens[1])
         _exec_thread_id.reset(_tid_token)
         # isolated cron 线程用完即弃:执行后销毁,避免 checkpoints.db 累积死线程
         # (deferred/busy 的 task job 在此之前 early-return, 不会走到这)

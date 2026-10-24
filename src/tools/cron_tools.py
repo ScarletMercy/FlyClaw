@@ -4,7 +4,7 @@ import logging
 from typing import Literal
 
 from src._container import get_container
-from src.tools.chat_tools import _current_chat_id
+from src.tools.chat_tools import _current_channel_type, _current_chat_id
 
 logger = logging.getLogger("flyclaw.cron_tools")
 
@@ -95,7 +95,8 @@ async def cron_create(
     )
     payload = CronPayload(kind=payload_kind, message=message)
     chat_id = _current_chat_id.get("")
-    delivery = CronDelivery(mode="announce", to=chat_id) if chat_id else CronDelivery()
+    channel_type = _current_channel_type.get("")
+    delivery = CronDelivery(mode="announce", to=chat_id, channel_type=channel_type) if chat_id else CronDelivery()
     if not chat_id:
         logger.warning("cron_create: no current chat_id, delivery will be disabled")
     deps = [d.strip() for d in depends_on.split(",") if d.strip()] if depends_on else []

@@ -1121,7 +1121,7 @@ class AgentLoop:
                 duration_ms,
                 len(result) if isinstance(result, str) else 0,
             )
-            return await self._record_tool_success(
+            return await self._record_tool_result(
                 tool_name=tool_name,
                 args=args,
                 result=result,
@@ -1174,7 +1174,7 @@ class AgentLoop:
                             tool_name,
                             cmd,
                         )
-                        return await self._record_tool_success(
+                        return await self._record_tool_result(
                             tool_name=tool_name,
                             args=args,
                             result=result,
@@ -1217,7 +1217,7 @@ class AgentLoop:
             _current_thread_id.reset(_tid_token)
             _current_dialog_context.reset(_dialog_token)
 
-    async def _record_tool_success(
+    async def _record_tool_result(
         self,
         *,
         tool_name: str,
@@ -1228,13 +1228,16 @@ class AgentLoop:
         args_preview: str,
         state: AgentState,
     ) -> str:
-        """审计工具执行成功：redact → guardrails → skill nudge → emit completed。
+        """审计工具执行结果：redact → guardrails → skill nudge → emit completed。
 
         被 _execute_tool 成功路径和 approval-bypass 路径共用，
         确保两条路径产生一致的审计事件。
+        工具未抛异常但返回 [error] 前缀字符串（如 send_file 无渠道上下文）
+        同样按失败审计——否则这类"字符串失败"会被记成 success=1 静默丢失。
         """
         from src.events import emit_async
 
+        success = not (isinstance(result, str) and result.startswith("[error]"))
         try:
             from src.security.redact import redact
 
@@ -1242,7 +1245,7 @@ class AgentLoop:
         except Exception:
             pass
         self._get_guardrails(thread_id).record(
-            tool_name, args, success=True, result=result if isinstance(result, str) else ""
+            tool_name, args, success=success, result=result if isinstance(result, str) else ""
         )
         if tool_name == "memory":
             self._memory_summary_cache.clear()
@@ -1251,12 +1254,13 @@ class AgentLoop:
             "tool.exec_completed",
             thread_id=thread_id,
             tool_name=tool_name,
-            success=True,
+            success=success,
             duration_ms=duration_ms,
             result_length=len(result) if isinstance(result, str) else 0,
             args_preview=args_preview,
             sender_id=getattr(state, "sender_id", ""),
             channel=getattr(state, "channel", ""),
+            error="" if success else (result[:500] if isinstance(result, str) else ""),
         )
         if not result:
             result = "[interrupted] 工具执行被打断"

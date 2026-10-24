@@ -122,3 +122,76 @@ async def test_direct_payload_does_not_touch_thread():
     assert result.status == "success"
     assert result.output == "ping"
     store.delete.assert_not_awaited()
+
+
+def _loop_capturing_chat_context(store, captured):
+    """run 期间抓取 chat 上下文的假 agent loop。"""
+    from src.tools.chat_tools import _get_context
+
+    async def fake_run(state, tid):
+        captured["ctx"] = _get_context()
+        return AgentState(messages=[{"role": "user", "content": "x"}, {"role": "assistant", "content": "done"}])
+
+    loop = MagicMock()
+    loop.get_store = MagicMock(return_value=store)
+    loop.run = fake_run
+    return loop
+
+
+@pytest.mark.asyncio
+async def test_agent_run_binds_declared_delivery_context():
+    """agent 运行期间 chat 上下文 = job 声明的投递目标;跑完还原调用前状态。
+
+    复现事故形态:外层预置定时链继承来的残值,声明目标必须盖过残值,
+    且 token 还原不能污染调用方。
+    """
+    from src.tools.chat_tools import _current_channel_type, _current_chat_id, _get_context
+
+    captured = {}
+    store = MagicMock()
+    store.load = AsyncMock(return_value=None)
+    store.delete = AsyncMock(return_value=True)
+    loop = _loop_capturing_chat_context(store, captured)
+
+    job = CronJob(
+        name="bind-ctx",
+        schedule=CronSchedule(kind="at", at="2030-01-01 00:00:00"),
+        payload=CronPayload(kind="agent_turn", message="m"),
+        delivery=CronDelivery(mode="none", to="c2c:mine", channel_type="qq"),
+    )
+
+    t1 = _current_channel_type.set("qq")
+    t2 = _current_chat_id.set("c2c:stale")
+    try:
+        result = await execute_cron_job(job, loop, _make_config())
+        assert result.status == "success"
+        assert captured["ctx"] == ("qq", "c2c:mine")
+        assert _get_context() == ("qq", "c2c:stale")
+    finally:
+        _current_channel_type.reset(t1)
+        _current_chat_id.reset(t2)
+
+
+@pytest.mark.asyncio
+async def test_agent_run_clears_inherited_context_without_target():
+    """无投递目标的任务:运行期间上下文必须为空,不得借用定时链残值。"""
+    from src.tools.chat_tools import _current_channel_type, _current_chat_id, _get_context
+
+    captured = {}
+    store = MagicMock()
+    store.load = AsyncMock(return_value=None)
+    store.delete = AsyncMock(return_value=True)
+    loop = _loop_capturing_chat_context(store, captured)
+
+    job = _job("isolated")
+
+    t1 = _current_channel_type.set("qq")
+    t2 = _current_chat_id.set("c2c:stale")
+    try:
+        result = await execute_cron_job(job, loop, _make_config())
+        assert result.status == "success"
+        assert captured["ctx"] == ("", "")
+        assert _get_context() == ("qq", "c2c:stale")
+    finally:
+        _current_channel_type.reset(t1)
+        _current_chat_id.reset(t2)

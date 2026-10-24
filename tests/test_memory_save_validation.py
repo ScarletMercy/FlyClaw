@@ -503,7 +503,7 @@ async def test_execute_tool_publishes_background_flag():
     for bg in (True, False):
         captured.clear()
         loop = AgentLoop(client=object(), tools=[tool], state_store=object(), background=bg)
-        loop._record_tool_success = _passthrough  # 聚焦注入接线，跳过审计链
+        loop._record_tool_result = _passthrough  # 聚焦注入接线，跳过审计链
         state = AgentState(messages=[])
         tc = {"id": f"t{bg}", "function": {"name": "probe", "arguments": "{}"}}
         out = await loop._execute_tool(tc, state, "test-thread")
