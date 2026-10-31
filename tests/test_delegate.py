@@ -196,7 +196,7 @@ class TestDelegateTaskFailureEnvelope:
 
         assert isinstance(out, ToolResult)
         assert out.is_error
-        assert out.content.startswith(f"[{status}]")
+        assert "boom" in out.content
 
     @pytest.mark.asyncio
     async def test_completed_returns_bare_string(self, monkeypatch):
@@ -213,3 +213,60 @@ class TestDelegateTaskFailureEnvelope:
 
         assert isinstance(out, str)
         assert out == "all good"
+
+
+class TestExtractResultText:
+    """结果回退读 failed_tool_calls 集合。"""
+
+    @staticmethod
+    def _state(messages, failed=()):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(messages=messages, failed_tool_calls=set(failed))
+
+    def test_error_tool_result_skipped_even_without_prefix(self):
+        from src.agents.delegate import _extract_result_text
+
+        messages = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {"id": "tc1", "function": {"name": "web_fetch", "arguments": "{}"}},
+                    {"id": "tc2", "function": {"name": "send_file", "arguments": "{}"}},
+                ],
+            },
+            {"role": "tool", "tool_call_id": "tc1", "content": "Request timed out after 30s"},
+            {"role": "tool", "tool_call_id": "tc2", "content": "The answer is 42"},
+        ]
+        out = _extract_result_text(self._state(messages, failed={"tc1"}))
+        assert out == "The answer is 42"
+
+    def test_assistant_content_wins_over_tool_results(self):
+        from src.agents.delegate import _extract_result_text
+
+        messages = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "tc1", "function": {"name": "probe", "arguments": "{}"}}],
+            },
+            {"role": "tool", "tool_call_id": "tc1", "content": "partial"},
+            {"role": "assistant", "content": "final answer"},
+        ]
+        assert _extract_result_text(self._state(messages)) == "final answer"
+
+    def test_all_failed_falls_back_to_digest(self):
+        from src.agents.delegate import _extract_result_text
+
+        messages = [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "tc1", "function": {"name": "probe", "arguments": "{}"}}],
+            },
+            {"role": "tool", "tool_call_id": "tc1", "content": "Request timed out after 30s"},
+        ]
+        out = _extract_result_text(self._state(messages, failed={"tc1"}))
+        assert out.startswith("[No final summary]")
+        assert "Request timed out after 30s" in out

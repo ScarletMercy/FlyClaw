@@ -61,6 +61,9 @@ class AgentState(BaseModel):
 
     pending_approval: dict[str, Any] | None = None
 
+    # 执行失败的工具调用 id，delegate 结果回退用；纯内存簿记，有意不入库。
+    failed_tool_calls: set[str] = Field(default_factory=set)
+
     frozen_system_prompt: str = ""
     created_at: float = 0
     total_usage: dict[str, Any] | None = None

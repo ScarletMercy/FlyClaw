@@ -95,7 +95,7 @@ class ToolLoopGuardrails:
             return GuardrailResult(
                 blocked=True,
                 reason=reason,
-                synthetic_result=f"[blocked] {reason}. Stop retrying this action and try a different approach.",
+                synthetic_result=f"{reason}. Stop retrying this action and try a different approach.",
             )
         if repeat_fails >= self.repeat_fail_warn:
             logger.warning("WARN: Tool '%s' repeated failure (%dx same args)", tool_name, repeat_fails)
@@ -116,7 +116,7 @@ class ToolLoopGuardrails:
             return GuardrailResult(
                 blocked=True,
                 reason=reason,
-                synthetic_result=f"[blocked] {reason}. This tool is not working. Stop using it and summarize what you know.",
+                synthetic_result=f"{reason}. This tool is not working. Stop using it and summarize what you know.",
             )
         if storm_fails >= self.storm_warn:
             logger.warning("WARN: Tool '%s' storm (%dx failures)", tool_name, storm_fails)

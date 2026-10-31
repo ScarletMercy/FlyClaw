@@ -67,15 +67,15 @@ async def send_file(file_key: str = "", force_file: bool = False) -> str | ToolR
                     instead of native media type (e.g. send an image as a file).
     """
     if not file_key:
-        return ToolResult.error("[error] file_key 不能为空")
+        return ToolResult.error("file_key 不能为空")
     channel_type, chat_id = _get_context()
     if not channel_type:
-        return ToolResult.error("[error] No active channel context")
+        return ToolResult.error("No active channel context")
     if not chat_id:
-        return ToolResult.error("[error] No current chat context")
+        return ToolResult.error("No current chat context")
     ch = _get_channel()
     if not ch:
-        return ToolResult.error("[error] Channel not initialized")
+        return ToolResult.error("Channel not initialized")
 
     media_type = "file" if force_file else _infer_media_type(file_key)
 
@@ -88,16 +88,16 @@ async def send_file(file_key: str = "", force_file: bool = False) -> str | ToolR
             resolved_key = _resolve_path(file_key)
             p = Path(resolved_key)
         except ValueError as e:
-            return ToolResult.error(f"[error] {e}")
+            return ToolResult.error(f"{e}")
         if not p.exists():
-            return ToolResult.error(f"[error] 文件不存在: {file_key}")
+            return ToolResult.error(f"文件不存在: {file_key}")
         if not p.is_file():
-            return ToolResult.error(f"[error] 不是文件: {file_key}")
+            return ToolResult.error(f"不是文件: {file_key}")
         if p.stat().st_size == 0:
-            return ToolResult.error(f"[error] 文件为空: {file_key}")
+            return ToolResult.error(f"文件为空: {file_key}")
 
     ok = await ch.send_media(chat_id, resolved_key, media_type)
-    return "Media sent." if ok else ToolResult.error("[error] 发送失败（可能是格式不支持或上传超时）")
+    return "Media sent." if ok else ToolResult.error("发送失败（可能是格式不支持或上传超时）")
 
 
 def get_tools() -> list:

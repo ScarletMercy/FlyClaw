@@ -139,7 +139,7 @@ class TestConstants:
 
 
 class TestWebFetchErrorEnvelope:
-    """失败路径返回 ToolResult.error；content 保留 [error] 前缀措辞。"""
+    """失败路径返回 ToolResult.error；content 不带任何失败前缀。"""
 
     @pytest.mark.asyncio
     async def test_invalid_url(self):
@@ -147,7 +147,7 @@ class TestWebFetchErrorEnvelope:
 
         result = await web_fetch("not a url")
         assert result.is_error is True
-        assert result.content == "[error] Invalid URL: not a url"
+        assert result.content == "Invalid URL: not a url"
 
     @pytest.mark.asyncio
     async def test_url_exceeds_max_length(self):

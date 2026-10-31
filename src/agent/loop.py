@@ -1046,6 +1046,13 @@ class AgentLoop:
 
     async def _execute_tool(self, tc: Any, state: AgentState, thread_id: str) -> ToolResult:
         """Execute a single tool call."""
+        result = await self._execute_tool_inner(tc, state, thread_id)
+        if result.is_error:
+            tc_id = tc.get("id", "") if isinstance(tc, dict) else getattr(tc, "id", "")
+            state.failed_tool_calls.add(tc_id)
+        return result
+
+    async def _execute_tool_inner(self, tc: Any, state: AgentState, thread_id: str) -> ToolResult:
         from src.events import emit_async
 
         if isinstance(tc, dict):
@@ -1068,7 +1075,7 @@ class AgentLoop:
                 state=state,
             )
             return ToolResult.error(
-                f"[error] Tool '{tool_name}' arguments were malformed/truncated, please retry with valid JSON."
+                f"Tool '{tool_name}' arguments were malformed/truncated, please retry with valid JSON."
             )
 
         args_preview = json.dumps(args, ensure_ascii=False)[:200] if args else ""
@@ -1092,7 +1099,7 @@ class AgentLoop:
                 state=state,
             )
             return ToolResult.error(
-                f"[error] Unknown tool: {tool_name}. Available: {hint}{'...' if len(available) > 10 else ''}"
+                f"Unknown tool: {tool_name}. Available: {hint}{'...' if len(available) > 10 else ''}"
             )
 
         guard = self._get_guardrails(thread_id).check(tool_name, args)
@@ -1105,7 +1112,6 @@ class AgentLoop:
                 args_preview=args_preview,
                 state=state,
             )
-            # 前缀措辞保留——delegate 回退等存量点仍按前缀嗅探
             return ToolResult(guard.synthetic_result, status="error")
 
         import time as _time
@@ -1237,9 +1243,9 @@ class AgentLoop:
                 duration_ms=duration_ms,
             )
             if isinstance(e, ToolExecutionError):
-                return ToolResult.error(f"[error] {e}")
+                return ToolResult.error(f"{e}")
             err_msg = str(e)[:200]
-            return ToolResult.error(f"[error] 工具 {tool_name} 执行失败: {err_msg}")
+            return ToolResult.error(f"工具 {tool_name} 执行失败: {err_msg}")
         finally:
             _current_agent_context.reset(_ctx_token)
             _current_thread_id.reset(_tid_token)
@@ -1392,7 +1398,8 @@ class AgentLoop:
                 await self._store.save(thread_id, state)
                 raise r
             if isinstance(r, BaseException):
-                final.append((tc_id, f"[error] {type(r).__name__}: {r}"))
+                state.failed_tool_calls.add(tc_id)
+                final.append((tc_id, f"{type(r).__name__}: {r}"))
             else:
                 final.append(r)
         return final

@@ -307,13 +307,13 @@ class TestDescribeMediaVisionFollowsActive:
         runner.understand.assert_awaited_once()  # 失败后降级 runner
 
     def test_image_multimodal_active_client_fails_no_runner_returns_error(self, monkeypatch):
-        # image + 激活多模态 + client抛错 + 无runner → [error](保留原错误语义,不假装"视觉未启用")。
+        # image + 激活多模态 + client抛错 + 无runner → 报错(不假装"视觉未启用")。
         chain = _make_chain(True, False, active_idx=0)
         chain._all[0].chat = AsyncMock(side_effect=Exception("rate limit"))
         mut = self._setup(monkeypatch, chain, runner=None)
 
         result = asyncio.run(mut.describe_media("http://x/a.png"))
-        assert result.is_error and result.content.startswith("[error]")  # 无降级目标 → 原错误语义
+        assert result.is_error and "rate limit" in result.content
         chain._all[0].chat.assert_awaited_once()
 
     def test_single_chat_client_multimodal_video_uses_active_client(self, monkeypatch):

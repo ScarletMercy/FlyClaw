@@ -74,7 +74,7 @@ class TestFetchPreviewErrorEnvelope:
         from src.tools.result import ToolResult
 
         async def fake_fetch(url):
-            return ToolResult.error("[error] Error fetching URL: boom")
+            return ToolResult.error("Error fetching URL: boom")
 
         monkeypatch.setattr("src.tools.web_tools.web_fetch", fake_fetch)
 

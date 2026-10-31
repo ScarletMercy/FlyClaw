@@ -6,6 +6,7 @@ import logging
 import os
 import time
 
+from src.agent.state import AgentState
 from src.agent.tooldef import ToolDef
 from src.tools.result import ToolResult
 
@@ -69,6 +70,45 @@ def _resolve_child_timeout(
     # Step 2: apply floor and ceiling
     ceiling = max(default_timeout * 3, 1800)
     return max(floor, min(raw, ceiling))
+
+
+def _extract_result_text(state: AgentState) -> str:
+    """从子代理 state 提取结果文案。
+
+    优先级：末条 assistant 文案 → 末条 assistant 工具调用中首个非失败
+    结果（失败以 state.failed_tool_calls 为准）→ 工具结果摘要兜底。
+    """
+    result_text = ""
+    for msg in reversed(state.messages):
+        if msg.get("role") == "assistant" and msg.get("content"):
+            result_text = msg["content"]
+            break
+
+    if not result_text:
+        for msg in reversed(state.messages):
+            if msg.get("role") == "assistant":
+                for tc in msg.get("tool_calls", []):
+                    tc_id = tc.get("id", "")
+                    if tc_id:
+                        for m in state.messages:
+                            if m.get("role") == "tool" and m.get("tool_call_id") == tc_id:
+                                content = m.get("content", "")
+                                if content and tc_id not in state.failed_tool_calls:
+                                    result_text = content[:2000]
+                                    break
+                        if result_text:
+                            break
+                break
+
+    if not result_text:
+        tool_parts = []
+        for msg in state.messages:
+            if msg.get("role") == "tool" and msg.get("content"):
+                tool_parts.append(msg["content"][:500])
+        if tool_parts:
+            result_text = "[No final summary] Tool results:\n" + "\n---\n".join(tool_parts[-3:])
+
+    return result_text
 
 
 async def _run_single(
@@ -280,35 +320,7 @@ async def _run_single(
                     pass
 
         # Result extraction with fallbacks
-        result_text = ""
-        for msg in reversed(result_state.messages):
-            if msg.get("role") == "assistant" and msg.get("content"):
-                result_text = msg["content"]
-                break
-
-        if not result_text:
-            for msg in reversed(result_state.messages):
-                if msg.get("role") == "assistant":
-                    for tc in msg.get("tool_calls", []):
-                        tc_id = tc.get("id", "")
-                        if tc_id:
-                            for m in result_state.messages:
-                                if m.get("role") == "tool" and m.get("tool_call_id") == tc_id:
-                                    content = m.get("content", "")
-                                    if content and not content.startswith("[error]"):
-                                        result_text = content[:2000]
-                                        break
-                            if result_text:
-                                break
-                    break
-
-        if not result_text:
-            tool_parts = []
-            for msg in result_state.messages:
-                if msg.get("role") == "tool" and msg.get("content"):
-                    tool_parts.append(msg["content"][:500])
-            if tool_parts:
-                result_text = "[No final summary] Tool results:\n" + "\n---\n".join(tool_parts[-3:])
+        result_text = _extract_result_text(result_state)
 
         duration = round(time.monotonic() - start, 2)
         await run_registry.complete_run(run_id, result=result_text[:500])
@@ -380,7 +392,7 @@ async def delegate_task(agent_name: str, task: str, context: str = "", timeout: 
         result = await _run_single(agent_name, task, context, config, run_registry, current_depth + 1, timeout=timeout)
         if result["status"] == "completed":
             return result["result"]
-        return ToolResult.error(f"[{result['status']}] {result['result']}")
+        return ToolResult.error(str(result["result"]))
     finally:
         set_current_depth(current_depth)
 
@@ -401,18 +413,18 @@ async def delegate_batch(tasks: str) -> str | ToolResult:
     try:
         parsed = json.loads(tasks) if isinstance(tasks, str) else tasks
     except json.JSONDecodeError as e:
-        return ToolResult.error(f"[error] Invalid JSON: {e}")
+        return ToolResult.error(f"Invalid JSON: {e}")
 
     if not isinstance(parsed, list) or not parsed:
-        return ToolResult.error("[error] tasks must be a non-empty JSON array.")
+        return ToolResult.error("tasks must be a non-empty JSON array.")
 
     max_concurrent = config.delegation.max_concurrent
     if len(parsed) > max_concurrent:
-        return ToolResult.error(f"[error] Too many tasks ({len(parsed)}). Max concurrent: {max_concurrent}.")
+        return ToolResult.error(f"Too many tasks ({len(parsed)}). Max concurrent: {max_concurrent}.")
 
     for i, t in enumerate(parsed):
         if not isinstance(t, dict) or not t.get("agent_name") or not t.get("task"):
-            return ToolResult.error(f"[error] Task {i} must have 'agent_name' and 'task' fields.")
+            return ToolResult.error(f"Task {i} must have 'agent_name' and 'task' fields.")
 
     current_depth = get_current_depth()
     max_depth = getattr(config.agents, "subagent_max_depth", 2)
@@ -486,7 +498,7 @@ async def _delegate_unified(
         return await delegate_batch(tasks)
     if not agent_name or not task:
         return ToolResult.error(
-            "[error] Provide either (agent_name + task) for single delegation or tasks JSON array for batch."
+            "Provide either (agent_name + task) for single delegation or tasks JSON array for batch."
         )
     return await delegate_task(agent_name, task, context, timeout=timeout)
 

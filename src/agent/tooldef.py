@@ -60,7 +60,7 @@ class ToolDef:
             return ToolResult()
         if isinstance(result, ToolResult):
             return result
-        # 契约：裸字符串一律视为成功，不嗅探 [error] 前缀——失败必须显式返回 ToolResult.error。
+        # 契约：裸字符串一律视为成功；失败必须显式返回 ToolResult.error。
         return ToolResult(str(result))
 
     @classmethod

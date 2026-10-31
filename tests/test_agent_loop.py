@@ -2205,7 +2205,7 @@ class TestToolResultAudit:
         async def failing(**kwargs):
             from src.tools.result import ToolResult
 
-            return ToolResult.error("[error] Invalid URL: x")
+            return ToolResult.error("Invalid URL: x")
 
         tool = _make_tool("send_file", failing)
         client = AsyncMock()
@@ -2270,3 +2270,51 @@ class TestToolResultAudit:
         assert failed[0]["error_type"] == "InvalidArguments"
         assert failed[0]["success"] is False
         assert not [ev for ev, _ in events if ev in ("tool.exec_started", "tool.exec_completed")]
+
+    @pytest.mark.asyncio
+    async def test_failed_tool_call_id_registered_on_state(self, store, config):
+        """失败工具的 tc_id 登记 state.failed_tool_calls。"""
+
+        async def failing(**kwargs):
+            from src.tools.result import ToolResult
+
+            return ToolResult.error("boom")
+
+        client = AsyncMock()
+        tc = _make_tc("send_file", {"file_key": "/tmp/x.png"})
+        client.chat.side_effect = [
+            ChatResponse(content="", tool_calls=[tc]),
+            ChatResponse(content="done", tool_calls=[]),
+        ]
+
+        async def capture_emit(event, **ctx):
+            pass
+
+        loop = _make_loop(store, config, tools=[_make_tool("send_file", failing)], client=client)
+        with patch("src.events.emit_async", new=capture_emit):
+            state = AgentState(messages=[{"role": "user", "content": "send"}])
+            final_state = await loop.run(state, "t-failed-reg")
+        assert tc.id in final_state.failed_tool_calls
+
+    @pytest.mark.asyncio
+    async def test_success_not_registered_in_failed_tool_calls(self, store, config):
+        """成功执行不登记 state.failed_tool_calls。"""
+
+        async def ok(**kwargs):
+            return "fine"
+
+        client = AsyncMock()
+        tc = _make_tc("send_file", {"file_key": "/tmp/x.png"})
+        client.chat.side_effect = [
+            ChatResponse(content="", tool_calls=[tc]),
+            ChatResponse(content="done", tool_calls=[]),
+        ]
+
+        async def capture_emit(event, **ctx):
+            pass
+
+        loop = _make_loop(store, config, tools=[_make_tool("send_file", ok)], client=client)
+        with patch("src.events.emit_async", new=capture_emit):
+            state = AgentState(messages=[{"role": "user", "content": "send"}])
+            final_state = await loop.run(state, "t-failed-reg-ok")
+        assert final_state.failed_tool_calls == set()

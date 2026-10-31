@@ -44,19 +44,19 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str | T
     chat_id = _current_chat_id.get("")
     channel = _current_channel.get("")
     if not chat_id:
-        return ToolResult.error("[error] No active chat")
+        return ToolResult.error("No active chat")
 
     if not text.strip():
-        return ToolResult.error("[error] Text is empty")
+        return ToolResult.error("Text is empty")
 
     try:
         audio_bytes = await synthesize_speech(text, voice)
     except Exception as e:
         logger.error("edge-tts synthesis failed: %s", e)
-        return ToolResult.error(f"[error] TTS synthesis failed: {e}")
+        return ToolResult.error(f"TTS synthesis failed: {e}")
 
     if not audio_bytes:
-        return ToolResult.error("[error] TTS produced empty audio")
+        return ToolResult.error("TTS produced empty audio")
 
     if channel == "qq":
         from src.channels.qq import _qq_channel
@@ -92,7 +92,7 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str | T
             except Exception as e:
                 logger.error("WeChat voice send failed: %s", e)
 
-    return ToolResult.error("[error] Failed to send voice to channel")
+    return ToolResult.error("Failed to send voice to channel")
 
 
 def get_tools() -> list:

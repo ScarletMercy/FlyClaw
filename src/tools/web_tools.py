@@ -126,7 +126,7 @@ async def _bing_search(query: str, max_results: int = 5) -> str | ToolResult:
         logger.info("bing_search actual URL: %s", response.url)
 
         if response.status_code != 200:
-            return ToolResult.error(f"[error] search HTTP {response.status_code}")
+            return ToolResult.error(f"search HTTP {response.status_code}")
 
         html = response.text
 
@@ -163,10 +163,10 @@ async def _bing_search(query: str, max_results: int = 5) -> str | ToolResult:
 
         return "\n\n".join(results) if results else "No results found."
     except httpx.TimeoutException:
-        return ToolResult.error(f"[error] search timed out after {BING_TIMEOUT}s")
+        return ToolResult.error(f"search timed out after {BING_TIMEOUT}s")
     except Exception as e:
         logger.error("bing_search error for query='%s': %s", query, e)
-        return ToolResult.error(f"[error] search failed: {e}")
+        return ToolResult.error(f"search failed: {e}")
 
 
 async def web_fetch(url: str) -> ToolResult:
@@ -181,14 +181,14 @@ async def web_fetch(url: str) -> ToolResult:
     start = time.time()
 
     if len(url) > MAX_URL_LENGTH:
-        return ToolResult.error(f"[error] URL exceeds maximum length of {MAX_URL_LENGTH} characters")
+        return ToolResult.error(f"URL exceeds maximum length of {MAX_URL_LENGTH} characters")
 
     try:
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
-            return ToolResult.error(f"[error] Invalid URL: {url}")
+            return ToolResult.error(f"Invalid URL: {url}")
     except Exception:
-        return ToolResult.error(f"[error] Invalid URL: {url}")
+        return ToolResult.error(f"Invalid URL: {url}")
 
     # Prefer HTTPS — rebuild from parsed components to avoid corrupting
     # "http://" substrings that appear in the path or query (e.g. ?url=http://...)
@@ -226,13 +226,13 @@ async def web_fetch(url: str) -> ToolResult:
 
     except ValueError as e:
         logger.warning("Blocked URL fetch (SSRF): %s — %s", url, e)
-        return ToolResult.error(f"[error] Blocked: {e}")
+        return ToolResult.error(f"Blocked: {e}")
     except httpx.TimeoutException:
-        return ToolResult.error(f"[error] Request timed out after {FETCH_TIMEOUT}s")
+        return ToolResult.error(f"Request timed out after {FETCH_TIMEOUT}s")
     except httpx.HTTPError as e:
-        return ToolResult.error(f"[error] HTTP error: {e}")
+        return ToolResult.error(f"HTTP error: {e}")
     except Exception as e:
-        return ToolResult.error(f"[error] Error fetching URL: {e}")
+        return ToolResult.error(f"Error fetching URL: {e}")
 
 
 async def web_search(query: str, max_results: int = 5) -> str | ToolResult:

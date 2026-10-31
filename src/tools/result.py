@@ -10,8 +10,8 @@ from typing import Literal
 class ToolResult:
     """工具结果信封：content 给模型看，status 给程序消费（审计/熔断/门控）。
 
-    content 的 [error]/[blocked] 前缀措辞保留——delegate 回退等存量消费点
-    仍按前缀嗅探。__str__ 回落 content，str() 压扁点拿到内容而非 repr。
+    失败信令只存在于 status；content 不携带 [error]/[blocked] 前缀。
+    __str__ 回落 content，str() 压扁点拿到内容而非 repr。
     """
 
     content: str = ""
