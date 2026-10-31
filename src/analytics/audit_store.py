@@ -277,8 +277,6 @@ def subscribe_audit_to_events() -> None:
                 tool_name=ctx.get("tool_name", ""),
                 sender_id=ctx.get("sender_id", ""),
                 channel=ctx.get("channel", ""),
-                # success 取事件携带值:工具返回 [error] 字符串时 loop 已标
-                # False,写死 True 会把这类失败记成成功(静默丢图事故的病灶)。
                 success=bool(ctx.get("success", True)),
                 duration_ms=ctx.get("duration_ms", 0.0),
                 args_preview=ctx.get("args_preview", ""),

@@ -15,16 +15,12 @@ async def _fetch_preview(url: str, max_chars: int = 400) -> Optional[str]:
         from src.tools.web_tools import web_fetch
 
         result = await web_fetch(url)
-        if isinstance(result, str) and len(result) > max_chars:
-            result = result[:max_chars]
-        if (
-            isinstance(result, str)
-            and result
-            and not result.startswith("[error]")
-            and not result.startswith("[web_fetch")
-        ):
+        if result.is_error:
+            return None
+        text = result.content[:max_chars]
+        if text:
             # Extract first meaningful line as title
-            lines = result.strip().split("\n")
+            lines = text.strip().split("\n")
             title = ""
             body_lines = []
             for line in lines:

@@ -1,14 +1,37 @@
 from __future__ import annotations
 
 import logging
-import tempfile
+
 import aiofiles
 import aiofiles.os
+
+from src.tools.result import ToolResult
 
 logger = logging.getLogger("flyclaw.tts_tools")
 
 
-async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
+async def synthesize_speech(text: str, voice: str) -> bytes:
+    """edge-tts 合成 mp3 字节；失败抛异常，临时文件总是清理。"""
+    import tempfile
+
+    import edge_tts
+
+    communicate = edge_tts.Communicate(text, voice=voice)
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        await communicate.save(tmp_path)
+        async with aiofiles.open(tmp_path, "rb") as f:
+            data = await f.read()
+    finally:
+        try:
+            await aiofiles.os.remove(tmp_path)
+        except OSError:
+            pass
+    return data
+
+
+async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str | ToolResult:
     """将文本转为语音并发送到当前聊天。适用于简短回复、问候、通知等语音场景。
 
     Args:
@@ -21,30 +44,19 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
     chat_id = _current_chat_id.get("")
     channel = _current_channel.get("")
     if not chat_id:
-        return "[error] No active chat"
+        return ToolResult.error("[error] No active chat")
 
     if not text.strip():
-        return "[error] Text is empty"
-
-    import edge_tts
+        return ToolResult.error("[error] Text is empty")
 
     try:
-        communicate = edge_tts.Communicate(text, voice=voice)
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-            tmp_path = tmp.name
-        await communicate.save(tmp_path)
-        async with aiofiles.open(tmp_path, "rb") as f:
-            audio_bytes = await f.read()
-        try:
-            await aiofiles.os.remove(tmp_path)
-        except OSError:
-            pass
+        audio_bytes = await synthesize_speech(text, voice)
     except Exception as e:
         logger.error("edge-tts synthesis failed: %s", e)
-        return f"[error] TTS synthesis failed: {e}"
+        return ToolResult.error(f"[error] TTS synthesis failed: {e}")
 
     if not audio_bytes:
-        return "[error] TTS produced empty audio"
+        return ToolResult.error("[error] TTS produced empty audio")
 
     if channel == "qq":
         from src.channels.qq import _qq_channel
@@ -63,6 +75,8 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
 
         if _weixin_channel:
             try:
+                import tempfile
+
                 with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
                     tmp_file = f.name
                 async with aiofiles.open(tmp_file, "wb") as f:
@@ -78,7 +92,7 @@ async def text_to_speech(text: str, voice: str = "zh-CN-YunxiNeural") -> str:
             except Exception as e:
                 logger.error("WeChat voice send failed: %s", e)
 
-    return "[error] Failed to send voice to channel"
+    return ToolResult.error("[error] Failed to send voice to channel")
 
 
 def get_tools() -> list:

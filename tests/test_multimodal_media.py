@@ -253,7 +253,7 @@ class TestDescribeMediaVisionFollowsActive:
         chain = _make_chain(True, False, active_idx=0)
         mut = self._setup(monkeypatch, chain, runner=None)
         result = asyncio.run(mut.describe_media("http://x/a.mp3"))
-        assert "Audio" in result  # [error] Audio files are not supported...
+        assert "Audio" in result.content and result.is_error
         chain._all[0].chat.assert_not_called()
 
     def test_video_multimodal_active_client_fails_falls_back_to_runner(self, monkeypatch):
@@ -313,7 +313,7 @@ class TestDescribeMediaVisionFollowsActive:
         mut = self._setup(monkeypatch, chain, runner=None)
 
         result = asyncio.run(mut.describe_media("http://x/a.png"))
-        assert result.startswith("[error]")  # 无降级目标 → 原错误语义
+        assert result.is_error and result.content.startswith("[error]")  # 无降级目标 → 原错误语义
         chain._all[0].chat.assert_awaited_once()
 
     def test_single_chat_client_multimodal_video_uses_active_client(self, monkeypatch):

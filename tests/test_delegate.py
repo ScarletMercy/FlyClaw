@@ -156,3 +156,60 @@ class TestDelegationConfigDefaults:
         assert cfg.max_iterations == 50
         assert cfg.enabled is True
         assert cfg.max_concurrent == 3
+
+
+class TestDelegateTaskFailureEnvelope:
+    """失败信封契约：status != completed 必须返回 ToolResult.error——
+    裸字符串会被包装层判成 success，审计与熔断全盲。"""
+
+    @staticmethod
+    def _patch_config(monkeypatch):
+        from types import SimpleNamespace
+
+        cfg = SimpleNamespace(
+            delegation=SimpleNamespace(enabled=True),
+            agents=SimpleNamespace(subagent_max_depth=2),
+        )
+        monkeypatch.setattr("src.config.load_config", lambda: cfg)
+        # _run_single 已 mock，registry 实例不会被使用——绕开未初始化的 ServiceContainer
+        monkeypatch.setattr("src.agents.run_registry.get_run_registry", lambda: object())
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["error", "timeout"])
+    async def test_failure_status_returns_toolresult_error(self, monkeypatch, status):
+        from src.agents import delegate
+        from src.tools.result import ToolResult
+
+        self._patch_config(monkeypatch)
+
+        async def fake_run_single(*args, **kwargs):
+            return {
+                "agent_name": "probe",
+                "status": status,
+                "result": f"boom ({status})",
+                "duration_seconds": 0.1,
+            }
+
+        monkeypatch.setattr(delegate, "_run_single", fake_run_single)
+
+        out = await delegate.delegate_task("probe", "do")
+
+        assert isinstance(out, ToolResult)
+        assert out.is_error
+        assert out.content.startswith(f"[{status}]")
+
+    @pytest.mark.asyncio
+    async def test_completed_returns_bare_string(self, monkeypatch):
+        from src.agents import delegate
+
+        self._patch_config(monkeypatch)
+
+        async def fake_run_single(*args, **kwargs):
+            return {"agent_name": "probe", "status": "completed", "result": "all good", "duration_seconds": 0.1}
+
+        monkeypatch.setattr(delegate, "_run_single", fake_run_single)
+
+        out = await delegate.delegate_task("probe", "do")
+
+        assert isinstance(out, str)
+        assert out == "all good"

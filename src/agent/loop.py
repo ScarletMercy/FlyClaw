@@ -18,6 +18,7 @@ from src.agent.client import ChatClient, ChatResponse, FallbackChain
 from src.agent.guardrails import ToolLoopGuardrails
 from src.agent.state import AgentState, StateStore
 from src.agent.tooldef import ToolDef
+from src.tools.result import ToolResult
 
 logger = logging.getLogger("flyclaw.agent.loop")
 
@@ -560,13 +561,13 @@ class AgentLoop:
                                 state.pending_approval = ap.to_pending_data()
                                 await self._store.save(thread_id, state)
                                 raise
-                            if not result:
-                                result = "[interrupted] 工具执行被打断"
+                            if not result.content:
+                                result.content = "[interrupted] 工具执行被打断"
                             state.append_message(
                                 {
                                     "role": "tool",
                                     "tool_call_id": tc["id"],
-                                    "content": result,
+                                    "content": result.content,
                                 }
                             )
                             break
@@ -583,13 +584,13 @@ class AgentLoop:
                                 # 剩余工具下轮 resume 重执——不能补假结果，否则会被 _resume_inner 永久跳过
                                 await self._store.save(thread_id, state)
                                 raise
-                            if not result:
-                                result = "[interrupted] 工具执行被打断"
+                            if not result.content:
+                                result.content = "[interrupted] 工具执行被打断"
                             state.append_message(
                                 {
                                     "role": "tool",
                                     "tool_call_id": tc_id,
-                                    "content": result,
+                                    "content": result.content,
                                 }
                             )
                             existing_results.add(tc_id)
@@ -640,9 +641,9 @@ class AgentLoop:
                                 state.pending_approval = ap.to_pending_data()
                                 await self._store.save(thread_id, state)
                                 raise
-                            if not result:
-                                result = "[interrupted] 工具执行被打断"
-                            state.append_message({"role": "tool", "tool_call_id": tc_id, "content": result})
+                            if not result.content:
+                                result.content = "[interrupted] 工具执行被打断"
+                            state.append_message({"role": "tool", "tool_call_id": tc_id, "content": result.content})
                         else:
                             state.append_message(
                                 {
@@ -1043,8 +1044,8 @@ class AgentLoop:
             except Exception as exc:
                 logger.debug("redact failed: %s", exc)
 
-    async def _execute_tool(self, tc: Any, state: AgentState, thread_id: str) -> str:
-        """Execute a single tool call. Returns result string."""
+    async def _execute_tool(self, tc: Any, state: AgentState, thread_id: str) -> ToolResult:
+        """Execute a single tool call."""
         from src.events import emit_async
 
         if isinstance(tc, dict):
@@ -1058,7 +1059,19 @@ class AgentLoop:
                 args_str = tc.function.arguments
             args = json.loads(args_str) if args_str else {}
         except json.JSONDecodeError:
-            return f"[error] Tool '{tool_name}' arguments were malformed/truncated, please retry with valid JSON."
+            await self._emit_tool_failure(
+                thread_id=thread_id,
+                tool_name=tool_name,
+                error="arguments were malformed/truncated",
+                error_type="InvalidArguments",
+                args_preview=args_str[:200],
+                state=state,
+            )
+            return ToolResult.error(
+                f"[error] Tool '{tool_name}' arguments were malformed/truncated, please retry with valid JSON."
+            )
+
+        args_preview = json.dumps(args, ensure_ascii=False)[:200] if args else ""
 
         tool_def = self._tool_map.get(tool_name)
         if tool_def is None:
@@ -1070,16 +1083,34 @@ class AgentLoop:
                 available,
             )
             hint = ", ".join(available[:10])
-            return f"[error] Unknown tool: {tool_name}. Available: {hint}{'...' if len(available) > 10 else ''}"
+            await self._emit_tool_failure(
+                thread_id=thread_id,
+                tool_name=tool_name,
+                error=f"Unknown tool: {tool_name}",
+                error_type="UnknownTool",
+                args_preview=args_preview,
+                state=state,
+            )
+            return ToolResult.error(
+                f"[error] Unknown tool: {tool_name}. Available: {hint}{'...' if len(available) > 10 else ''}"
+            )
 
         guard = self._get_guardrails(thread_id).check(tool_name, args)
         if guard is not None:
-            return guard.synthetic_result
+            await self._emit_tool_failure(
+                thread_id=thread_id,
+                tool_name=tool_name,
+                error=guard.reason,
+                error_type="GuardrailBlocked",
+                args_preview=args_preview,
+                state=state,
+            )
+            # 前缀措辞保留——delegate 回退等存量点仍按前缀嗅探
+            return ToolResult(guard.synthetic_result, status="error")
 
         import time as _time
 
         start = _time.monotonic()
-        args_preview = json.dumps(args, ensure_ascii=False)[:200] if args else ""
 
         await emit_async(
             "tool.exec_started",
@@ -1119,7 +1150,7 @@ class AgentLoop:
                 "[tool] done: %s duration=%.0fms result_len=%d",
                 tool_name,
                 duration_ms,
-                len(result) if isinstance(result, str) else 0,
+                len(result.content),
             )
             return await self._record_tool_result(
                 tool_name=tool_name,
@@ -1192,61 +1223,81 @@ class AgentLoop:
                     command_preview=getattr(e, "command_preview", getattr(e, "command", "")[:200]),
                     denylisted=getattr(e, "denylisted", False),
                 )
-                return await self._handle_approval(e, tc, state, thread_id)
+                return ToolResult(await self._handle_approval(e, tc, state, thread_id))
             logger.error("Tool %s failed: %s", tool_name, e)
             self._get_guardrails(thread_id).record(tool_name, args, success=False)
 
-            await emit_async(
-                "tool.exec_failed",
+            await self._emit_tool_failure(
                 thread_id=thread_id,
                 tool_name=tool_name,
-                success=False,
-                duration_ms=duration_ms,
-                error=str(e)[:500],
+                error=str(e),
                 error_type=type(e).__name__,
                 args_preview=args_preview,
-                sender_id=getattr(state, "sender_id", ""),
-                channel=getattr(state, "channel", ""),
+                state=state,
+                duration_ms=duration_ms,
             )
             if isinstance(e, ToolExecutionError):
-                return f"[error] {e}"
+                return ToolResult.error(f"[error] {e}")
             err_msg = str(e)[:200]
-            return f"[error] 工具 {tool_name} 执行失败: {err_msg}"
+            return ToolResult.error(f"[error] 工具 {tool_name} 执行失败: {err_msg}")
         finally:
             _current_agent_context.reset(_ctx_token)
             _current_thread_id.reset(_tid_token)
             _current_dialog_context.reset(_dialog_token)
+
+    async def _emit_tool_failure(
+        self,
+        *,
+        thread_id: str,
+        tool_name: str,
+        error: str,
+        error_type: str,
+        args_preview: str,
+        state: AgentState,
+        duration_ms: float = 0.0,
+    ) -> None:
+        """发射 tool.exec_failed 失败审计事件（全库唯一发射点）。"""
+        from src.events import emit_async
+
+        await emit_async(
+            "tool.exec_failed",
+            thread_id=thread_id,
+            tool_name=tool_name,
+            success=False,
+            duration_ms=duration_ms,
+            error=error[:500],
+            error_type=error_type,
+            args_preview=args_preview,
+            sender_id=getattr(state, "sender_id", ""),
+            channel=getattr(state, "channel", ""),
+        )
 
     async def _record_tool_result(
         self,
         *,
         tool_name: str,
         args: dict,
-        result: str,
+        result: ToolResult,
         thread_id: str,
         duration_ms: float,
         args_preview: str,
         state: AgentState,
-    ) -> str:
-        """审计工具执行结果：redact → guardrails → skill nudge → emit completed。
+    ) -> ToolResult:
+        """审计工具执行结果：redact → guardrails → emit completed。
 
         被 _execute_tool 成功路径和 approval-bypass 路径共用，
         确保两条路径产生一致的审计事件。
-        工具未抛异常但返回 [error] 前缀字符串（如 send_file 无渠道上下文）
-        同样按失败审计——否则这类"字符串失败"会被记成 success=1 静默丢失。
         """
         from src.events import emit_async
 
-        success = not (isinstance(result, str) and result.startswith("[error]"))
+        success = not result.is_error
         try:
             from src.security.redact import redact
 
-            result = redact(result)
+            result.content = redact(result.content)
         except Exception:
             pass
-        self._get_guardrails(thread_id).record(
-            tool_name, args, success=success, result=result if isinstance(result, str) else ""
-        )
+        self._get_guardrails(thread_id).record(tool_name, args, success=success, result=result.content)
         if tool_name == "memory":
             self._memory_summary_cache.clear()
             self._memory_summary_queried.clear()
@@ -1256,14 +1307,14 @@ class AgentLoop:
             tool_name=tool_name,
             success=success,
             duration_ms=duration_ms,
-            result_length=len(result) if isinstance(result, str) else 0,
+            result_length=len(result.content),
             args_preview=args_preview,
             sender_id=getattr(state, "sender_id", ""),
             channel=getattr(state, "channel", ""),
-            error="" if success else (result[:500] if isinstance(result, str) else ""),
+            error="" if success else result.content[:500],
         )
-        if not result:
-            result = "[interrupted] 工具执行被打断"
+        if not result.content:
+            result.content = "[interrupted] 工具执行被打断"
         return result
 
     async def _execute_tools_parallel(
@@ -1275,9 +1326,8 @@ class AgentLoop:
             tc_id = tc.id if hasattr(tc, "id") else tc.get("id", "")
             try:
                 result = await self._execute_tool(tc, state, thread_id)
-                if not result:
-                    result = "[interrupted] 工具执行被打断"
-                results[idx] = (tc_id, result)
+                # 并行器边界统一转回 (tc_id, content str)——主流程 append 不感知 ToolResult
+                results[idx] = (tc_id, result.content or "[interrupted] 工具执行被打断")
             except BaseException as exc:
                 results[idx] = exc
 

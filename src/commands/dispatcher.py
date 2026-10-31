@@ -99,7 +99,7 @@ class CommandDispatcher:
             if tool is None:
                 return f"Tool not found: {tool_name}"
             result = await tool.execute({"__arg1": args} if args else {})
-            return str(result)
+            return result.content
         except Exception as e:
             logger.error("Tool dispatch failed for /%s: %s", spec.name, e)
             return f"[error] {type(e).__name__}: {e}"

@@ -7,6 +7,7 @@ import os
 import time
 
 from src.agent.tooldef import ToolDef
+from src.tools.result import ToolResult
 
 logger = logging.getLogger("flyclaw.agents.delegate")
 
@@ -352,7 +353,7 @@ async def _run_single(
             pass
 
 
-async def delegate_task(agent_name: str, task: str, context: str = "", timeout: int | None = None) -> str:
+async def delegate_task(agent_name: str, task: str, context: str = "", timeout: int | None = None) -> str | ToolResult:
     """Delegate a task to a specialized sub-agent. Use for tasks requiring specific expertise.
 
     Args:
@@ -379,12 +380,12 @@ async def delegate_task(agent_name: str, task: str, context: str = "", timeout: 
         result = await _run_single(agent_name, task, context, config, run_registry, current_depth + 1, timeout=timeout)
         if result["status"] == "completed":
             return result["result"]
-        return f"[{result['status']}] {result['result']}"
+        return ToolResult.error(f"[{result['status']}] {result['result']}")
     finally:
         set_current_depth(current_depth)
 
 
-async def delegate_batch(tasks: str) -> str:
+async def delegate_batch(tasks: str) -> str | ToolResult:
     """Delegate multiple tasks to sub-agents in parallel. Returns JSON results.
 
     Args:
@@ -400,18 +401,18 @@ async def delegate_batch(tasks: str) -> str:
     try:
         parsed = json.loads(tasks) if isinstance(tasks, str) else tasks
     except json.JSONDecodeError as e:
-        return f"[error] Invalid JSON: {e}"
+        return ToolResult.error(f"[error] Invalid JSON: {e}")
 
     if not isinstance(parsed, list) or not parsed:
-        return "[error] tasks must be a non-empty JSON array."
+        return ToolResult.error("[error] tasks must be a non-empty JSON array.")
 
     max_concurrent = config.delegation.max_concurrent
     if len(parsed) > max_concurrent:
-        return f"[error] Too many tasks ({len(parsed)}). Max concurrent: {max_concurrent}."
+        return ToolResult.error(f"[error] Too many tasks ({len(parsed)}). Max concurrent: {max_concurrent}.")
 
     for i, t in enumerate(parsed):
         if not isinstance(t, dict) or not t.get("agent_name") or not t.get("task"):
-            return f"[error] Task {i} must have 'agent_name' and 'task' fields."
+            return ToolResult.error(f"[error] Task {i} must have 'agent_name' and 'task' fields.")
 
     current_depth = get_current_depth()
     max_depth = getattr(config.agents, "subagent_max_depth", 2)
@@ -466,7 +467,7 @@ async def delegate_batch(tasks: str) -> str:
 
 async def _delegate_unified(
     agent_name: str = "", task: str = "", context: str = "", tasks: str = "", timeout: int | None = None
-) -> str:
+) -> str | ToolResult:
     """将子任务委派给专业代理。支持单个和批量模式。
 
     单个任务: 提供 agent_name + task，可选 context。
@@ -484,7 +485,9 @@ async def _delegate_unified(
     if tasks:
         return await delegate_batch(tasks)
     if not agent_name or not task:
-        return "[error] Provide either (agent_name + task) for single delegation or tasks JSON array for batch."
+        return ToolResult.error(
+            "[error] Provide either (agent_name + task) for single delegation or tasks JSON array for batch."
+        )
     return await delegate_task(agent_name, task, context, timeout=timeout)
 
 

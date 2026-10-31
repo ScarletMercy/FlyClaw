@@ -507,5 +507,5 @@ async def test_execute_tool_publishes_background_flag():
         state = AgentState(messages=[])
         tc = {"id": f"t{bg}", "function": {"name": "probe", "arguments": "{}"}}
         out = await loop._execute_tool(tc, state, "test-thread")
-        assert out == "ok"
+        assert out.content == "ok" and not out.is_error
         assert captured[0].get("background") is bg

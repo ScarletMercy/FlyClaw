@@ -443,17 +443,12 @@ class MessageHandler:
         self, text: str, chat_id: str, channel_prefix: str, voice: str, message_id: str | None = None
     ) -> bool:
         """Try to convert text to speech and send as voice message. Returns True if sent."""
-        import edge_tts
-        import tempfile
         from pathlib import Path
 
+        from src.tools.tts_tools import synthesize_speech
+
         try:
-            communicate = edge_tts.Communicate(text, voice=voice)
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
-                tmp_path = tmp.name
-            await communicate.save(tmp_path)
-            audio_bytes = Path(tmp_path).read_bytes()
-            Path(tmp_path).unlink(missing_ok=True)
+            audio_bytes = await synthesize_speech(text, voice)
         except Exception as e:
             logger.error("edge-tts synthesis failed: %s", e)
             return False

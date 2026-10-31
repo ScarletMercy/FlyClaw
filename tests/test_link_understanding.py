@@ -61,3 +61,38 @@ class TestDetectAndPreviewLinks:
         result = await detect_and_preview_links("Check https://invalid.example.com/page")
         # Result is either empty (fetch failed) or has preview text
         assert isinstance(result, str)
+
+
+# ── _fetch_preview 失败信封消费 ────────────────────────────────
+
+
+class TestFetchPreviewErrorEnvelope:
+    """失败信封(status=error)不产预览；成功信封照常产预览。"""
+
+    @pytest.mark.asyncio
+    async def test_toolresult_error_yields_no_preview(self, monkeypatch):
+        from src.tools.result import ToolResult
+
+        async def fake_fetch(url):
+            return ToolResult.error("[error] Error fetching URL: boom")
+
+        monkeypatch.setattr("src.tools.web_tools.web_fetch", fake_fetch)
+
+        from src.link_understanding import _fetch_preview
+
+        assert await _fetch_preview("https://x.example.com") is None
+
+    @pytest.mark.asyncio
+    async def test_success_result_still_produces_preview(self, monkeypatch):
+        from src.tools.result import ToolResult
+
+        async def fake_fetch(url):
+            return ToolResult("Page Title Here\nsome body text")
+
+        monkeypatch.setattr("src.tools.web_tools.web_fetch", fake_fetch)
+
+        from src.link_understanding import _fetch_preview
+
+        preview = await _fetch_preview("https://x.example.com")
+        assert preview is not None
+        assert "Page Title Here" in preview

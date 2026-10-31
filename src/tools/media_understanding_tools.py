@@ -6,6 +6,8 @@ import mimetypes
 from pathlib import Path
 from urllib.parse import urlparse
 
+from src.tools.result import ToolResult
+
 logger = logging.getLogger("flyclaw.tools.media_understanding")
 
 
@@ -83,7 +85,7 @@ def _guess_is_audio(source: str) -> bool:
     return Path(parsed.path).suffix.lower() in _AUDIO_EXTENSIONS
 
 
-async def describe_media(media_url: str) -> str:
+async def describe_media(media_url: str) -> str | ToolResult:
     """Describe/analyze an image or video. Provide a URL, a data: base64 URL, or a local file path.
 
     视觉来源跟随**当前激活模型**:激活模型多模态→用它看图(覆盖 media_understanding);
@@ -97,7 +99,7 @@ async def describe_media(media_url: str) -> str:
     try:
         # Early rejection: skip downloading audio files entirely
         if _guess_is_audio(media_url):
-            return "[error] Audio files are not supported by describe_media."
+            return ToolResult.error("[error] Audio files are not supported by describe_media.")
 
         # 视觉是否启用是纯内存判断(_active_vision_info / _get_runner 都不触网),
         # 必须在 _resolve_media_input 之前判断:否则视觉关闭时会把整张图/整段视频
@@ -122,7 +124,7 @@ async def describe_media(media_url: str) -> str:
 
         capability = MediaUnderstandingRunner.guess_capability_from_mime(mime_type) or MediaCapability.IMAGE
         if capability == MediaCapability.AUDIO:
-            return "[error] Audio files are not supported by describe_media."
+            return ToolResult.error("[error] Audio files are not supported by describe_media.")
 
         # 激活模型多模态 + 图像 → 优先用激活模型看图;瞬时失败(429/网络/API error)有 runner 则降级(与 video 对称)。
         # 注意:multimodal flag 是用户手填布尔(能力声明),不是可用性 SLA——429/网络错不是能力缺失,
@@ -132,7 +134,7 @@ async def describe_media(media_url: str) -> str:
                 return await _describe_with_client(active_client, model_name, data, mime_type)
             except Exception as e:
                 if runner is None:
-                    return f"[error] {e}"  # 无降级目标,保留原错误语义
+                    return ToolResult.error(f"[error] {e}")  # 无降级目标,保留原错误语义
                 logger.warning("激活模型 %s 处理图像失败,降级独立视觉模型: %s", model_name, e)
                 # 落到下面的 runner 路径降级(capability==IMAGE,会跳过 video 分支)
 
@@ -156,12 +158,12 @@ async def describe_media(media_url: str) -> str:
             return "[视觉功能未启用]"
         result = await runner.understand(data, capability, mime_type=mime_type)
         if result.error:
-            return f"[error] {result.error}"
+            return ToolResult.error(f"[error] {result.error}")
         label = "video" if capability == MediaCapability.VIDEO else "image"
         return f"[{label} description] ({result.model})\n{result.text}"
     except Exception as e:
         logger.error("describe_media error: %s", e)
-        return f"[error] {e}"
+        return ToolResult.error(f"[error] {e}")
 
 
 def _active_vision_info(container):

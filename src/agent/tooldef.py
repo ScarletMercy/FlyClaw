@@ -13,6 +13,8 @@ import types as _bt
 from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Union, get_type_hints
 
+from src.tools.result import ToolResult
+
 logger = logging.getLogger("flyclaw.agent.tooldef")
 
 _TYPE_MAP: dict[type, str] = {
@@ -49,12 +51,17 @@ class ToolDef:
             },
         }
 
-    async def execute(self, args: dict) -> str:
+    async def execute(self, args: dict) -> ToolResult:
         filtered = {k: v for k, v in args.items() if k in self._valid_params}
         result = self.fn(**filtered)
         if inspect.isawaitable(result):
             result = await result
-        return str(result) if result is not None else ""
+        if result is None:
+            return ToolResult()
+        if isinstance(result, ToolResult):
+            return result
+        # 契约：裸字符串一律视为成功，不嗅探 [error] 前缀——失败必须显式返回 ToolResult.error。
+        return ToolResult(str(result))
 
     @classmethod
     def from_function(cls, fn: Callable, name: str | None = None, timeout: int = 120) -> ToolDef:

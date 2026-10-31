@@ -1,5 +1,7 @@
 """Tests for src/tools/web_tools.py — URL helpers, HTML conversion, content type detection."""
 
+import pytest
+
 from src.tools.web_tools import (
     _is_binary_content_type,
     _strip_tags,
@@ -131,3 +133,42 @@ class TestConstants:
 
     def test_bing_timeout(self):
         assert BING_TIMEOUT == 15.0
+
+
+# ── web_fetch 失败信封 ────────────────────────────────
+
+
+class TestWebFetchErrorEnvelope:
+    """失败路径返回 ToolResult.error；content 保留 [error] 前缀措辞。"""
+
+    @pytest.mark.asyncio
+    async def test_invalid_url(self):
+        from src.tools.web_tools import web_fetch
+
+        result = await web_fetch("not a url")
+        assert result.is_error is True
+        assert result.content == "[error] Invalid URL: not a url"
+
+    @pytest.mark.asyncio
+    async def test_url_exceeds_max_length(self):
+        from src.tools.web_tools import MAX_URL_LENGTH, web_fetch
+
+        result = await web_fetch("http://" + "a" * (MAX_URL_LENGTH + 10))
+        assert result.is_error is True
+        assert "exceeds maximum length" in result.content
+
+    @pytest.mark.asyncio
+    async def test_timeout_returns_toolresult_error(self, monkeypatch):
+        """safe_fetch 抛超时 → ToolResult.error（safe_fetch 为函数内 import，patch 源模块）。"""
+        import httpx
+
+        async def fake_safe_fetch(url, **kw):
+            raise httpx.TimeoutException("timed out")
+
+        monkeypatch.setattr("src.security.url_safety.safe_fetch", fake_safe_fetch)
+
+        from src.tools.web_tools import web_fetch
+
+        result = await web_fetch("https://example.com/slow")
+        assert result.is_error is True
+        assert "timed out" in result.content

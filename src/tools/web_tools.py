@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from tavily import AsyncTavilyClient
 
 from src.agent.tooldef import ToolDef
+from src.tools.result import ToolResult
 from src.security.url_safety import MAX_URL_LENGTH
 
 logger = logging.getLogger("flyclaw.web_tools")
@@ -109,7 +110,7 @@ def _html_to_markdown(html: str) -> str:
         return text
 
 
-async def _bing_search(query: str, max_results: int = 5) -> str:
+async def _bing_search(query: str, max_results: int = 5) -> str | ToolResult:
     from urllib.parse import quote_plus
 
     query = _unescape_unicode(query)
@@ -125,7 +126,7 @@ async def _bing_search(query: str, max_results: int = 5) -> str:
         logger.info("bing_search actual URL: %s", response.url)
 
         if response.status_code != 200:
-            return f"[bing_search error] HTTP {response.status_code}"
+            return ToolResult.error(f"[error] search HTTP {response.status_code}")
 
         html = response.text
 
@@ -162,14 +163,14 @@ async def _bing_search(query: str, max_results: int = 5) -> str:
 
         return "\n\n".join(results) if results else "No results found."
     except httpx.TimeoutException:
-        return f"[bing_search error] Request timed out after {BING_TIMEOUT}s"
+        return ToolResult.error(f"[error] search timed out after {BING_TIMEOUT}s")
     except Exception as e:
         logger.error("bing_search error for query='%s': %s", query, e)
-        return f"[bing_search error] {e}"
+        return ToolResult.error(f"[error] search failed: {e}")
 
 
-async def web_fetch(url: str) -> str:
-    """Fetch content from a URL and convert it to markdown text.
+async def web_fetch(url: str) -> ToolResult:
+    """Fetch content from a URL and convert it to a markdown text.
 
     Uses direct HTTP request — no external API key needed.
     HTML pages are converted to markdown. Other content types are returned as-is.
@@ -180,14 +181,14 @@ async def web_fetch(url: str) -> str:
     start = time.time()
 
     if len(url) > MAX_URL_LENGTH:
-        return f"URL exceeds maximum length of {MAX_URL_LENGTH} characters"
+        return ToolResult.error(f"[error] URL exceeds maximum length of {MAX_URL_LENGTH} characters")
 
     try:
         parsed = urlparse(url)
         if not parsed.scheme or not parsed.netloc:
-            return f"Invalid URL: {url}"
+            return ToolResult.error(f"[error] Invalid URL: {url}")
     except Exception:
-        return f"Invalid URL: {url}"
+        return ToolResult.error(f"[error] Invalid URL: {url}")
 
     # Prefer HTTPS — rebuild from parsed components to avoid corrupting
     # "http://" substrings that appear in the path or query (e.g. ?url=http://...)
@@ -210,7 +211,7 @@ async def web_fetch(url: str) -> str:
         raw_bytes = len(response.content)
 
         if _is_binary_content_type(content_type):
-            return f"Binary content ({content_type}, {raw_bytes} bytes). Cannot extract text."
+            return ToolResult(f"Binary content ({content_type}, {raw_bytes} bytes). Cannot extract text.")
 
         if "text/html" in content_type:
             markdown_content = _html_to_markdown(response.text)
@@ -221,20 +222,20 @@ async def web_fetch(url: str) -> str:
             markdown_content = markdown_content[:MAX_MARKDOWN_LENGTH] + "\n\n[Content truncated due to length...]"
 
         elapsed_ms = int((time.time() - start) * 1000)
-        return f"Content from {url} ({raw_bytes} bytes, {elapsed_ms}ms):\n\n{markdown_content}\n\n---"
+        return ToolResult(f"Content from {url} ({raw_bytes} bytes, {elapsed_ms}ms):\n\n{markdown_content}\n\n---")
 
     except ValueError as e:
         logger.warning("Blocked URL fetch (SSRF): %s — %s", url, e)
-        return f"Blocked: {e}"
+        return ToolResult.error(f"[error] Blocked: {e}")
     except httpx.TimeoutException:
-        return f"Request timed out after {FETCH_TIMEOUT}s"
+        return ToolResult.error(f"[error] Request timed out after {FETCH_TIMEOUT}s")
     except httpx.HTTPError as e:
-        return f"HTTP error: {e}"
+        return ToolResult.error(f"[error] HTTP error: {e}")
     except Exception as e:
-        return f"Error fetching URL: {e}"
+        return ToolResult.error(f"[error] Error fetching URL: {e}")
 
 
-async def web_search(query: str, max_results: int = 5) -> str:
+async def web_search(query: str, max_results: int = 5) -> str | ToolResult:
     """Search the web using Tavily. Returns titles, URLs, and content snippets.
 
     Args:

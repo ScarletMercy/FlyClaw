@@ -1652,7 +1652,7 @@ class TestMemorySaveApprovalRouting:
         ) as mock_handle:
             result = await loop._execute_tool(tc, state, "t1")
 
-        assert result == "[pending]"  # 走审批分支，而非 [error]
+        assert result.content == "[pending]"  # 走审批分支，而非 [error]
         mock_handle.assert_awaited_once()
         err = mock_handle.call_args.args[0]
         assert isinstance(err, MemorySaveNeedsApproval)
@@ -1689,7 +1689,7 @@ class TestMemorySaveApprovalRouting:
         # 走审批，未被 owner 绕过；tool 只执行一次（抛异常那次），bypass 未重执行
         mock_handle.assert_awaited_once()
         assert exec_count["n"] == 1
-        assert result == "[pending]"
+        assert result.content == "[pending]"
 
     def test_approval_pending_carries_source_context(self):
         """ApprovalPending 携带来源原文，供 message 文案展示。"""
@@ -2128,10 +2128,10 @@ class TestMemorySaveApprovalRouting:
 
 class TestToolResultAudit:
     @pytest.mark.asyncio
-    async def test_error_string_result_audited_as_failure(self, store, config):
-        """工具未抛异常但返回 [error] 字符串 → exec_completed 事件 success=False 且带 error。
+    async def test_bare_string_result_audited_as_success_by_contract(self, store, config):
+        """契约：裸字符串一律 success，不嗅探 [error] 前缀。
 
-        静默丢图事故的病灶:send_file 这类"字符串失败"曾被记成 success=1。
+        失败必须以 ToolResult.error 信封表达（见 test_native_toolresult_error_audited_as_failure）。
         """
 
         async def failing(**kwargs):
@@ -2163,8 +2163,8 @@ class TestToolResultAudit:
 
         completed = [ctx for ev, ctx in events if ev == "tool.exec_completed"]
         assert len(completed) == 1
-        assert completed[0]["success"] is False
-        assert "No active channel context" in completed[0]["error"]
+        assert completed[0]["success"] is True
+        assert completed[0]["error"] == ""
 
     @pytest.mark.asyncio
     async def test_normal_result_audited_as_success(self, store, config):
@@ -2197,3 +2197,76 @@ class TestToolResultAudit:
         assert len(completed) == 1
         assert completed[0]["success"] is True
         assert completed[0]["error"] == ""
+
+    @pytest.mark.asyncio
+    async def test_native_toolresult_error_audited_as_failure(self, store, config):
+        """工具返回 ToolResult.error → 审计记失败。"""
+
+        async def failing(**kwargs):
+            from src.tools.result import ToolResult
+
+            return ToolResult.error("[error] Invalid URL: x")
+
+        tool = _make_tool("send_file", failing)
+        client = AsyncMock()
+
+        call_count = 0
+
+        async def fake_chat(messages, tools=None, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return ChatResponse(content="", tool_calls=[_make_tc("send_file", {"file_key": "/tmp/x.png"})])
+            return ChatResponse(content="done", tool_calls=[])
+
+        client.chat.side_effect = fake_chat
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        events = []
+
+        async def capture_emit(event, **ctx):
+            events.append((event, ctx))
+
+        with patch("src.events.emit_async", new=capture_emit):
+            state = AgentState(messages=[{"role": "user", "content": "send"}])
+            await loop.run(state, "t-audit-native-err")
+
+        completed = [ctx for ev, ctx in events if ev == "tool.exec_completed"]
+        assert len(completed) == 1
+        assert completed[0]["success"] is False
+        assert "Invalid URL" in completed[0]["error"]
+
+    @pytest.mark.asyncio
+    async def test_malformed_args_emits_exec_failed(self, store, config):
+        """畸形参数失败也发 exec_failed，且发生在 exec_started 之前。"""
+        tool = _make_tool("probe")
+        client = AsyncMock()
+
+        call_count = 0
+
+        async def fake_chat(messages, tools=None, **kw):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                tc = _make_tc("probe", {})
+                tc.function.arguments = "{bad json"
+                return ChatResponse(content="", tool_calls=[tc])
+            return ChatResponse(content="done", tool_calls=[])
+
+        client.chat.side_effect = fake_chat
+        loop = _make_loop(store, config, tools=[tool], client=client)
+
+        events = []
+
+        async def capture_emit(event, **ctx):
+            events.append((event, ctx))
+
+        with patch("src.events.emit_async", new=capture_emit):
+            state = AgentState(messages=[{"role": "user", "content": "go"}])
+            await loop.run(state, "t-audit-malformed")
+
+        failed = [ctx for ev, ctx in events if ev == "tool.exec_failed"]
+        assert len(failed) == 1
+        assert failed[0]["error_type"] == "InvalidArguments"
+        assert failed[0]["success"] is False
+        assert not [ev for ev, _ in events if ev in ("tool.exec_started", "tool.exec_completed")]
