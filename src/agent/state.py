@@ -277,7 +277,3 @@ class InterruptFlagStore:
                         del self._flags[tid]
                 self._flags[thread_id] = InterruptFlag()
             return self._flags[thread_id]
-
-    def clear_flag(self, thread_id: str) -> None:
-        with self._lock:
-            self._flags.pop(thread_id, None)

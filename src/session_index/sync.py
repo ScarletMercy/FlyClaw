@@ -94,12 +94,6 @@ async def sync_messages(
         await store.add_messages(thread_id, records)
 
 
-def _infer_channel_from_thread_id(thread_id: str) -> str:
-    if ":" in thread_id:
-        return thread_id.split(":")[0]
-    return "unknown"
-
-
 async def startup_sync(
     store: SessionIndexStore,
     state_store,

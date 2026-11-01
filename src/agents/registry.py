@@ -35,9 +35,6 @@ class AgentRegistry:
     def count(self) -> int:
         return len(self._agents)
 
-    def has_agent(self, name: str) -> bool:
-        return name in self._agents
-
 
 # ── Module-level singleton — delegates to ServiceContainer ──
 

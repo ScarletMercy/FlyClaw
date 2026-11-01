@@ -12,7 +12,6 @@ from src.plugins.loader import (
     HookResult,
     _load_module,
     _extract_tools,
-    _resolve_hook_ref,
     load_plugin,
     discover_plugins,
 )
@@ -112,27 +111,6 @@ class TestExtractTools:
         mod = types.SimpleNamespace()
         tools = _extract_tools(mod)
         assert tools == []
-
-
-# ── _resolve_hook_ref ──────────────────────────────────────
-
-
-class TestResolveHookRef:
-    def test_with_colon(self):
-        mod = types.SimpleNamespace(my_func=lambda: "ok")
-        result = _resolve_hook_ref("file.py:my_func", mod)
-        assert result is not None
-        assert result() == "ok"
-
-    def test_without_colon(self):
-        mod = types.SimpleNamespace(my_func=lambda: "ok")
-        result = _resolve_hook_ref("my_func", mod)
-        assert result is not None
-
-    def test_not_found(self):
-        mod = types.SimpleNamespace()
-        result = _resolve_hook_ref("nonexistent", mod)
-        assert result is None
 
 
 # ── load_plugin ────────────────────────────────────────────

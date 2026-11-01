@@ -50,9 +50,6 @@ class CronService:
             self._max_transient_retries = 3
             self._shutdown_timeout = 30.0
 
-    async def _execute_fn_raw(self, job):
-        return await self.execute_fn(job)
-
     async def _send_failure_alert(self, job: CronJob):
         last_alert = self._last_failure_alert.get(job.id, 0)
         if time.time() - last_alert < 3600:

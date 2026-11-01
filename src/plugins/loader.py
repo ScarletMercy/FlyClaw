@@ -79,14 +79,6 @@ def _extract_tools(module) -> list[Any]:
     return tools
 
 
-def _resolve_hook_ref(ref: str, module):
-    if ":" in ref:
-        attr_name = ref.split(":", 1)[1]
-    else:
-        attr_name = ref
-    return getattr(module, attr_name, None)
-
-
 def load_plugin(plugin_dir: Path) -> Optional[PluginRecord]:
     manifest_path = plugin_dir / "plugin.json"
     if not manifest_path.exists():
