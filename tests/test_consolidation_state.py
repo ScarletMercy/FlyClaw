@@ -64,15 +64,14 @@ async def test_save_state_atomic_replace(tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_session_organize_advances_on_no_errors(tmp_path):
-    """errors 为空 → 推进 last_session_organize_at；since 来自旧 last。"""
+    """errors 为空 → 推进 last_session_organize_at。"""
     with _patch_data_dir(tmp_path):
         await save_state(ConsolidationState(last_session_organize_at=100.0))
         daily_mock = AsyncMock(return_value={"sessions_processed": 3, "sessions_skipped": 0, "errors": []})
         container = MagicMock()
         with patch("src.services.daily_consolidation.run_daily_consolidation", daily_mock):
             result = await run_session_organize(container)
-        # since 取自旧 last
-        assert daily_mock.call_args.kwargs["since_ts"] == 100.0
+        daily_mock.assert_awaited_once_with(container)
         # 推进了
         assert result["last_session_organize_at"] > 100.0
         st = await load_state()
@@ -91,21 +90,6 @@ async def test_run_session_organize_no_advance_on_errors(tmp_path):
         assert result["last_session_organize_at"] == 100.0  # 未推进
         st = await load_state()
         assert st.last_session_organize_at == 100.0
-
-
-@pytest.mark.asyncio
-async def test_run_session_organize_default_since_when_unset(tmp_path):
-    """字段缺失时 since 兜底 now-24h（保持原凌晨行为）。"""
-    with _patch_data_dir(tmp_path):
-        daily_mock = AsyncMock(return_value={"errors": []})
-        container = MagicMock()
-        with patch("src.services.daily_consolidation.run_daily_consolidation", daily_mock):
-            await run_session_organize(container)
-        since = daily_mock.call_args.kwargs["since_ts"]
-        # 约 24h 前
-        import time as _t
-
-        assert abs(_t.time() - 24 * 3600 - since) < 5  # 5s 容差
 
 
 @pytest.mark.asyncio
@@ -132,18 +116,6 @@ async def test_run_memory_organize_no_advance_on_errors(tmp_path):
         assert result["last_memory_organize_at"] == 100.0
         st = await load_state()
         assert st.last_memory_organize_at == 100.0
-
-
-@pytest.mark.asyncio
-async def test_run_session_organize_explicit_since_ts(tmp_path):
-    """显式 since_ts=0（全量补漏）→ 传给 run_daily_consolidation。"""
-    with _patch_data_dir(tmp_path):
-        await save_state(ConsolidationState(last_session_organize_at=100.0))
-        daily_mock = AsyncMock(return_value={"errors": []})
-        container = MagicMock()
-        with patch("src.services.daily_consolidation.run_daily_consolidation", daily_mock):
-            await run_session_organize(container, since_ts=0.0)
-        assert daily_mock.call_args.kwargs["since_ts"] == 0.0
 
 
 @pytest.mark.asyncio

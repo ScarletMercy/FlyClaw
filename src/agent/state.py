@@ -30,17 +30,28 @@ CREATE TABLE IF NOT EXISTS sessions (
     frozen_system_prompt TEXT NOT NULL DEFAULT '',
     created_at REAL NOT NULL DEFAULT 0,
     updated_at REAL NOT NULL,
-    organized INTEGER NOT NULL DEFAULT 0
+    status INTEGER NOT NULL DEFAULT 0,
+    attempts INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_updated ON sessions(updated_at);
 """
+
+# 会话整理状态机：待处理 → (完成 | 永久跳过 | 死信)，后三者均为终态、不再扫描
+SESSION_PENDING = 0
+SESSION_DONE = 1
+SESSION_SKIPPED = 2
+SESSION_DEAD = 3
 
 # Migrations for pre-existing databases
 _MIGRATIONS = [
     "ALTER TABLE sessions ADD COLUMN frozen_system_prompt TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE sessions ADD COLUMN created_at REAL NOT NULL DEFAULT 0",
     "UPDATE sessions SET created_at = updated_at WHERE created_at = 0",
-    "ALTER TABLE sessions ADD COLUMN organized INTEGER NOT NULL DEFAULT 0",
+    # organized-era 老库：rename 保值（0=待处理 1=已完成）；更老的库 rename 抛 no such column，
+    # 由下一条 ADD 补 status 列（默认 0）。新库两列都在 _SCHEMA，两条各抛错被跳过。
+    "ALTER TABLE sessions RENAME COLUMN organized TO status",
+    "ALTER TABLE sessions ADD COLUMN status INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE sessions ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
     # idx_sessions_created 必须在 migrations 里建而非 _SCHEMA：老库尚无 created_at 列，
     # executescript(_SCHEMA) 先于 ALTER 执行会直接抛 no such column 导致初始化失败。
     "CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at)",
@@ -68,8 +79,10 @@ class AgentState(BaseModel):
     created_at: float = 0
     total_usage: dict[str, Any] | None = None
 
-    # 是否已被会话整理（凌晨/手动命令）处理过；成功整理后置 True，跳过后续重复整理
-    organized: bool = False
+    # 会话整理状态（常量见本文件顶部 SESSION_*）+ 失败计数；由 DB 列独占管理：
+    # mark_organized / age_stale_sessions / record_failed_attempt 原子写，load() 用列值覆盖。
+    status: int = SESSION_PENDING
+    attempts: int = 0
 
     @field_validator("messages", mode="after")
     @classmethod
@@ -99,8 +112,6 @@ class AgentState(BaseModel):
             "channel": self.channel,
             "pending_approval": self.pending_approval,
             "created_at": self.created_at,
-            # organized 不入 metadata JSON：它由 DB 列独占管理（mark_organized 原子写，
-            # load() 用列值覆盖），写进 metadata 永远是 False 且从不被读取。
         }
 
     def append_message(self, msg: dict[str, Any]) -> None:
@@ -162,14 +173,16 @@ class StateStore:
         conn = await self._get_conn()
         now = time.time()
         await conn.execute(
-            """INSERT INTO sessions
+            f"""INSERT INTO sessions
                (thread_id, messages, metadata, frozen_system_prompt, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?)
                ON CONFLICT(thread_id) DO UPDATE SET
                messages=excluded.messages,
                metadata=excluded.metadata,
                frozen_system_prompt=excluded.frozen_system_prompt,
-               updated_at=excluded.updated_at""",
+               updated_at=excluded.updated_at,
+               status=CASE WHEN sessions.status = {SESSION_DEAD} THEN {SESSION_PENDING} ELSE sessions.status END,
+               attempts=CASE WHEN sessions.status = {SESSION_DEAD} THEN 0 ELSE sessions.attempts END""",
             (
                 thread_id,
                 json.dumps(state.messages, ensure_ascii=False),
@@ -184,7 +197,7 @@ class StateStore:
     async def load(self, thread_id: str) -> AgentState | None:
         conn = await self._get_conn()
         async with conn.execute(
-            "SELECT messages, metadata, frozen_system_prompt, created_at, organized FROM sessions WHERE thread_id = ?",
+            "SELECT messages, metadata, frozen_system_prompt, created_at, status, attempts FROM sessions WHERE thread_id = ?",
             (thread_id,),
         ) as cursor:
             row = await cursor.fetchone()
@@ -195,7 +208,8 @@ class StateStore:
         meta["messages"] = messages
         meta["frozen_system_prompt"] = row[2] if row[2] else meta.get("frozen_system_prompt", "")
         meta["created_at"] = row[3] if row[3] else 0
-        meta["organized"] = bool(row[4])
+        meta["status"] = row[4]
+        meta["attempts"] = row[5]
         return AgentState.model_validate(meta)
 
     async def delete(self, thread_id: str) -> bool:
@@ -210,32 +224,75 @@ class StateStore:
             rows = await cursor.fetchall()
         return [r[0] for r in rows]
 
-    async def list_threads_since(self, since_ts: float) -> list[str]:
-        """返回 created_at >= since_ts 且未整理(organized=0)的 thread_id，按 created_at 正序。
+    async def list_pending_threads(self) -> list[str]:
+        """返回所有待整理(status=0)的 thread_id，按 created_at 正序。
 
-        SQL 层直接排除已整理会话：当 last_session_organize_at 因失败长期不推进、
-        反复重扫同一区间时，已整理项不会回到 Python 层逐个跳过，避免 O(n) 退化。
-        所有调用方拿到 organized 会话本就只会跳过，语义不变。
-        正序：全量补漏中途崩溃时，残留是最新一侧（created_at >= 游标），
-        下轮定时任务自动补齐；老会话若倒序排后则永久落在窗口外。
+        SQL 层直接排除终态会话（完成/永久跳过/死信），它们不会回到 Python 层。
+        正序：中途崩溃时残留先处理，最老的待整理会话不会饿死。
         """
         conn = await self._get_conn()
         async with conn.execute(
-            "SELECT thread_id FROM sessions WHERE created_at >= ? AND organized = 0 ORDER BY created_at ASC",
-            (since_ts,),
+            "SELECT thread_id FROM sessions WHERE status = ? ORDER BY created_at ASC",
+            (SESSION_PENDING,),
         ) as cursor:
             rows = await cursor.fetchall()
         return [r[0] for r in rows]
 
     async def mark_organized(self, thread_id: str) -> bool:
-        """原子标记会话已整理（仅更新 organized 列，不碰 messages/metadata，避免覆盖并发写入）。"""
+        """原子标记会话已整理（status=1 并清零失败计数；不碰 messages/metadata，避免覆盖并发写入）。"""
         conn = await self._get_conn()
         cursor = await conn.execute(
-            "UPDATE sessions SET organized = 1 WHERE thread_id = ?",
-            (thread_id,),
+            "UPDATE sessions SET status = ?, attempts = 0 WHERE thread_id = ?",
+            (SESSION_DONE, thread_id),
         )
         await conn.commit()
         return cursor.rowcount > 0
+
+    # 门槛谓词的 SQL 形态（与 Python 门槛一致：总条数 >= min 且 user 条数 >= 3）。
+    # 老化与复活共用同一谓词、互为补集，保证状态 0/2 之间不会每晚震荡。
+    _ELIGIBLE_SQL = (
+        "json_valid(messages) "
+        "AND json_array_length(messages) >= ? "
+        "AND (SELECT COUNT(*) FROM json_each(messages) je "
+        "WHERE json_extract(je.value, '$.role') = 'user') >= 3"
+    )
+
+    async def age_stale_sessions(self, min_messages: int, idle_days: int) -> tuple[int, int]:
+        """批量老化：待处理 + 不过门槛 + idle_days 天无活动 → 永久跳过(2)；
+        已跳过但后来攒够门槛的 → 复活回待处理(0)。返回 (老化数, 复活数)。
+
+        这是死信队列的等价物：每晚扫描集从全历史收敛到「活跃窗口 + 重试中」。
+        死信(3) 不参与复活——重试超限意味着内容本身有问题，复活会 nightly 死循环；
+        JSON 损坏的行 json_valid=0 → 不过门槛 → 同样老化出局。
+        """
+        conn = await self._get_conn()
+        cursor = await conn.execute(
+            f"UPDATE sessions SET status = ? WHERE status = ? AND NOT ({self._ELIGIBLE_SQL}) AND updated_at < ?",
+            (SESSION_SKIPPED, SESSION_PENDING, min_messages, time.time() - idle_days * 86400),
+        )
+        aged = cursor.rowcount
+        cursor = await conn.execute(
+            f"UPDATE sessions SET status = ? WHERE status = ? AND {self._ELIGIBLE_SQL}",
+            (SESSION_PENDING, SESSION_SKIPPED, min_messages),
+        )
+        await conn.commit()
+        return aged, cursor.rowcount
+
+    async def record_failed_attempt(self, thread_id: str, max_attempts: int) -> bool:
+        """失败计数 +1；累计达到 max_attempts 置死信(3)。返回是否已死信。"""
+        conn = await self._get_conn()
+        cursor = await conn.execute(
+            "UPDATE sessions SET attempts = attempts + 1, "
+            "status = CASE WHEN attempts + 1 >= ? THEN ? ELSE status END "
+            "WHERE thread_id = ?",
+            (max_attempts, SESSION_DEAD, thread_id),
+        )
+        await conn.commit()
+        if cursor.rowcount == 0:
+            return False
+        async with conn.execute("SELECT status FROM sessions WHERE thread_id = ?", (thread_id,)) as cur:
+            row = await cur.fetchone()
+        return row is not None and row[0] == SESSION_DEAD
 
     async def close(self) -> None:
         if self._conn is not None:

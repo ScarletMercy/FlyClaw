@@ -263,6 +263,8 @@ async def test_daily_consolidation_sets_group_scope_per_thread():
     container.qq = None
     container.weixin = None
     container.config.consolidation.min_messages = 10
+    container.config.consolidation.stale_idle_days = 30
+    container.config.consolidation.max_attempts = 3
 
     with (
         patch("src.services.daily_consolidation._consolidate_session", return_value="summary"),
@@ -379,6 +381,8 @@ async def test_daily_consolidation_isolates_dm_and_group_saves(tmp_path):
     container.qq = None
     container.weixin = None
     container.config.consolidation.min_messages = 10
+    container.config.consolidation.stale_idle_days = 30
+    container.config.consolidation.max_attempts = 3
 
     fake_client = AsyncMock()
     fake_client.chat.return_value = ChatResponse(content="日记摘要")

@@ -383,6 +383,9 @@ class ConsolidationConfig(BaseModel):
 
     enabled: bool = True
     min_messages: int = 10
+    # 会话整理状态机终态阈值：低于门槛且 N 天无活动 → 永久跳过；连续失败 N 次 → 死信
+    stale_idle_days: int = 30
+    max_attempts: int = 3
 
 
 class TaskConfig(BaseModel):

@@ -38,13 +38,12 @@ async def test_organize_session_registered_and_dispatches(monkeypatch):
             "sessions_processed": 3,
             "sessions_skipped": 1,
             "errors": [],
-            "since_ts": 1000.0,
             "last_session_organize_at": 2000.0,
         }
     )
     with patch("src.services.consolidation_state.run_session_organize", run_mock):
         result = await registered["organize-session"]("", {})
-    run_mock.assert_awaited_once_with(container, since_ts=None)
+    run_mock.assert_awaited_once_with(container)
     assert "3" in result and "1" in result  # 处理 3，跳过 1
 
 
@@ -73,8 +72,8 @@ async def test_organize_memory_registered_and_dispatches(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_organize_session_all_passes_since_zero(monkeypatch):
-    """/organize-session all → since_ts=0 传给 run_session_organize。"""
+async def test_organize_session_all_arg_ignored(monkeypatch):
+    """/organize-session all 参数被接受且忽略。"""
     config = AppConfig()
     config.agents.language = "zh"
     registered, container = _make_registered(monkeypatch, config)
@@ -84,11 +83,11 @@ async def test_organize_session_all_passes_since_zero(monkeypatch):
             "sessions_processed": 5,
             "sessions_skipped": 0,
             "errors": [],
-            "since_ts": 0,
             "last_session_organize_at": 3000.0,
         }
     )
     with patch("src.services.consolidation_state.run_session_organize", run_mock):
         result = await registered["organize-session"]("all", {})
-    assert run_mock.call_args.kwargs["since_ts"] == 0
-    assert "全部" in result
+    run_mock.assert_awaited_once_with(container)
+    assert "5" in result
+    assert "全部待整理" in result

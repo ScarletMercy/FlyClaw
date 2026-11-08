@@ -3,8 +3,9 @@
 全局一份，存 data_dir/consolidation_state.json，原子写（tmp + os.replace）。
 定时任务与手动命令共用此状态 + organize_lock 防并发。
 
-推进语义：run 正常返回且 result["errors"] 为空才推进 last=now；任一失败不推进，
-下轮重扫同一区间——配合每项的 organized 标志，已成功的会被跳过，零重复处理。
+推进语义：run 正常返回且 result["errors"] 为空才推进 last=now；任一失败不推进。
+last 仅记录上次成功时刻（纯展示，不控制扫描范围）；扫描范围是全部 status=0（待处理）
+的会话，完成/永久跳过/死信均为终态不重扫，零重复处理。
 """
 
 from __future__ import annotations
@@ -92,23 +93,20 @@ async def _advance_if_clean(field: str, now: float, result: dict[str, Any]) -> N
         result[field] = getattr(state, field)
 
 
-async def run_session_organize(container: Any, since_ts: float | None = None) -> dict[str, Any]:
+async def run_session_organize(container: Any) -> dict[str, Any]:
     """会话整理统一入口（定时 + 命令共用）。
 
-    区间 = [since_ts, now]；since_ts 为 None 时取 last_session_organize_at，字段缺失兜底 now-24h。
-    since_ts=0 表示全量补漏（扫描所有未 organized 的会话）。
-    run 正常返回且 errors 为空 → 推进 last=now；否则不推进。
+    扫描所有 status=0（待处理）的会话；内容门槛不够且长期无活动的被老化进
+    永久跳过，连续失败超限的进死信，均有终态。run 正常返回且 errors 为空 →
+    推进 last=now；否则不推进。
     """
     async with _session_lock:
         from src.services.daily_consolidation import run_daily_consolidation
 
-        state = await load_state()
         now = time.time()
-        since = since_ts if since_ts is not None else (state.last_session_organize_at or now - 24 * 3600)
 
-        result = await run_daily_consolidation(container, since_ts=since)
+        result = await run_daily_consolidation(container)
         await _advance_if_clean("last_session_organize_at", now, result)
-        result["since_ts"] = since
         return result
 
 

@@ -143,7 +143,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                     "/compress on|off                — 压缩开关",
                     "/progress on|off                — 工具进度通知开关",
                     "/auto on|off                    — 自主工作模式",
-                    "/organize-session [all]         — 手动触发会话整理（补漏；all=全量）",
+                    "/organize-session               — 手动触发会话整理（扫描全部待整理）",
                     "/organize-memory                — 手动触发记忆整理（补漏）",
                     "/restart                        — 重启服务",
                 ]
@@ -168,7 +168,7 @@ def register_builtin_commands(dispatcher, container, tools, skills):
                     "/compress on|off                — Compression toggle",
                     "/progress on|off                — Tool progress notifications toggle",
                     "/auto on|off                    — Autonomous mode",
-                    "/organize-session [all]         — Trigger session consolidation (all=full catch-up)",
+                    "/organize-session               — Trigger session consolidation (all pending)",
                     "/organize-memory                — Trigger memory consolidation (catch-up)",
                     "/restart                        — Restart service",
                 ]
@@ -1129,31 +1129,36 @@ def register_builtin_commands(dispatcher, container, tools, skills):
         zh = container.config.agents.language == "zh"
         from src.services.consolidation_state import run_session_organize
 
-        since_ts = 0.0 if args.strip().lower() in ("all", "full") else None
-        result = await run_session_organize(container, since_ts=since_ts)
+        result = await run_session_organize(container)
         last = result.get("last_session_organize_at")
-        since = result.get("since_ts", 0)
         last_str = _dt.datetime.fromtimestamp(last).strftime("%Y-%m-%d %H:%M") if last else ("无" if zh else "never")
-        is_all = since == 0
-        if is_all:
-            since_str = "全部" if zh else "All time"
-        else:
-            since_str = _dt.datetime.fromtimestamp(since).strftime("%Y-%m-%d %H:%M") if since else "?"
         now_str = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
         n_err = len(result.get("errors", []))
+        aged = result.get("sessions_aged", 0)
+        dead = result.get("sessions_dead_lettered", 0)
         if zh:
-            return (
+            lines = [
                 f"会话整理完成：处理 {result['sessions_processed']} 个，"
-                f"跳过 {result['sessions_skipped']} 个，错误 {n_err} 个。\n"
-                f"本次区间：{since_str} ~ {now_str}\n"
-                f"上次整理：{last_str}"
-            )
-        return (
-            f"Session consolidation done: {result['sessions_processed']} processed, "
-            f"{result['sessions_skipped']} skipped, {n_err} errors.\n"
-            f"Range: {since_str} ~ {now_str}\n"
-            f"Last: {last_str}"
-        )
+                f"跳过 {result['sessions_skipped']} 个，错误 {n_err} 个。"
+            ]
+            if aged:
+                lines.append(f"老化 {aged} 个（低于门槛且长期无活动，永久跳过）")
+            if dead:
+                lines.append(f"死信 {dead} 个（重试超限，不再自动重试）")
+            lines.append("扫描范围：全部待整理")
+            lines.append(f"上次整理：{last_str}（本次 {now_str} 执行）")
+        else:
+            lines = [
+                f"Session consolidation done: {result['sessions_processed']} processed, "
+                f"{result['sessions_skipped']} skipped, {n_err} errors."
+            ]
+            if aged:
+                lines.append(f"{aged} aged out (below gate & long idle, permanently skipped)")
+            if dead:
+                lines.append(f"{dead} dead-lettered (retry budget exhausted)")
+            lines.append("Range: all pending")
+            lines.append(f"Last: {last_str} (ran at {now_str})")
+        return "\n".join(lines)
 
     dispatcher.register_builtin("organize-session", cmd_organize_session)
 

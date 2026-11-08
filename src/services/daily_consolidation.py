@@ -4,13 +4,23 @@ Called by ConsolidationScheduler at 03:00 every day. Three passes so
 notifications read "dreaming, dreaming, wake" instead of interleaved
 "dreaming, wake, dreaming, wake" per session:
 
-  Pass 1 — for each session passing all three gates (created within the
-           since_ts window & not yet organized — both filtered in SQL,
-           >= min_messages total messages, >= 3 user messages): send a
-           "dreaming" notification and collect it as pending.
+  Pre-pass — age stale sessions into terminal states (DLQ equivalent):
+           below-gate and idle for stale_idle_days -> skipped(2), never
+           rescanned; skipped sessions that later cross the gate revive.
+           This bounds the nightly scan set to the active window + retries.
+  Pass 1 — for each session passing all three gates (status=0 pending —
+           filtered in SQL, >= min_messages total messages, >= 3 user
+           messages): send a "dreaming" notification and collect it as
+           pending.
   Pass 2 — consolidate each pending session silently: extract memories +
            create/update skills via background review, and save a diary-style
-           episodic summary. set_memory_session is re-applied per entry
+           episodic summary. Failed sessions increment attempts only when the
+           LLM proves reachable — another session's success in the same run,
+           or a minimal probe call when there is none (probe failure means
+           infrastructure trouble and counts for no one); at max_attempts the
+           session is dead-lettered(3) — never retried again, which also
+           stops nightly dreaming/notification spam for poison sessions.
+           set_memory_session is re-applied per entry
            because the ContextVar would otherwise hold pass 1's last scope.
   Pass 3 — send one "wake" per chat (once per chat, not per session), merging
            only the summaries of sessions that succeeded with non-empty text.
@@ -37,10 +47,13 @@ logger = logging.getLogger("flyclaw.consolidation")
 _SUMMARY_PROMPT = "用100字以内概括这个会话的主要内容，包括讨论了什么、完成了什么。只输出摘要文本，不要其他内容。"
 
 
-async def run_daily_consolidation(container: Any, since_ts: float | None = None) -> dict[str, Any]:
+async def run_daily_consolidation(container: Any) -> dict[str, Any]:
     result: dict[str, Any] = {
         "sessions_processed": 0,
         "sessions_skipped": 0,
+        "sessions_aged": 0,
+        "sessions_revived": 0,
+        "sessions_dead_lettered": 0,
         "memories_saved": 0,
         "skills_updated": 0,
         "errors": [],
@@ -57,13 +70,22 @@ async def run_daily_consolidation(container: Any, since_ts: float | None = None)
         return result
 
     config = container.config
-    min_messages = getattr(config, "consolidation", None)
-    min_messages = getattr(min_messages, "min_messages", 10) if min_messages else 10
+    cons = getattr(config, "consolidation", None)
+    min_messages = getattr(cons, "min_messages", 10) if cons else 10
+    idle_days = getattr(cons, "stale_idle_days", 30) if cons else 30
+    max_attempts = getattr(cons, "max_attempts", 3) if cons else 3
 
-    cutoff_ts = time.time() - 24 * 3600
-    since = since_ts if since_ts is not None else cutoff_ts
+    # 批量老化：死线程进终态、攒够门槛的复活，扫描集收敛到活跃窗口（失败不阻断扫描）
+    try:
+        aged, revived = await state_store.age_stale_sessions(min_messages, idle_days)
+        result["sessions_aged"] = aged
+        result["sessions_revived"] = revived
+        if aged or revived:
+            logger.info("Consolidation 老化: %d 个永久跳过, %d 个复活重扫", aged, revived)
+    except Exception as e:
+        logger.warning("Consolidation aging failed (scan continues): %s", e)
 
-    thread_ids = await state_store.list_threads_since(since)
+    thread_ids = await state_store.list_pending_threads()
 
     # Day counter for diary-style keys: {days_ago: next_index}
     day_counter: dict[int, int] = defaultdict(int)
@@ -84,15 +106,15 @@ async def run_daily_consolidation(container: Any, since_ts: float | None = None)
     try:
         # Pass 1: filter + announce dreaming
         logger.info(
-            "Consolidation Pass1: 扫描 %d 个 thread, since=%s, min_messages=%d",
+            "Consolidation Pass1: 扫描 %d 个 thread, min_messages=%d",
             len(thread_ids),
-            datetime.datetime.fromtimestamp(since).isoformat(),
             min_messages,
         )
         for thread_id in thread_ids:
             try:
                 state = await state_store.load(thread_id)
-            except Exception:
+            except Exception as e:
+                logger.warning("Consolidation: load failed for %s: %s", thread_id, e)
                 continue
 
             if state is None:
@@ -106,7 +128,7 @@ async def run_daily_consolidation(container: Any, since_ts: float | None = None)
             set_memory_session(ct, gid)
 
             # Decide whether to run expensive consolidation
-            # (created_at + organized 过滤均在 list_threads_since SQL 完成；这里只做内容门槛)
+            # (status 过滤在 list_pending_threads SQL 完成；这里只做内容门槛)
             should_consolidate = True
             if len(state.messages) < min_messages:
                 should_consolidate = False
@@ -125,6 +147,7 @@ async def run_daily_consolidation(container: Any, since_ts: float | None = None)
 
         # Pass 2: consolidate each (no notifications)
         logger.info("Consolidation Pass2: 整理 %d 个 pending 会话", len(pending))
+        failed_threads: list[str] = []
         for entry in pending:
             state = entry["state"]
             thread_id = entry["thread_id"]
@@ -146,12 +169,13 @@ async def run_daily_consolidation(container: Any, since_ts: float | None = None)
                 logger.error("Consolidation failed for session %s: %s", thread_id, e, exc_info=True)
                 result["errors"].append(f"{thread_id}: {e}")
                 entry["failed"] = True
+                failed_threads.append(thread_id)
                 continue
 
             logger.info("会话整理完成: thread=%s summary=%s", thread_id, (summary or "")[:80])
 
-            # 标记已整理（原子 UPDATE organized 列，不碰 messages 避免覆盖并发写入）；
-            # 失败记入 errors 使游标不推进，下轮重扫重试该会话
+            # 标记已整理（原子 UPDATE status 列，不碰 messages 避免覆盖并发写入）；
+            # 失败则走 record_failed_attempt，重试预算内下轮重扫
             try:
                 await state_store.mark_organized(thread_id)
             except Exception as e:
@@ -173,6 +197,19 @@ async def run_daily_consolidation(container: Any, since_ts: float | None = None)
                 logger.warning("Session summary failed for %s: %s", thread_id, e)
 
             entry["summary"] = summary or ""
+
+        if failed_threads and (result["sessions_processed"] > 0 or await _llm_reachable(config)):
+            for thread_id in failed_threads:
+                try:
+                    dead = await state_store.record_failed_attempt(thread_id, max_attempts)
+                except Exception as de:
+                    logger.warning("Failed to record attempt for %s: %s", thread_id, de)
+                    dead = False
+                if dead:
+                    result["sessions_dead_lettered"] += 1
+                    logger.error(
+                        "Session %s dead-lettered after %d failed consolidation attempts", thread_id, max_attempts
+                    )
 
         # Pass 3: one wake per chat, merging its sessions' summaries
         wake_groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
@@ -303,6 +340,25 @@ async def _save_session_summary(
 
     await save_memory(summary_text, key=key, category="episodic")
     logger.info("Saved session summary: %s → %s", key, summary_text[:50])
+
+
+async def _llm_reachable(config: Any) -> bool:
+    from src.agent.client import ChatClient
+
+    try:
+        client = ChatClient(
+            base_url=config.model.base_url,
+            api_key=config.model.api_key,
+            model=config.model.name,
+            temperature=0.0,
+        )
+        try:
+            await client.chat([{"role": "user", "content": "1"}])
+            return True
+        finally:
+            await client.close()
+    except Exception:
+        return False
 
 
 async def _send_notification(container: Any, channel_name: str, chat_id: str, text: str) -> None:
